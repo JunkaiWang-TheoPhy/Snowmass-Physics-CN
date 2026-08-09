@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "catalog_count": 541,
+  "source_snapshot_date": "2026-08-09",
+  "license_counts": {
+    "ARXIV-NONEXCLUSIVE-DISTRIB-1.0": 239,
+    "CC-BY-4.0": 246,
+    "CC-BY-NC-ND-4.0": 28,
+    "CC-BY-NC-SA-4.0": 14,
+    "CC-BY-SA-4.0": 2,
+    "CC0-1.0": 11,
+    "HAL-AUTHORIZATION-V1": 1
+  },
+  "authorization_counts": {
+    "license-cleared": 273,
+    "needs-permission": 268
+  },
+  "translation_counts": {
+    "not-started": 541
+  },
+  "publication_counts": {
+    "allowed": 273,
+    "blocked_or_pending": 268
+  },
+  "frontier_counts": {
+    "AF": 122,
+    "CEF": 41,
+    "CF": 107,
+    "CompF": 70,
+    "EF": 163,
+    "IF": 93,
+    "NF": 87,
+    "RPF": 81,
+    "TF": 148,
+    "UF": 15
+  },
+  "year_counts": {
+    "2019": 6,
+    "2020": 7,
+    "2021": 24,
+    "2022": 504
+  },
+  "page_summary": {
+    "count": 541,
+    "total": 17794,
+    "mean": 32.89,
+    "median": 21,
+    "p25": 12,
+    "p75": 39
+  },
+  "citation_summary": {
+    "count": 537,
+    "total": 21383,
+    "mean": 39.82,
+    "median": 14,
+    "p25": 4,
+    "p75": 38
+  },
+  "unicode_token_summary": {
+    "count": 541,
+    "total": 8311295,
+    "mean": 15362.84,
+    "median": 9139,
+    "p25": 5173,
+    "p75": 17503
+  },
+  "data_notes": [
+    "Citation fields are an INSPIRE-derived snapshot and are not an official impact ranking.",
+    "Page and token fields are PDF extraction proxies that include references and extraction artifacts.",
+    "Cross-Frontier placements are retained in each record; frontier counts are not mutually exclusive."
+  ]
+}
