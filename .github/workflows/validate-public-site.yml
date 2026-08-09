@@ -1,0 +1,59 @@
+name: Validate public site
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node for JavaScript syntax validation
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Regenerate redacted public data
+        run: python3 scripts/build_public_manifest.py
+
+      - name: Verify generated data is committed
+        run: git diff --exit-code -- site/data/papers.json site/data/stats.json
+
+      - name: Run manifest and privacy tests
+        run: python3 -m unittest scripts.test_public_manifest -v
+
+      - name: Audit tracked public tree
+        run: python3 scripts/check_public_tree.py
+
+      - name: Validate static assets
+        run: |
+          python3 -m json.tool site/data/papers.json >/dev/null
+          python3 -m json.tool site/data/stats.json >/dev/null
+          node --check site/app.js
+
+      - name: Smoke-test the static site
+        run: |
+          python3 -m http.server 4173 --directory site >/tmp/snowmass-site.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error http://127.0.0.1:4173/ >/tmp/snowmass-home.html; then
+              break
+            fi
+            sleep 1
+          done
+          grep -q "Snowmass 中文翻译计划" /tmp/snowmass-home.html
+          curl --fail --silent --show-error http://127.0.0.1:4173/data/papers.json | python3 -m json.tool >/dev/null

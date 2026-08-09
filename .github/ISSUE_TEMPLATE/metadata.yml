@@ -1,0 +1,46 @@
+name: 论文元数据或许可证修正
+description: 提交可公开核验的题名、作者、链接、版本或许可证证据修正。
+title: "[metadata] "
+labels: ["metadata", "rights-review"]
+body:
+  - type: input
+    id: paper_id
+    attributes:
+      label: Paper ID
+      description: 例如 arXiv:2203.07864；不要填写联系人邮箱。
+    validations:
+      required: true
+  - type: input
+    id: source_url
+    attributes:
+      label: 官方证据 URL
+      description: arXiv、HAL、CDS、论文 PDF 或出版方的公开链接。
+    validations:
+      required: true
+  - type: dropdown
+    id: correction_type
+    attributes:
+      label: 修正类型
+      options:
+        - 题名或作者列
+        - Frontier 或专题
+        - 来源版本
+        - 来源许可证
+        - 公开授权状态
+        - 其他公开元数据
+    validations:
+      required: true
+  - type: textarea
+    id: explanation
+    attributes:
+      label: 修正说明
+      description: 说明当前值、建议值和证据对应关系。不得粘贴私人通信。
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我确认本 issue 不包含邮箱、私人通信、授权附件、内部备注或凭据。
+          required: true

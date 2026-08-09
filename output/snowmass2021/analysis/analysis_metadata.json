@@ -1,0 +1,36 @@
+{
+  "generated": "2026-08-09",
+  "base_catalog": "output/snowmass2021/snowmass2021_whitepapers.json",
+  "record_count": 541,
+  "arxiv_count": 538,
+  "inspire_matched_arxiv_count": 535,
+  "citation_coverage_count": 537,
+  "citation_coverage_fraction": 0.9926062846580407,
+  "external_inspire_matches": 2,
+  "citation_source": "INSPIRE HEP citation_count and citation_count_without_self_citations",
+  "citation_source_url": "https://inspirehep.net/api/literature",
+  "citation_retrieved_at": "2026-08-09",
+  "citation_limitations": "INSPIRE counts citations from records covered by INSPIRE; it is not equivalent to Google Scholar, Web of Science, Scopus, or ADS.",
+  "impact_proxy_definition": "0.7 * percentile(citation_count) + 0.3 * percentile(citation_count / paper_age_years), computed among records with INSPIRE citation counts.",
+  "year_definition": "INSPIRE earliest_date for matched records; 2022 inferred only for unmatched external records.",
+  "discipline_definition": "Official Snowmass Frontier membership plus primary arXiv category/family; multi-frontier papers are counted in each relevant Frontier and fractional_paper_count prevents double-counting in shares.",
+  "missing_arxiv_ids": [
+    "2203.08631",
+    "2203.08973",
+    "2203.15128"
+  ],
+  "authors_source": "INSPIRE author metadata; proceedings listed-author string used only as fallback.",
+  "files": [
+    "enriched_papers.json",
+    "enriched_papers.csv",
+    "discipline_statistics.csv",
+    "topic_statistics.csv",
+    "arxiv_category_statistics.csv",
+    "year_statistics.csv",
+    "paper_ranking_citations.csv",
+    "paper_ranking_citation_velocity.csv",
+    "paper_ranking_impact_proxy.csv",
+    "author_ranking.csv",
+    "analysis_summary.md"
+  ]
+}

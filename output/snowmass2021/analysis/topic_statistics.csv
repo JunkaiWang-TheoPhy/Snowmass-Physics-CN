@@ -1,0 +1,101 @@
+group,paper_count,share_of_catalog,fractional_paper_count,citable_paper_count,citation_coverage,total_citations,mean_citations,median_citations,mean_citations_per_year,top_cited_title,top_cited_arxiv,top_cited_count
+CF: Dark Matter: Particle-like,33,0.06099815157116451,14.941666666666666,33,1.0,1713,51.90909090909091,28.0,11.842542589881951,The International Linear Collider,2203.07622,293
+TF: Collider Phenomenology,33,0.06099815157116451,15.583333333333334,33,1.0,1141,34.57575757575758,14.0,6.789334686544995,The LHC Olympics 2020: A Community Challenge for Anomaly Detection in High Energy Physics,2101.08320,243
+EF: Beyond the Standard Model - More General Explorations,29,0.053604436229205174,18.25,29,1.0,884,30.482758620689655,11.0,6.490683572652143,The LHC Olympics 2020: A Community Challenge for Anomaly Detection in High Energy Physics,2101.08320,243
+EF: General - centered on this frontier,29,0.053604436229205174,12.701190476190476,29,1.0,2556,88.13793103448276,42.0,19.62069983086793,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+AF: Accelerator Technology - Magnets,20,0.036968576709796676,20.0,20,1.0,95,4.75,4.0,1.088415801053356,Superconducting Detector Magnets for High Energy Physics,2203.07799,23
+CF: Cosmic Probes of Fundamental Physics,20,0.036968576709796676,12.783333333333333,20,1.0,2795,139.75,37.5,31.89380387211505,"Cosmology Intertwined: A Review of the Particle Physics, Astrophysics, and Cosmology Associated with the Cosmological Tensions and Anomalies",2203.06142,1594
+CompF: Theoretical Calculations and Simulations,19,0.03512014787430684,7.533333333333333,19,1.0,1099,57.8421052631579,29.0,12.060418310229165,Event Generators for High-Energy Physics Experiments,2203.11110,201
+EF: Higgs Boson Properties and Couplings,19,0.03512014787430684,13.666666666666666,19,1.0,392,20.63157894736842,10.0,4.6766697247864855,Strategy for Understanding the Higgs Physics: The Cool Copper Collider,2203.07646,99
+TF: Astro-Particle Physics and Cosmology,19,0.03512014787430684,8.616666666666667,19,1.0,1976,104.0,53.0,23.7474154234254,Axion Dark Matter,2203.14923,346
+AF: General - centered on this frontier,17,0.031423290203327174,7.809523809523809,17,1.0,1307,76.88235294117646,16.0,16.481302864622343,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+NF: Neutrinos Beyond the Standard Model,17,0.031423290203327174,9.125,17,1.0,1491,87.70588235294117,55.0,19.872563351779768,The Present and Future Status of Heavy Neutral Leptons,2203.08039,343
+CompF: Machine Learning,16,0.029574861367837338,10.866666666666667,16,1.0,536,33.5,17.0,6.9019975287023545,The LHC Olympics 2020: A Community Challenge for Anomaly Detection in High Energy Physics,2101.08320,243
+RPF: General - centered on this frontier,16,0.029574861367837338,6.876190476190476,16,1.0,1176,73.5,20.5,16.50444374288677,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+CF: General - cross-listed:,15,0.027726432532347505,3.1095238095238096,15,1.0,360,24.0,9.0,5.534339740100017,Event Generators for High-Energy Physics Experiments,2203.11110,201
+TF: General - cross-listed,15,0.027726432532347505,3.451190476190476,15,1.0,1853,123.53333333333333,61.0,27.425160631637986,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+AF: Accelerator Technology - RF,14,0.025878003696857672,13.0,14,1.0,123,8.785714285714286,8.0,2.0055105518698753,Next-Generation Superconducting RF Technology based on Advanced Thin Film Technologies and Innovative Materials for Accelerator Enhanced Performance and Energy Reach,2204.02536,20
+AF: Accelerators for Electroweak and Higgs,14,0.025878003696857672,6.158333333333333,14,1.0,780,55.714285714285715,23.5,12.288240148306881,The International Linear Collider,2203.07622,293
+EF: Beyond the Standard Model - Dark Matter at Colliders,14,0.025878003696857672,9.25,14,1.0,194,13.857142857142858,14.0,3.1039533753614723,LHCb Future Dark-Sector Sensitivity Projections for Snowmass 2021,2203.07048,29
+EF: Beyond the Standard Model - Model Specific Explorations,14,0.025878003696857672,9.833333333333334,14,1.0,319,22.785714285714285,8.5,5.1870696031617705,Naturalness,2205.05708,118
+EF: Electroweak Precision Physics and Constraining New Physics,14,0.025878003696857672,9.166666666666666,14,1.0,744,53.142857142857146,11.0,11.209489157233941,Vector Boson Fusion at Multi-TeV Muon Colliders,2005.10289,200
+IF: Quantum Sensors,13,0.024029574861367836,4.45,13,1.0,995,76.53846153846153,41.0,17.468621601525363,Axion Dark Matter,2203.14923,346
+AF: Accelerators for Neutrinos,12,0.022181146025878003,5.9,11,0.9166666666666666,110,10.0,10.0,2.2058209238026314,Performance of the LHC Injector Chain after the Upgrade and Potential Development,2203.09202,20
+IF: Calorimetry,12,0.022181146025878003,8.666666666666666,12,1.0,51,4.25,2.0,0.8302181143188662,Dual-Readout Calorimetry for Future Experiments Probing Fundamental Physics,2203.04312,17
+NF: General - cross-listed,12,0.022181146025878003,2.192857142857143,12,1.0,466,38.833333333333336,8.5,8.5284933936353,Event Generators for High-Energy Physics Experiments,2203.11110,201
+RPF: Dark Sector Studies at High Intensities,12,0.022181146025878003,5.958333333333333,12,1.0,649,54.083333333333336,30.5,12.37093460108208,The International Linear Collider,2203.07622,293
+CF: Dark Matter: Cosmic Probes,11,0.02033271719038817,9.333333333333334,11,1.0,482,43.81818181818182,33.0,9.812248048639454,Dark Matter In Extreme Astrophysical Environments,2203.07984,106
+EF: General - cross-listed,11,0.02033271719038817,3.1,11,1.0,116,10.545454545454545,4.0,2.4944596995271158,Lattice QCD and Particle Physics,2207.07641,53
+NF: Neutrino Detectors,11,0.02033271719038817,5.0,11,1.0,180,16.363636363636363,18.0,3.751856013150899,Low-Energy Physics in Neutrino LArTPCs,2203.00740,42
+TF: Beyond-Standard-Model Model Building,11,0.02033271719038817,7.5,11,1.0,326,29.636363636363637,23.0,6.695115860835816,Ultraheavy Particle Dark Matter,2203.06508,89
+TF: Conformal Field Theory and Formal Quantum Field Theory,11,0.02033271719038817,10.5,11,1.0,1058,96.18181818181819,52.0,21.639269471311014,Generalized Symmetries in Quantum Field Theory and Beyond,2205.09545,312
+TF: Theory of Neutrino Physics,11,0.02033271719038817,4.25,11,1.0,651,59.18181818181818,48.0,13.512176555416083,Neutrino Self-Interactions,2203.01955,142
+AF: Advanced Accelerator Concepts,10,0.018484288354898338,9.333333333333334,10,1.0,111,11.1,9.0,2.530380621319103,Linear Collider Based on Laser-Plasma Accelerators,2203.08366,45
+AF: Multi-TeV Colliders,10,0.018484288354898338,5.083333333333333,10,1.0,590,59.0,40.0,11.889326487066292,Vector Boson Fusion at Multi-TeV Muon Colliders,2005.10289,200
+"CEF: Diversity, Equity, and Inclusion",10,0.018484288354898338,9.5,9,0.9,45,5.0,5.0,1.1488355138693784,Climate of the Field: Snowmass 2021,2204.03713,7
+EF: Heavy Flavor and Top Quark Physics,10,0.018484288354898338,9.0,10,1.0,119,11.9,8.0,2.597480246895208,On the Modeling Uncertainties of ttbar W± Multi-Lepton Signatures,2109.15181,40
+IF: General - centered on this frontier,10,0.018484288354898338,3.8273809523809526,10,1.0,1139,113.9,55.5,25.834895320532503,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+IF: General - cross-listed,10,0.018484288354898338,2.783333333333333,10,1.0,619,61.9,25.5,14.071399738621913,Electron Ion Collider for High Energy Physics,2203.13199,197
+IF: Noble Element-Based Detectors,10,0.018484288354898338,3.4,10,1.0,399,39.9,17.0,9.132454100424805,A Next-Generation Liquid Xenon Observatory for Dark Matter and Neutrino Physics,2203.02309,218
+IF: Solid State Detectors and Tracking,10,0.018484288354898338,8.166666666666666,9,0.9,68,7.555555555555555,8.0,1.7134019110676861,Strategies for Beam-Induced Background Reduction at Muon Colliders,2203.06773,18
+NF: Artificial Neutrino Sources,10,0.018484288354898338,5.0,10,1.0,145,14.5,16.0,3.2220000449056774,High Energy Physics Opportunities Using Reactor Antineutrinos,2203.07214,25
+TF: Lattice Gauge Theory,10,0.018484288354898338,4.5,10,1.0,438,43.8,34.5,10.06877466963521,Prospects for Precise Predictions of a_μ in the Standard Model,2203.15810,134
+CompF: Quantum Computing,9,0.0166358595194085,6.0,9,1.0,729,81.0,23.0,18.621238314489155,Quantum Simulation for High Energy Physics,2204.03381,544
+EF: Higgs Boson as a Portal to New Physics,9,0.0166358595194085,6.5,9,1.0,208,23.11111111111111,6.0,5.279657878347046,Detection of Early-Universe Gravitational Wave Signatures and Fundamental Physics,2203.07972,153
+NF: General - centered on this frontier,9,0.0166358595194085,2.626190476190476,9,1.0,885,98.33333333333333,19.0,21.62444910565763,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+RPF: Fundamental Physics in Small Experiments,9,0.0166358595194085,4.683333333333334,9,1.0,1136,126.22222222222223,134.0,28.78577473418716,Axion Dark Matter,2203.14923,346
+RPF: General - cross-listed,9,0.0166358595194085,1.5761904761904761,9,1.0,253,28.11111111111111,7.0,5.974714376209635,The Future Circular Collider: a Summary for the US 2021 Snowmass Process,2203.06520,166
+"TF: String Theory, Quantum Gravity, and Black Holes",9,0.0166358595194085,8.0,9,1.0,368,40.888888888888886,33.0,9.331561708526353,Quantum Aspects of Black Holes and the Emergence of Spacetime,2201.03096,75
+AF: Accelerator Technology - Targets and Sources,8,0.014787430683918669,8.0,8,1.0,61,7.625,5.5,1.7601184969540644,Positron Sources for Future High Energy Physics Colliders,2204.13245,20
+AF: Accelerators for Rare Processes and Physics Beyond Colliders,8,0.014787430683918669,4.033333333333333,8,1.0,502,62.75,23.0,14.40775621213312,Axion Dark Matter,2203.14923,346
+CEF: Applications and Industry,8,0.014787430683918669,5.166666666666667,6,0.75,49,8.166666666666666,4.5,1.8577126017882093,C^3 Demonstration Research and Development Plan,2203.09076,29
+CF: Dark Energy and Cosmic Acceleration: Cosmic Dawn and Before,8,0.014787430683918669,5.333333333333333,8,1.0,915,114.375,65.0,25.971123944896398,Inflation: Theory and Observations,2203.08128,320
+EF: QCD and Strong Interactions - Hadronic Structure and Forward QCD Processes,8,0.014787430683918669,5.0,8,1.0,451,56.375,52.5,12.93501411631641,Proton structure at the Precision Frontier,2203.13923,175
+IF: Cross-Cutting Issues and Systems Integration,8,0.014787430683918669,5.45,8,1.0,55,6.875,1.5,1.5654153143367566,Recent Progress and Next Steps for the MATHUSLA LLP Detector,2203.08126,32
+NF: Neutrino Properties,8,0.014787430683918669,4.916666666666667,8,1.0,404,50.5,59.0,11.480772579403427,KATRIN: Status and Prospects for the Neutrino Mass and Beyond,2203.08059,93
+RPF: Baryon and Lepton Number Violation,8,0.014787430683918669,3.583333333333333,8,1.0,358,44.75,41.5,10.170603905857742,Neutrinoless Double-Beta Decay: A Roadmap for Matching Theory to Experiment,2203.12169,93
+RPF: Charged Lepton Flavor Violation,8,0.014787430683918669,6.666666666666667,8,1.0,228,28.5,32.0,6.5049352042428605,Charged Lepton Flavor Violation in the Tau Sector,2203.14919,67
+RPF: Weak Decays of b and c Quarks,8,0.014787430683918669,6.166666666666667,8,1.0,180,22.5,19.0,4.671528651906153,New Physics in B Meson Mixing: Future Sensitivity and Limitations,2006.04824,74
+TF: Theory Techniques for Precision Physics,8,0.014787430683918669,6.0,8,1.0,389,48.625,22.5,10.481926233707675,Proton structure at the Precision Frontier,2203.13923,175
+AF: Beam Physics and Accelerator Education,7,0.012939001848428836,2.95,7,1.0,22,3.142857142857143,3.0,0.7221831112889405,The Necessity of International Particle Physics Opportunities for American Education,2203.09336,5
+CF: General - centered on this frontier:,7,0.012939001848428836,2.342857142857143,7,1.0,1183,169.0,172.0,35.26496018738451,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+CompF: Storage and Processing Resource Access,7,0.012939001848428836,7.0,7,1.0,17,2.4285714285714284,3.0,0.5516395025263436,Data Storage for HEP Experiments in the Era of High-Performance Computing,2203.07885,4
+TF: Effective Field Theory Techniques,7,0.012939001848428836,6.0,7,1.0,460,65.71428571428571,66.0,15.21360082741865,UV Constraints on IR Physics,2203.06805,130
+CEF: Physics Education,6,0.011090573012939002,5.0,6,1.0,21,3.5,3.5,0.8230788495252908,Data Science and Machine Learning in Education,2207.09060,5
+CF: Dark Energy and Cosmic Acceleration: The Modern Universe,6,0.011090573012939002,6.0,6,1.0,223,37.166666666666664,21.5,8.89913059566001,The MegaMapper: A Stage-5 Spectroscopic Instrument Concept for the Study of Inflation and Dark Energy,2209.04322,97
+CompF: General - centered on this frontier:,6,0.011090573012939002,4.7,6,1.0,58,9.666666666666666,7.5,1.9606697581061263,HL-LHC Computing Review: Common Tools and Community Software,2008.13636,24
+IF: Micro Pattern Gas Detectors,6,0.011090573012939002,5.333333333333333,6,1.0,50,8.333333333333334,3.0,1.8886045845686568,"Recoil Imaging for Dark Matter, Neutrinos, and Physics Beyond the Standard Model",2203.05914,33
+RPF: Hadron Spectroscopy,6,0.011090573012939002,5.5,6,1.0,100,16.666666666666668,12.5,3.7906364105492267,Hadron Spectroscopy with Lattice QCD,2203.03230,40
+TF: Quantum Information Science,6,0.011090573012939002,3.75,6,1.0,667,111.16666666666667,26.0,25.573939217450985,Quantum Simulation for High Energy Physics,2204.03381,544
+CEF: Environmental and Societal Impacts,5,0.009242144177449169,2.825,5,1.0,329,65.8,10.0,14.937623291988048,The International Linear Collider,2203.07622,293
+CompF: End User Analysis,5,0.009242144177449169,4.5,5,1.0,25,5.0,5.0,1.1012442546811894,Analysis Description Language: A DSL for HEP Analysis,2203.09886,9
+IF: Trigger and Data Acquisition,5,0.009242144177449169,2.533333333333333,5,1.0,33,6.6,4.0,1.4440319140594449,"Physics Community Needs, Tools, and Resources for Machine Learning",2203.16255,17
+NF: Neutrino Interaction Cross Sections,5,0.009242144177449169,1.8333333333333333,5,1.0,285,57.0,53.0,13.193429967127843,"Theoretical Tools for Neutrino Scattering: Interplay between Lattice QCD, EFTs, Nuclear Physics, Phenomenology, and Neutrino Event Generators",2203.09030,101
+NF: Neutrino Oscillations,5,0.009242144177449169,2.533333333333333,4,0.8,106,26.5,17.0,6.001196909496868,Hyper-Kamiokande Experiment,2203.02029,65
+RPF: Weak Decays of Strange and Light Quarks,5,0.009242144177449169,4.333333333333333,5,1.0,319,63.8,35.0,14.253166523427897,New Physics Searches at Kaon and Hyperon Factories,2201.07805,175
+TF: Scattering Amplitudes,5,0.009242144177449169,4.5,5,1.0,622,124.4,145.0,28.79655879492303,Gravitational Waves and Scattering Amplitudes,2204.05194,175
+UF: Underground Detectors,5,0.009242144177449169,1.15,5,1.0,353,70.6,45.0,15.972466368724154,A Next-Generation Liquid Xenon Observatory for Dark Matter and Neutrino Physics,2203.02309,218
+CEF: General - centered on this frontier,4,0.0073937153419593345,2.2,4,1.0,12,3.0,3.0,0.6963763906040727,Snowmass 2021 Community Survey Report,2203.07328,6
+CF: Dark Matter: Wave-like,4,0.0073937153419593345,1.2833333333333332,4,1.0,631,157.75,138.0,36.113254494581525,Axion Dark Matter,2203.14923,346
+IF: Electronics and ASICs,4,0.0073937153419593345,4.0,4,1.0,15,3.75,3.5,0.8614515578686069,Electronics for Fast Timing,2204.00149,6
+NF: Sterile Neutrinos,4,0.0073937153419593345,2.8333333333333335,4,1.0,342,85.5,81.5,15.613517974287964,"CMB-HD: An Ultra-Deep, High Resolution Millimeter Wave Survey over Half the Sky",1906.10134,175
+UF: General - cross-listed:,4,0.0073937153419593345,0.7,4,1.0,33,8.25,6.0,1.8800010146807258,Theia: Summary of physics program,2202.12839,19
+CEF: Public Policy and Government Engagement,3,0.005545286506469501,3.0,3,1.0,9,3.0,3.0,0.7300133244503664,Public Policy and Government Engagement: Congressional Advocacy for Areas Beyond HEP Funding,2207.00124,3
+CF: Dark Energy and Cosmic Acceleration: Complementarity of Probes and New Facilities,3,0.005545286506469501,3.0,3,1.0,137,45.666666666666664,10.0,11.50692765873979,"A Spectroscopic Road Map for Cosmic Frontier: DESI, DESI-II, Stage-5",2209.03585,121
+CompF: General - cross-listed:,3,0.005545286506469501,0.34285714285714286,3,1.0,18,6.0,4.0,1.3830752426344455,The Sanford Underground Research Facility,2203.08293,12
+CompF: Reinterpretation and Long-Term Preservation of Data and Code,3,0.005545286506469501,1.3333333333333333,3,1.0,25,8.333333333333334,3.0,1.9117485296684378,"Data and Analysis Preservation, Recasting, and Reinterpretation",2203.10057,20
+EF: QCD and Strong Interactions - Heavy Ions,3,0.005545286506469501,1.5833333333333333,3,1.0,259,86.33333333333333,52.0,19.68347418724561,Electron Ion Collider for High Energy Physics,2203.13199,197
+EF: QCD and Strong Interactions - Precision QCD,3,0.005545286506469501,3.0,3,1.0,203,67.66666666666667,29.0,15.389855631365284,The Strong Coupling Constant: State of the Art and the Decade Ahead,2203.08271,153
+IF: Radio Detection,3,0.005545286506469501,1.5833333333333333,3,1.0,250,83.33333333333333,53.0,18.929267344441744,High-Energy and Ultra-High-Energy Neutrinos,2203.08096,196
+NF: Neutrino Applications,3,0.005545286506469501,2.2,3,1.0,33,11.0,10.0,2.411773397580349,Nu Tools: Exploring Practical Roles for Neutrinos in Nuclear Energy and Security,2112.12593,21
+NF: Neutrinos from Natural Sources,3,0.005545286506469501,0.65,3,1.0,418,139.33333333333334,196.0,31.53679640709362,A Next-Generation Liquid Xenon Observatory for Dark Matter and Neutrino Physics,2203.02309,218
+TF: General - centered on this frontier,3,0.005545286506469501,1.7,3,1.0,390,130.0,173.0,29.577023146951955,Event Generators for High-Energy Physics Experiments,2203.11110,201
+UF: Underground Facilities for Neutrinos,3,0.005545286506469501,0.6166666666666667,3,1.0,102,34.0,18.0,7.699430122108258,Tau Neutrinos in the Next Decade: from GeV to EeV,2203.05591,74
+AF: General - cross-listed,2,0.0036968576709796672,0.5833333333333333,2,1.0,20,10.0,10.0,2.3710045299748845,Precision Studies of Spacetime Symmetries and Gravitational Physics,2203.09691,13
+CEF: Career Pipeline and Development,2,0.0036968576709796672,2.0,2,1.0,7,3.5,3.5,0.7979868913857678,Enhancing HEP Research in Predominantly Undergraduate Institutions and Community Colleges,2203.11662,4
+CEF: Public Education and Outreach,2,0.0036968576709796672,2.0,2,1.0,5,2.5,2.5,0.5683586984402765,The Need for Structural Changes to Create Impactful Public Engagement in US Particle Physics,2203.08916,3
+CompF: Experimental Algorithm Parallelization,2,0.0036968576709796672,1.5,2,1.0,5,2.5,2.5,0.5673001694381689,Portability: A Necessary Approach for Future Scientific Software,2203.09945,3
+IF: Photon Detectors,2,0.0036968576709796672,1.5,2,1.0,21,10.5,10.5,2.385461029754506,Future Advances in Photon-Based Neutrino Detectors,2203.07479,18
+UF: General - centered on this frontier:,2,0.0036968576709796672,0.34285714285714286,2,1.0,24,12.0,12.0,2.725746268656716,The European Spallation Source Neutrino Super Beam,2203.08803,12
+CEF: General - cross-listed,1,0.0018484288354898336,0.14285714285714285,1,1.0,12,12.0,12.0,2.725746268656716,The Sanford Underground Research Facility,2203.08293,12
+UF: Supporting Capabilities,1,0.0018484288354898336,0.25,1,1.0,10,10.0,10.0,2.2757009345794392,A Facility for Low-Radioactivity Underground Argon,2203.09734,10

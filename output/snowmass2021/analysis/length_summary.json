@@ -1,0 +1,52 @@
+{
+  "generated": "2026-08-09",
+  "record_count": 541,
+  "download_ok_count": 541,
+  "pdf_source_counts": {
+    "HAL fallback": 1,
+    "arXiv fallback": 7,
+    "official SLAC eConf": 533
+  },
+  "extraction_status_counts": {
+    "pdftotext": 541
+  },
+  "page_count": {
+    "total": 17794.0,
+    "mean": 32.8909426987061,
+    "median": 21.0,
+    "p25": 12.0,
+    "p75": 39.0,
+    "min": 2.0,
+    "max": 429.0
+  },
+  "text_chars_no_space": {
+    "total": 43116615.0,
+    "mean": 79697.9944547135,
+    "median": 47751.0,
+    "p25": 27025.0,
+    "p75": 93216.0,
+    "min": 5942.0,
+    "max": 1117358.0
+  },
+  "unicode_token_count": {
+    "total": 8311295.0,
+    "mean": 15362.837338262478,
+    "median": 9139.0,
+    "p25": 5173.0,
+    "p75": 17503.0,
+    "min": 1092.0,
+    "max": 225721.0
+  },
+  "latin_word_count": {
+    "total": 7319902.0,
+    "mean": 13530.317929759703,
+    "median": 8135.0,
+    "p25": 4656.0,
+    "p75": 15560.0,
+    "min": 1038.0,
+    "max": 193985.0
+  },
+  "total_file_size_bytes": 1961394830,
+  "definition": "page_count is physical PDF pages. text_chars_no_space removes whitespace. unicode_token_count is a Unicode alphanumeric token proxy; latin_word_count counts Latin-script word tokens. Counts include references, captions, headers, footers, and extracted text artifacts; they are not publisher-authoritative manuscript word counts.",
+  "source": "Official Snowmass 2021 Proceedings PDF URLs on SLAC eConf; arXiv/HAL fallback used only for malformed/missing archive links"
+}

@@ -1,0 +1,5 @@
+group,paper_count,share_of_catalog,fractional_paper_count,citable_paper_count,citation_coverage,total_citations,mean_citations,median_citations,mean_citations_per_year,top_cited_title,top_cited_arxiv,top_cited_count
+2019,6,0.011090573012939002,3.7,6,1.0,435,72.5,32.5,9.93479709946983,Modern and Future Colliders,2003.09084,181
+2020,7,0.012939001848428836,4.25,7,1.0,410,58.57142857142857,24.0,9.43900776960706,Vector Boson Fusion at Multi-TeV Muon Colliders,2005.10289,200
+2021,24,0.04436229205175601,15.45,24,1.0,1385,57.708333333333336,21.5,11.606343373933717,"The Forward Physics Facility: Sites, Experiments, and Physics Potential",2109.10905,287
+2022,504,0.9316081330868762,389.7940476190476,500,0.9920634920634921,19153,38.306,13.0,8.769783060033431,"Cosmology Intertwined: A Review of the Particle Physics, Astrophysics, and Cosmology Associated with the Cosmological Tensions and Anomalies",2203.06142,1594

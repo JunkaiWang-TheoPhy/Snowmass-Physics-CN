@@ -1,0 +1,11 @@
+group,frontier_name,frontier_name_zh,paper_count,share_of_catalog,fractional_paper_count,citable_paper_count,citation_coverage,total_citations,mean_citations,median_citations,mean_citations_per_year,top_cited_title,top_cited_arxiv,top_cited_count
+EF,Energy,能量前沿,163,0.30129390018484287,101.05119047619047,163,1.0,6445,39.5398773006135,12.0,8.765183409993028,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+TF,Theory,理论前沿,148,0.2735674676524954,84.35119047619048,148,1.0,10339,69.85810810810811,33.0,15.595394894551942,Quantum Simulation for High Energy Physics,2204.03381,544
+AF,Accelerator Science and Technology,加速器科学与技术,122,0.2255083179297597,82.85119047619048,121,0.9918032786885246,3721,30.75206611570248,9.0,6.691441027103093,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+CF,Cosmic,宇宙前沿,107,0.1977818853974122,58.12738095238095,107,1.0,8439,78.86915887850468,28.0,17.818898177049608,"Cosmology Intertwined: A Review of the Particle Physics, Astrophysics, and Cosmology Associated with the Cosmological Tensions and Anomalies",2203.06142,1594
+IF,Instrumentation,仪器学前沿,93,0.17190388170055454,51.694047619047616,92,0.989247311827957,3695,40.16304347826087,8.5,9.118939640258363,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+NF,Neutrinos,中微子前沿,87,0.16081330868761554,38.910714285714285,86,0.9885057471264368,4755,55.2906976744186,20.0,12.26050994963422,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+RPF,Rare Processes and Precision Measurements,稀有过程与精密测量,81,0.14972273567467653,45.34404761904762,81,1.0,4399,54.30864197530864,27.0,12.224110003323869,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+CompF,Computational,计算前沿,70,0.12939001848428835,43.77619047619048,70,1.0,2512,35.885714285714286,11.5,7.704597731135805,Quantum Simulation for High Energy Physics,2204.03381,544
+CEF,Community Engagement,社群参与,41,0.07578558225508318,31.83452380952381,38,0.926829268292683,489,12.868421052631579,4.0,2.9354307309663645,The International Linear Collider,2203.07622,293
+UF,Underground Facilities and Infrastructure,地下设施与基础设施,15,0.027726432532347505,3.0595238095238093,15,1.0,522,34.8,12.0,7.880521316037422,A Next-Generation Liquid Xenon Observatory for Dark Matter and Neutrino Physics,2203.02309,218

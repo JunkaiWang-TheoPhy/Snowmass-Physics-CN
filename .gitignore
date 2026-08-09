@@ -1,1 +1,23 @@
 .DS_Store
+.omx/
+.baoyu-skills/
+AGENTS.md
+
+# Local credentials and service state. Keep the empty template tracked.
+.env
+.env.*
+!.env.example
+*.local
+
+# Python and tool caches.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Large local Snowmass inputs are resumable runtime data, not source control artifacts.
+output/snowmass2021_sources/
+output/snowmass2021_translation/
+output/snowmass2021/rights/cache/
+output/snowmass2021/analysis/*.inspect.ndjson
+output/github_skill_research/
+tmp/

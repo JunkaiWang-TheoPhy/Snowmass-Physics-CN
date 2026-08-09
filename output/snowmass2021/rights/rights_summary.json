@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-08-09T06:35:11+00:00",
+  "catalog_records": 541,
+  "manifest_records": 541,
+  "method": "arXiv abs-page license link for arXiv records; external records use documented PDF/HAL metadata overrides",
+  "source": "https://info.arxiv.org/help/license/index.html",
+  "translation_policy_source": "https://info.arxiv.org/help/translations.html",
+  "hal_authorization_source": "https://about.hal.science/en/hal-authorisation-v1/",
+  "license_counts": {
+    "ARXIV-NONEXCLUSIVE-DISTRIB-1.0": 239,
+    "CC-BY-4.0": 246,
+    "CC-BY-NC-ND-4.0": 28,
+    "CC-BY-NC-SA-4.0": 14,
+    "CC-BY-SA-4.0": 2,
+    "CC0-1.0": 11,
+    "HAL-AUTHORIZATION-V1": 1
+  },
+  "decision_counts": {
+    "eligible-after-attribution-check": 257,
+    "eligible-after-sharealike-check": 2,
+    "eligible-noncommercial-only-after-sharealike-check": 14,
+    "hold-hal-authorization-manual-review": 1,
+    "hold-manual-license-review": 239,
+    "hold-no-public-adaptation": 28
+  },
+  "caveat": "An arXiv non-exclusive distribution license grants arXiv limited distribution rights; it is not treated as permission to adapt or republish. Authors may state a separate license in the paper itself, so manual PDF/source review remains required for non-CC and unlisted cases."
+}

@@ -1,0 +1,182 @@
+[
+  {
+    "record_id": "arxiv:2203.06281",
+    "arxiv": "2203.06281",
+    "external_url": "https://arxiv.org/abs/2203.06281",
+    "title": "A Gaseous Argon-Based Near Detector to Enhance the Physics Capabilities of DUNE",
+    "authors_as_listed": "A. Abed Abud et al.",
+    "frontiers": [
+      "IF",
+      "NF"
+    ],
+    "topics": [
+      "IF: General - centered on this frontier",
+      "NF: General - centered on this frontier"
+    ],
+    "official_pdf_paths": [
+      "papers//2203.06281.pdf",
+      "papers/2203.06281.pdf"
+    ],
+    "title_variants": [],
+    "author_variants": [],
+    "placement_count": 2,
+    "number": 7,
+    "official_pdf_urls": [
+      "https://www.slac.stanford.edu/econf/C210711/papers//2203.06281.pdf",
+      "https://www.slac.stanford.edu/econf/C210711/papers/2203.06281.pdf"
+    ]
+  },
+  {
+    "record_id": "arxiv:2205.15373",
+    "arxiv": "2205.15373",
+    "external_url": "https://arxiv.org/abs/2205.15373",
+    "title": "A Lattice QCD Perspective on Weak Decays of b and c Quarks",
+    "authors_as_listed": "P. A. Boyle et al.",
+    "frontiers": [
+      "CompF",
+      "RPF",
+      "TF"
+    ],
+    "topics": [
+      "CompF: Theoretical Calculations and Simulations",
+      "RPF: Weak Decays of b and c Quarks",
+      "TF: Lattice Gauge Theory"
+    ],
+    "official_pdf_paths": [
+      "papers/2205.15373.pdf",
+      "papers/arXiv:2205.15373.pdf"
+    ],
+    "title_variants": [
+      "A Lattice QCD Perspective on /weak //decays of b and c Quarks"
+    ],
+    "author_variants": [
+      "P. Boyle et al."
+    ],
+    "placement_count": 3,
+    "number": 9,
+    "official_pdf_urls": [
+      "https://www.slac.stanford.edu/econf/C210711/papers/2205.15373.pdf",
+      "https://www.slac.stanford.edu/econf/C210711/papers/arXiv:2205.15373.pdf"
+    ]
+  },
+  {
+    "record_id": "arxiv:2205.05708",
+    "arxiv": "2205.05708",
+    "external_url": "https://arxiv.org/abs/2205.05708",
+    "title": "Naturalness",
+    "authors_as_listed": "N. Craig.",
+    "frontiers": [
+      "EF",
+      "TF"
+    ],
+    "topics": [
+      "EF: Beyond the Standard Model - Model Specific Explorations",
+      "TF: Effective Field Theory Techniques"
+    ],
+    "official_pdf_paths": [
+      "papers/2203.12118.pdf",
+      "papers/2205.05708.pdf"
+    ],
+    "title_variants": [],
+    "author_variants": [],
+    "placement_count": 2,
+    "number": 291,
+    "official_pdf_urls": [
+      "https://www.slac.stanford.edu/econf/C210711/papers/2203.12118.pdf",
+      "https://www.slac.stanford.edu/econf/C210711/papers/2205.05708.pdf"
+    ]
+  },
+  {
+    "record_id": "external:https://hal.archives-ouvertes.fr/hal-03634918",
+    "arxiv": "",
+    "external_url": "https://hal.archives-ouvertes.fr/hal-03634918",
+    "title": "Tagged Neutrino Beams",
+    "authors_as_listed": "M. Perrin-Terrin.",
+    "frontiers": [
+      "AF",
+      "IF",
+      "NF"
+    ],
+    "topics": [
+      "AF: Accelerators for Neutrinos",
+      "IF: Solid State Detectors and Tracking",
+      "NF: Neutrino Oscillations"
+    ],
+    "official_pdf_paths": [
+      "papers/HAL-03634918.pdf",
+      "papers/hal-03634918.pdf"
+    ],
+    "title_variants": [],
+    "author_variants": [],
+    "placement_count": 3,
+    "number": 454,
+    "official_pdf_urls": [
+      "https://www.slac.stanford.edu/econf/C210711/papers/HAL-03634918.pdf",
+      "https://www.slac.stanford.edu/econf/C210711/papers/hal-03634918.pdf"
+    ]
+  },
+  {
+    "record_id": "arxiv:2203.08293",
+    "arxiv": "2203.08293",
+    "external_url": "https://arxiv.org/abs/2203.08293",
+    "title": "The Sanford Underground Research Facility",
+    "authors_as_listed": "J. Heise.",
+    "frontiers": [
+      "CEF",
+      "CF",
+      "CompF",
+      "IF",
+      "NF",
+      "RPF",
+      "UF"
+    ],
+    "topics": [
+      "CEF: General - cross-listed",
+      "CF: General - cross-listed:",
+      "CompF: General - cross-listed:",
+      "IF: General - centered on this frontier",
+      "NF: General - cross-listed",
+      "RPF: General - cross-listed",
+      "UF: General - centered on this frontier:"
+    ],
+    "official_pdf_paths": [
+      "papers/2203.08293",
+      "papers/2203.08293.pdf"
+    ],
+    "title_variants": [],
+    "author_variants": [],
+    "placement_count": 7,
+    "number": 502,
+    "official_pdf_urls": [
+      "https://www.slac.stanford.edu/econf/C210711/papers/2203.08293",
+      "https://www.slac.stanford.edu/econf/C210711/papers/2203.08293.pdf"
+    ]
+  },
+  {
+    "record_id": "arxiv:2205.13215",
+    "arxiv": "2205.13215",
+    "external_url": "https://arxiv.org/abs/2205.13215",
+    "title": "The SLAC Linac to ESA (LESA) Beamline for Dark Sector Searches and Test Beams",
+    "authors_as_listed": "T. Markiewicz et al.",
+    "frontiers": [
+      "AF",
+      "RPF"
+    ],
+    "topics": [
+      "AF: Accelerators for Rare Processes and Physics Beyond Colliders",
+      "RPF: General - centered on this frontier"
+    ],
+    "official_pdf_paths": [
+      "papers/2205.13215.pdf",
+      "papers/arXiv:2205.13215.pdf"
+    ],
+    "title_variants": [],
+    "author_variants": [],
+    "placement_count": 2,
+    "number": 504,
+    "official_pdf_urls": [
+      "https://www.slac.stanford.edu/econf/C210711/papers/2205.13215.pdf",
+      "https://www.slac.stanford.edu/econf/C210711/papers/arXiv:2205.13215.pdf"
+    ]
+  }
+]

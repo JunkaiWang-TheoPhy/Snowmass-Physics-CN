@@ -1,0 +1,86 @@
+[
+  {
+    "pdf": "arxiv_2011.05329.pdf",
+    "first_two_page_mentions": [
+      "Licensing provisions: GNU General Public License 3 (GPL)",
+      "licensed by GPLv3, GNU Lesser General Public License (LGPL) or by other licenses",
+      "compatible with the GPLv3 license, and adhere to Mendeley Data approved open-source",
+      "software licenses. These licenses files are includes with the program."
+    ],
+    "interpretation": "software/data license context; not treated as a license for the paper translation"
+  },
+  {
+    "pdf": "arxiv_2203.07091.pdf",
+    "first_two_page_mentions": [
+      "retains a non-exclusive, paid-up, irrevocable, world-wide license"
+    ],
+    "interpretation": "contextual rights notice; requires manual review"
+  },
+  {
+    "pdf": "arxiv_2203.08280.pdf",
+    "first_two_page_mentions": [
+      "This paper is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives",
+      "4.0 International License. To view a copy of this license, visit",
+      "http://creativecommons.org/licenses/by-nc-nd/4.0/."
+    ],
+    "interpretation": "matches the arXiv CC-BY-NC-ND-4.0 record; public adaptation is held"
+  },
+  {
+    "pdf": "arxiv_2203.08427.pdf",
+    "first_two_page_mentions": [
+      "irrevocable, worldwide license to publish or reproduce the published form of this manuscript, or allow others to do so, for US government purposes."
+    ],
+    "interpretation": "government-purpose notice; does not replace the recorded arXiv license"
+  },
+  {
+    "pdf": "arxiv_2203.08805.pdf",
+    "first_two_page_mentions": [
+      "that the United States Government retains a non-exclusive, paidup, irrevocable, world-wide license to publish or reproduce the"
+    ],
+    "interpretation": "government-purpose notice; does not replace the recorded arXiv license"
+  },
+  {
+    "pdf": "arxiv_2203.09467.pdf",
+    "first_two_page_mentions": [
+      "worldwide license to publish or reproduce the published form of this manuscript, or allow others to do so, for"
+    ],
+    "interpretation": "government-purpose notice; arXiv record remains non-exclusive and held"
+  },
+  {
+    "pdf": "arxiv_2203.15128.pdf",
+    "first_two_page_mentions": [
+      "A.2 Technology License",
+      "A.3 Process of Requesting a License",
+      "B.2 Process of Requesting a License"
+    ],
+    "interpretation": "technology-license discussion inside the paper; not a blanket translation license"
+  },
+  {
+    "pdf": "arxiv_2203.16979.pdf",
+    "first_two_page_mentions": [
+      "that the United States Government retains a non-exclusive, paidup, irrevocable, world-wide license to publish or reproduce the"
+    ],
+    "interpretation": "government-purpose notice; arXiv record remains non-exclusive and held"
+  },
+  {
+    "pdf": "arxiv_2205.05745.pdf",
+    "first_two_page_mentions": [
+      "©2021. All rights reserved."
+    ],
+    "interpretation": "consistent with a restrictive source record; public adaptation is held"
+  },
+  {
+    "pdf": "external_https_cds.cern.ch_record_2806113.pdf",
+    "first_two_page_mentions": [
+      "© 2022 CERN for the benefit of the LHCb collaboration. CC-BY-4.0 licence."
+    ],
+    "interpretation": "used as the official PDF evidence for CC-BY-4.0"
+  },
+  {
+    "pdf": "external_https_cds.cern.ch_record_2806962.pdf",
+    "first_two_page_mentions": [
+      "c 2022 CERN for the benefit of the CMS and ATLAS Collaborations. CC-BY-4.0 license"
+    ],
+    "interpretation": "used as the official PDF evidence for CC-BY-4.0"
+  }
+]

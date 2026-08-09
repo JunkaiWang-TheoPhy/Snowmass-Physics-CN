@@ -1,0 +1,24 @@
+group,discipline_family,discipline_family_zh,paper_count,share_of_catalog,fractional_paper_count,citable_paper_count,citation_coverage,total_citations,mean_citations,median_citations,mean_citations_per_year,top_cited_title,top_cited_arxiv,top_cited_count
+hep-ph,Particle phenomenology,粒子唯象学,167,0.30868761552680224,116.26666666666667,167,1.0,7816,46.80239520958084,22.0,10.370330145631964,The Present and Future Status of Heavy Neutral Leptons,2203.08039,343
+hep-ex,Experimental particle physics,实验粒子物理,108,0.19963031423290203,80.85238095238095,108,1.0,3834,35.5,15.0,8.068754194355542,The Forward Physics Facility at the High-Luminosity LHC,2203.05090,422
+physics.acc-ph,Accelerator science,加速器科学,81,0.14972273567467653,66.575,81,1.0,1474,18.19753086419753,6.0,3.9272552279099435,The International Linear Collider,2203.07622,293
+physics.ins-det,Instrumentation and detectors,仪器与探测器,51,0.09426987060998152,37.983333333333334,51,1.0,750,14.705882352941176,6.0,3.3015707908710312,A Next-Generation Liquid Xenon Observatory for Dark Matter and Neutrino Physics,2203.02309,218
+hep-th,Formal theory / quantum gravity,形式理论与量子引力,29,0.053604436229205174,27.0,29,1.0,2397,82.65517241379311,53.0,18.831583552517817,Generalized Symmetries in Quantum Field Theory and Beyond,2205.09545,312
+astro-ph.CO,Cosmology,宇宙学,22,0.04066543438077634,18.666666666666668,22,1.0,2996,136.1818181818182,29.5,30.352053345744782,"Cosmology Intertwined: A Review of the Particle Physics, Astrophysics, and Cosmology Associated with the Cosmological Tensions and Anomalies",2203.06142,1594
+physics.ed-ph,Physics and instrumentation,物理与仪器,13,0.024029574861367836,12.0,13,1.0,48,3.6923076923076925,4.0,0.8532609564187418,Informal Socialization in Physics Training,2203.11518,6
+physics.soc-ph,"Community, education and society",社群、教育与社会,13,0.024029574861367836,11.2,13,1.0,61,4.6923076923076925,3.0,1.091319342637365,Climate Impacts of Particle Physics,2203.12389,18
+hep-lat,Lattice gauge theory,格点规范理论,9,0.0166358595194085,4.166666666666667,9,1.0,310,34.44444444444444,29.0,7.9174075636721675,Lattice QCD Calculations of Parton Physics,2202.07193,60
+quant-ph,Quantum information and sensors,量子信息与量子传感器,8,0.014787430683918669,5.166666666666667,8,1.0,629,78.625,13.0,18.103577098436933,Quantum Simulation for High Energy Physics,2204.03381,544
+Unknown,Unknown,未分类,6,0.011090573012939002,4.166666666666667,2,0.3333333333333333,25,12.5,12.5,2.716017251635931,Future Physics Potential of LHCb,,23
+gr-qc,Gravitation and cosmology,引力与宇宙学,5,0.009242144177449169,3.5,5,1.0,273,54.6,30.0,12.444272917818989,Detection of Early-Universe Gravitational Wave Signatures and Fundamental Physics,2203.07972,153
+physics.data-an,Data analysis,数据分析,5,0.009242144177449169,5.0,5,1.0,66,13.2,5.0,2.993536093046117,Quantum Computing for Data Analysis in High-Energy Physics,2203.08805,43
+astro-ph.HE,High-energy astrophysics,高能天体物理,4,0.0073937153419593345,4.0,4,1.0,237,59.25,20.5,13.952236068534589,Ultra-High-Energy Cosmic Rays: The Intersection of the Cosmic and Energy Frontiers,2205.05845,180
+nucl-ex,Experimental nuclear physics,实验核物理,4,0.0073937153419593345,2.75,4,1.0,226,56.5,64.0,12.832206394014458,KATRIN: Status and Prospects for the Neutrino Mass and Beyond,2203.08059,93
+physics.comp-ph,Computational physics,计算物理,4,0.0073937153419593345,4.0,4,1.0,36,9.0,4.5,1.651809893263719,HL-LHC Computing Review: Common Tools and Community Software,2008.13636,24
+astro-ph.IM,Astrophysical instrumentation,天体物理仪器,3,0.005545286506469501,2.2,3,1.0,138,46.0,37.0,10.844625305451308,The MegaMapper: A Stage-5 Spectroscopic Instrument Concept for the Study of Inflation and Dark Energy,2209.04322,97
+cs.DC,cs.DC,未分类,2,0.0036968576709796672,2.0,2,1.0,3,1.5,1.5,0.3409303049159926,Evolution of HEP Processing Frameworks,2203.14345,3
+cs.LG,cs.LG,未分类,2,0.0036968576709796672,1.2,2,1.0,48,24.0,24.0,5.46093636824569,Symmetry Group Equivariant Architectures for Physics,2203.06153,31
+cs.NI,cs.NI,未分类,2,0.0036968576709796672,2.0,2,1.0,7,3.5,3.5,0.79458607583202,Data Transfer and Network Services Management for Domain Science Workflows,2203.08280,4
+cond-mat.supr-con,cond-mat.supr-con,未分类,1,0.0018484288354898336,1.0,1,1.0,1,1.0,1.0,0.22700435052827841,Fe-Based High Field Superconductors for Cost-Effective Future Accelerator Magnets,2203.07551,1
+physics.med-ph,Physics and instrumentation,物理与仪器,1,0.0018484288354898336,0.5,1,1.0,7,7.0,7.0,1.5959737827715357,Transformative Technology for FLASH Radiation Therapy,2203.11047,7
+physics.plasm-ph,Physics and instrumentation,物理与仪器,1,0.0018484288354898336,1.0,1,1.0,1,1.0,1.0,0.22546296296296298,Understanding Vacuum Arcs and Gradient Limits,2203.01847,1

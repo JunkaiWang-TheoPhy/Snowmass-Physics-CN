@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 私密安全或隐私报告
+    url: https://github.com/JunkaiWang-TheoPhy/snowmass-zh/security/advisories/new
+    about: 发现凭据、邮箱、私人通信或未授权全文时，请勿创建公开 issue。
