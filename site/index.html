@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Snowmass 2021 白皮书中文翻译、来源许可证与授权进度的开放目录。">
+    <meta name="color-scheme" content="dark">
+    <title>Snowmass 中文翻译计划</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#catalog">跳到论文目录</a>
+
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Snowmass 中文翻译计划首页">
+        <span class="brand-mark" aria-hidden="true">S</span>
+        <span>
+          <strong>Snowmass 中文翻译计划</strong>
+          <small>Open translation &amp; rights tracker</small>
+        </span>
+      </a>
+      <nav aria-label="主要导航">
+        <a href="#catalog">论文目录</a>
+        <a href="https://github.com/JunkaiWang-TheoPhy/snowmass-zh/blob/main/docs/RIGHTS_PROTOCOL.md" rel="noreferrer">权利协议 ↗</a>
+        <a href="https://www.slac.stanford.edu/econf/C210711/" rel="noreferrer">官方文集 ↗</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Snowmass 2021 · 10 Frontiers · 541 papers</p>
+          <h1 id="hero-title">先把权利讲清楚，<br>再把知识翻译出来。</h1>
+          <p class="hero-lede">
+            这是一个非官方、开放协作的中文翻译目录。每篇论文都独立记录来源许可证、授权进度、机器翻译和人工校订状态；没有明确改编许可的全文不会公开。
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#catalog">浏览论文</a>
+            <a class="button button-secondary" href="https://github.com/JunkaiWang-TheoPhy/snowmass-zh" rel="noreferrer">参与 GitHub 协作</a>
+          </div>
+        </div>
+
+        <aside class="rights-principle" aria-label="发布闸门说明">
+          <span class="principle-index">PUBLICATION GATE / 01</span>
+          <p>来源许可证允许改编，或权利人提供范围明确的书面授权，才能公开完整译文。</p>
+          <div class="signal-row">
+            <span><i class="signal signal-green"></i>许可证已核验</span>
+            <span><i class="signal signal-amber"></i>等待授权</span>
+            <span><i class="signal signal-red"></i>暂不公开</span>
+          </div>
+        </aside>
+      </section>
+
+      <section class="metrics" aria-label="项目统计">
+        <article>
+          <span class="metric-label">去重论文</span>
+          <strong id="stat-catalog">—</strong>
+          <small>当前工作目录</small>
+        </article>
+        <article>
+          <span class="metric-label">许可证可改编</span>
+          <strong id="stat-cleared">—</strong>
+          <small>仍须遵守署名等条件</small>
+        </article>
+        <article>
+          <span class="metric-label">需要额外授权</span>
+          <strong id="stat-permission">—</strong>
+          <small>未获许可前不公开全文</small>
+        </article>
+        <article>
+          <span class="metric-label">论文总页数</span>
+          <strong id="stat-pages">—</strong>
+          <small>PDF 物理页数</small>
+        </article>
+      </section>
+
+      <section class="protocol-strip" aria-label="工作流">
+        <span>来源核验</span><b aria-hidden="true">→</b>
+        <span>机器初译</span><b aria-hidden="true">→</b>
+        <span>术语统一</span><b aria-hidden="true">→</b>
+        <span>人工审校</span><b aria-hidden="true">→</b>
+        <span>权利闸门</span><b aria-hidden="true">→</b>
+        <span>公开发布</span>
+      </section>
+
+      <section class="catalog" id="catalog" aria-labelledby="catalog-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">THE CATALOG</p>
+            <h2 id="catalog-title">论文、翻译与授权状态</h2>
+          </div>
+          <p id="result-count" class="result-count" aria-live="polite">正在加载目录…</p>
+        </div>
+
+        <form class="filters" id="filters" role="search">
+          <label class="search-field">
+            <span>检索</span>
+            <input id="search" name="q" type="search" autocomplete="off" placeholder="题名、作者、arXiv、专题…">
+          </label>
+          <label>
+            <span>Frontier</span>
+            <select id="frontier" name="frontier">
+              <option value="">全部 Frontier</option>
+            </select>
+          </label>
+          <label>
+            <span>来源许可证</span>
+            <select id="license" name="license">
+              <option value="">全部许可证</option>
+            </select>
+          </label>
+          <label>
+            <span>授权状态</span>
+            <select id="authorization" name="authorization">
+              <option value="">全部授权状态</option>
+              <option value="license-cleared">许可证已核验</option>
+              <option value="needs-permission">需要额外授权</option>
+              <option value="contacted">已联系</option>
+              <option value="response-pending">等待回复</option>
+              <option value="permission-granted">已获书面授权</option>
+              <option value="permission-denied">未获授权</option>
+            </select>
+          </label>
+          <label>
+            <span>翻译状态</span>
+            <select id="translation" name="translation">
+              <option value="">全部翻译状态</option>
+              <option value="not-started">尚未开始</option>
+              <option value="machine-draft">机器初译</option>
+              <option value="human-review">人工审校</option>
+              <option value="published">已公开</option>
+            </select>
+          </label>
+          <label>
+            <span>发布资格</span>
+            <select id="publication" name="publication">
+              <option value="">全部</option>
+              <option value="allowed">具备发布基础</option>
+              <option value="blocked">暂不可公开全文</option>
+            </select>
+          </label>
+          <label>
+            <span>排序</span>
+            <select id="sort" name="sort">
+              <option value="title">题名字母顺序</option>
+              <option value="citations">引用数从高到低</option>
+              <option value="impact">影响力代理从高到低</option>
+              <option value="pages">篇幅从长到短</option>
+              <option value="year">年份从新到旧</option>
+            </select>
+          </label>
+          <button class="reset-button" id="reset-filters" type="reset">清除筛选</button>
+        </form>
+
+        <div id="paper-grid" class="paper-grid" aria-live="polite"></div>
+        <nav id="pagination" class="pagination" aria-label="论文目录分页"></nav>
+      </section>
+
+      <section id="detail-panel" class="detail-panel" hidden aria-labelledby="detail-title"></section>
+    </main>
+
+    <footer>
+      <div>
+        <strong>Snowmass 中文翻译计划</strong>
+        <p>非官方社区项目，不代表 Snowmass、SLAC、arXiv、HAL、作者或出版机构。</p>
+      </div>
+      <div class="footer-links">
+        <a href="https://atlaswww.hep.anl.gov/snowmass21/doku.php?id=submissions:start" rel="noreferrer">官方提交索引</a>
+        <a href="https://info.arxiv.org/help/translations.html" rel="noreferrer">arXiv 翻译政策</a>
+        <a href="https://about.hal.science/en/hal-authorisation-v1/" rel="noreferrer">HAL Authorization</a>
+      </div>
+      <p class="footer-fineprint">项目代码与自有文档采用 AGPL-3.0；第三方论文和每篇译文分别遵循其记录的许可证与书面授权。</p>
+    </footer>
+
+    <noscript>本目录需要 JavaScript 才能加载 541 篇论文的筛选与详情。</noscript>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
