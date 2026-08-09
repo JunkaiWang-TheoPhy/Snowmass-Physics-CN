@@ -17,7 +17,7 @@
 - `snowmass2021_whitepapers.json`：完整字段，包括 Frontier、专题组、交叉归类次数、官方 PDF 路径变体及标题/作者变体。
 - `metadata.json`：来源、统计口径和校验数字。
 - `path_variants.json`：官方归档中大小写或路径不一致的条目。
-- `rights/`：逐篇许可证与翻译发布处置记录；包含 CSV/JSON 清单、统计摘要和可审计的 arXiv 页面缓存。
+- `rights/`：逐篇许可证与翻译发布处置记录；公开仓库包含 CSV/JSON 清单和统计摘要，arXiv 页面缓存只在本地生成并由 Git 忽略。
 
 ## 版权与翻译发布状态
 

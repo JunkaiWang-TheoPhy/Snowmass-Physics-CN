@@ -39,27 +39,27 @@
 - It derives authorization state from the rights decision: adaptation-permitting sources become `license-cleared`; non-exclusive/ambiguous/ND sources become `needs-permission`; publication is never enabled for a held or denied record.
 - `test_public_manifest.py` exposes `test_record_count`, `test_required_fields`, `test_no_private_data`, `test_publication_gate`, and `test_deterministic_order` using `unittest`.
 
-- [ ] **Step 1: Write the failing manifest tests**
+- [x] **Step 1: Write the failing manifest tests**
 
   Assert 541 records, unique `record_id` values, required keys, no email/credential-like strings, and that any `publication_allowed=true` record has `publication_basis` equal to `source-license` or `permission-granted`.
 
-- [ ] **Step 2: Run the tests to verify the new generator is absent**
+- [x] **Step 2: Run the tests to verify the new generator is absent**
 
   Run: `python3 -m unittest scripts.test_public_manifest -v`
 
   Expected: FAIL because `site/data/papers.json` and the generator do not exist yet.
 
-- [ ] **Step 3: Implement deterministic generation**
+- [x] **Step 3: Implement deterministic generation**
 
   Load the four source datasets, join on lowercase `record_id`, map license decisions to public authorization states, normalize missing values to `null`, strip internal paths and evidence fields, sort by title then `record_id`, and write UTF-8 JSON with stable indentation and a generated metadata object in `stats.json`.
 
-- [ ] **Step 4: Run the tests and inspect generated counts**
+- [x] **Step 4: Run the tests and inspect generated counts**
 
   Run: `python3 scripts/build_public_manifest.py && python3 -m unittest scripts.test_public_manifest -v`
 
   Expected: 541 records; no private-data failure; stats include catalog, license, translation, authorization, Frontier, year, page, citation, and token totals.
 
-- [ ] **Step 5: Commit the data pipeline**
+- [x] **Step 5: Commit the data pipeline**
 
   Run:
 
@@ -82,23 +82,23 @@
 - Search covers title, author string, paper ID, Frontier, and topic; filters cover license, authorization state, translation state, publication gate, year, and Frontier.
 - The UI always labels the project as an unofficial community translation and links to the original source before any translation link.
 
-- [ ] **Step 1: Add the semantic page shell**
+- [x] **Step 1: Add the semantic page shell**
 
   Create an accessible page with a header, project notice, dashboard cards, filter form, results region, detail region, and footer containing official Snowmass/arXiv/HAL links and the per-paper-rights disclaimer.
 
-- [ ] **Step 2: Add the responsive visual system**
+- [x] **Step 2: Add the responsive visual system**
 
   Use a dark editorial palette, high-contrast text, visible keyboard focus, fluid cards, mobile single-column layout, and no external fonts or images. Include status badges with text labels so color is never the only signal.
 
-- [ ] **Step 3: Add catalog and detail behavior**
+- [x] **Step 3: Add catalog and detail behavior**
 
   Implement rendering, filter composition, sort options (`title`, `year`, `citations`, `pages`), pagination, empty states, URL state, and a detail panel showing source license, authorization decision, publication basis, metrics, and translation status.
 
-- [ ] **Step 4: Run a static smoke test**
+- [x] **Step 4: Run a static smoke test**
 
   Run: `python3 -m http.server 4173 --directory site` and use `curl -fsS http://127.0.0.1:4173/ | rg "Snowmass|translation"` plus `curl -fsS http://127.0.0.1:4173/data/papers.json | python3 -m json.tool >/dev/null`.
 
-- [ ] **Step 5: Commit the site**
+- [x] **Step 5: Commit the site**
 
   Run:
 
@@ -124,23 +124,23 @@
 - `CONTRIBUTING.md` defines a PR checklist requiring rights metadata, source links, translation license compatibility, attribution, and no original-PDF mirroring.
 - `README.md` explains the project, current 541-record scope, the deployed-site URL slot, data-generation commands, rights caveat, and project-vs-third-party license split.
 
-- [ ] **Step 1: Write the normative rights protocol**
+- [x] **Step 1: Write the normative rights protocol**
 
   Define the allowed license mapping, required manifest fields, state transitions, human approval gate, email request scope, reply classification, public data redaction rules, takedown process, and prohibited actions. Include the official arXiv translation policy and HAL authorization links.
 
-- [ ] **Step 2: Add the public schema and contributor checklist**
+- [x] **Step 2: Add the public schema and contributor checklist**
 
   Document every public field, permitted values, provenance rules, and a PR checklist that rejects unlicensed full translations, private contact data, and unsupported permission claims.
 
-- [ ] **Step 3: Add the private backend boundary**
+- [x] **Step 3: Add the private backend boundary**
 
   Add SQL DDL with restrictive comments and `private/.gitignore` so contact emails, mail bodies, and evidence are intentionally kept outside Git. Add `.env.example` containing only variable names for future Supabase/email adapters.
 
-- [ ] **Step 4: Update the root README**
+- [x] **Step 4: Update the root README**
 
   Make the project read as an open-source Snowmass translation/status project rather than a generic writing repository. Include quick start, site development, data refresh, rights policy, contribution workflow, and citation/source links.
 
-- [ ] **Step 5: Commit the protocol docs**
+- [x] **Step 5: Commit the protocol docs**
 
   Run:
 
@@ -161,15 +161,15 @@
 - CI runs manifest generation, unit tests, JSON validation, private-data scans, and a local HTTP smoke test on pushes and pull requests.
 - `.gitignore` ignores private environment files, caches, downloaded PDFs, and local backend state while retaining the generated public manifest.
 
-- [ ] **Step 1: Add Netlify configuration**
+- [x] **Step 1: Add Netlify configuration**
 
   Set `publish = "site"`, define security headers for a static informational site, and add a redirect preserving `/paper` query URLs without exposing filesystem paths.
 
-- [ ] **Step 2: Add GitHub Actions validation**
+- [x] **Step 2: Add GitHub Actions validation**
 
   Use the repository's Python 3 runtime, run the generator and tests, validate JSON, scan tracked public files for email/key patterns, start `python3 -m http.server` in the background, and curl the homepage/data endpoint before stopping the server.
 
-- [ ] **Step 3: Run local CI-equivalent commands**
+- [x] **Step 3: Run local CI-equivalent commands**
 
   Run:
 
@@ -180,7 +180,7 @@
   git diff --check
   ```
 
-- [ ] **Step 4: Commit hosting and CI**
+- [x] **Step 4: Commit hosting and CI**
 
   Run:
 
@@ -199,11 +199,11 @@
 - The final repository must have a public-safe default branch, a documented deployment path, and no private contact data in tracked files.
 - GitHub creation/push uses the authenticated GitHub CLI or an explicitly provided remote; no token is written to Git config, files, logs, or URLs.
 
-- [ ] **Step 1: Audit tracked content**
+- [x] **Step 1: Audit tracked content**
 
   Run `git ls-files -z | xargs -0 rg -n -I -e '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' -e 'sk-[A-Za-z0-9]'` and verify no matches outside protocol examples.
 
-- [ ] **Step 2: Run the full validation suite**
+- [x] **Step 2: Run the full validation suite**
 
   Run `python3 -m unittest scripts.test_public_manifest -v`, JSON validation, `git diff --check`, and the static HTTP smoke test. Record the 541-record count and the redaction result.
 
@@ -211,7 +211,9 @@
 
   Run `gh auth status` and `gh repo view`; if authentication is valid, create or update the public repository without overwriting unrelated history, push the verified default branch, and verify the public URL. If authentication remains invalid, leave the exact local remote and required re-authentication command in the handoff without exposing credentials.
 
-- [ ] **Step 4: Commit the final verification metadata**
+  Current result: GitHub CLI reports the stored token for `JunkaiWang-TheoPhy` is invalid. No repository creation or push has been attempted with an unauthenticated client. Netlify production deployment succeeded independently at `https://snowmass-zh.netlify.app/`.
+
+- [x] **Step 4: Commit the final verification metadata**
 
   Add no secrets or private evidence. Use the existing Lore commit format for any final correction and report the external publishing blocker separately if credentials are unavailable.
 

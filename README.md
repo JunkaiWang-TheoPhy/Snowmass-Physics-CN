@@ -2,6 +2,8 @@
 
 Snowmass 2021 contributed/white papers 的非官方中文翻译、权利核验与开放协作目录。
 
+公开网站：<https://snowmass-zh.netlify.app/>
+
 本项目先核验每篇论文是否允许翻译和公开传播，再推进机器初译、术语统一与人工审校。没有明确开放改编许可、或没有取得范围明确书面授权的论文，可以记录进度，但不会在公开仓库或网站发布完整译文。
 
 > 本项目不代表 Snowmass、SLAC、arXiv、HAL、作者、合作组或出版机构。公开状态是项目内部工作流结论，不构成法律意见或面向第三方的版权清权证明。
@@ -33,7 +35,7 @@ Snowmass 官方提交索引曾报告 548 份 submissions，其中有跨 Frontier
 python3 -m http.server 4173 --directory site
 ```
 
-打开 `http://127.0.0.1:4173/`。仓库包含 [`netlify.toml`](netlify.toml)，连接 GitHub 后可由 Netlify 直接发布 `site/`；公开 URL 会在首次部署成功后写回本页。
+打开 `http://127.0.0.1:4173/`。仓库包含 [`netlify.toml`](netlify.toml)，连接 GitHub 后可由 Netlify 直接发布 `site/`。当前生产站点是 <https://snowmass-zh.netlify.app/>。
 
 ## 权利处置原则
 
@@ -90,7 +92,7 @@ python3 -m unittest scripts.test_public_manifest -v
 site/                         静态公开网站与脱敏 manifest
 translations/                 允许公开的分阶段译文目录规范
 output/snowmass2021/          原始名录、统计分析与逐篇权利研究
-scripts/                      数据收集、文本准备、翻译与公开构建脚本
+scripts/                      脱敏公共数据生成、验证与仓库审计脚本
 docs/RIGHTS_PROTOCOL.md       规范性的权利、授权与发布协议
 docs/PUBLIC_DATA_MODEL.md     公开字段、枚举值和状态机
 private/                      私有授权后台的无数据 schema 与安全边界

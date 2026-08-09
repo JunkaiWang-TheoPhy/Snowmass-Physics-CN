@@ -15,7 +15,7 @@
 - `snowmass2021_rights_manifest.csv`：适合筛选、统计和后续人工更新。
 - `snowmass2021_rights_manifest.json`：保留数组字段和完整证据字段。
 - `rights_summary.json`：许可证和处置决定计数。
-- `cache/`：每个 arXiv abstract 页的解析结果，便于审计和重跑。
+- `cache/`：本地生成的 arXiv abstract 页解析结果，便于审计和重跑；其中可能包含上游页面快照，因此由 Git 忽略，不随公开仓库发布。
 
 ## 处置规则
 
