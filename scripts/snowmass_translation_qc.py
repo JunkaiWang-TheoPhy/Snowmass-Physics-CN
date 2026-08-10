@@ -158,4 +158,7 @@ def stage_decision(stage: str, text: str, glossary: list[dict[str, Any]]) -> Sta
             return StageDecision(True, "anti_ai_marker_detected")
         return StageDecision(False, "anti_ai_noop_no_markers")
 
+    if stage == "academic":
+        return StageDecision(False, "academic_noop_no_deterministic_trigger")
+
     return StageDecision(True, "stage_requires_model")

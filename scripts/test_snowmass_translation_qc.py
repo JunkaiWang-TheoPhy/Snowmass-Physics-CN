@@ -235,6 +235,12 @@ class StageDecisionTests(unittest.TestCase):
         self.assertTrue(decision.should_call_model)
         self.assertEqual(decision.reason, "anti_ai_marker_detected")
 
+    def test_stage_decision_skips_academic_rewrite_without_deterministic_trigger(self) -> None:
+        decision = QC.stage_decision("academic", "这是准确、自然的学术中文。\n", [])
+
+        self.assertFalse(decision.should_call_model)
+        self.assertEqual(decision.reason, "academic_noop_no_deterministic_trigger")
+
 
 class ProcessChunkQCIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -280,7 +286,7 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
         status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
 
         self.assertEqual(result["status"], "complete")
-        self.assertEqual(client.calls, 2)
+        self.assertEqual(client.calls, 1)
         self.assertEqual((self.article_dir / "stage2_chunk0001.md").read_text(encoding="utf-8"), "探测器达到 14 TeV，见 [12] 和 https://example.org。\n")
         self.assertEqual((self.article_dir / "stage3_chunk0001.md").read_text(encoding="utf-8"), "探测器达到 14 TeV，见 [12] 和 https://example.org。\n")
         self.assertEqual(
