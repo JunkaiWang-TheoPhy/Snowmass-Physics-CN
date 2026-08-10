@@ -151,6 +151,46 @@ def report_exit_code(records: list[dict[str, Any]]) -> int:
     return 0
 
 
+def read_json_object(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def load_existing_results(
+    records: list[dict[str, Any]], output_root: Path
+) -> dict[str, dict[str, Any]]:
+    previous_report = read_json_object(output_root / "preparation_report.json") or {}
+    previous_by_id = {
+        str(item["record_id"]): item
+        for item in previous_report.get("records", [])
+        if isinstance(item, dict) and item.get("record_id") is not None
+    }
+
+    results: dict[str, dict[str, Any]] = {}
+    for record in records:
+        record_id = str(record["record_id"])
+        record_report_path = output_root / str(record["directory"]) / "preparation_record.json"
+        existing = read_json_object(record_report_path)
+        if existing is None or str(existing.get("record_id")) != record_id:
+            existing = previous_by_id.get(record_id)
+        if existing is not None:
+            results[record_id] = existing
+    return results
+
+
+def ordered_results(
+    records: list[dict[str, Any]], results_by_id: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    return [
+        results_by_id[str(record["record_id"])]
+        for record in records
+        if str(record["record_id"]) in results_by_id
+    ]
+
+
 def write_preparation_report(
     output_root: Path,
     rights_manifest: Path,
@@ -194,7 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     allowed_record_ids = CHUNK_PREP.load_rights_snapshot_record_ids(rights_snapshot_path)
     records = CHUNK_PREP.load_source_records(args.source_root, allowed_record_ids)
 
-    results: list[dict[str, Any]] = []
+    results_by_id = load_existing_results(records, args.output_root)
+    results = ordered_results(records, results_by_id)
     write_preparation_report(
         args.output_root,
         args.rights_manifest,
@@ -209,7 +250,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for record in records:
             result = prepare_record(record, args.source_root, args.output_root)
-            results.append(result)
+            results_by_id[str(record["record_id"])] = result
+            results = ordered_results(records, results_by_id)
             write_preparation_report(
                 args.output_root,
                 args.rights_manifest,

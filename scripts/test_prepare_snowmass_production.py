@@ -361,6 +361,34 @@ class PrepareSnowmassProductionTests(unittest.TestCase):
             ["arxiv:tar", "arxiv:single"],
         )
 
+    def test_rerun_interrupted_before_first_record_preserves_prior_aggregate_progress(self) -> None:
+        preparer = self.require_module()
+        self.seed_fixture()
+        arguments = [
+            "--rights-manifest",
+            str(self.rights_manifest),
+            "--source-root",
+            str(self.source_root),
+            "--output-root",
+            str(self.output_root),
+        ]
+
+        self.assertEqual(preparer.main(arguments), 2)
+        completed_report = self.load_report()
+        expected_counts = {"complete": 3, "ambiguous": 1, "failed": 1, "reused": 0}
+        self.assertEqual(completed_report["counts"], expected_counts)
+        expected_records = completed_report["records"]
+
+        with mock.patch.object(preparer, "prepare_record", side_effect=KeyboardInterrupt):
+            interrupted_exit_code = preparer.main(arguments)
+
+        self.assertEqual(interrupted_exit_code, 130)
+        interrupted_report = self.load_report()
+        self.assertTrue(interrupted_report["interrupted"])
+        self.assertEqual(interrupted_report["counts"], expected_counts)
+        self.assertEqual(interrupted_report["processed_record_count"], 5)
+        self.assertEqual(interrupted_report["records"], expected_records)
+
 
 if __name__ == "__main__":
     unittest.main()
