@@ -1,0 +1,2712 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-10",
+  "machine_model": "deepseek-v4-flash",
+  "translations": [
+    {
+      "record_id": "arxiv:2203.07864",
+      "title_zh": "21厘米辐射作为跨越宇宙年龄的物理探针",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.13900",
+      "title_zh": "四维径迹探测器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.00042",
+      "title_zh": "军备控制的呼吁：中微子探测器防扩散应用与大规模基础中微子物理实验的协同作用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2111.06932",
+      "title_zh": "费米实验室加速器复合体的经济高效升级路径",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09734",
+      "title_zh": "低放射性地下氩设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:1910.14149",
+      "title_zh": "利用小半径硅探测器进行粒子径迹和触发的快速方法",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06281",
+      "title_zh": "基于气态氩的近探测器以增强DUNE的物理能力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.05103",
+      "title_zh": "Snowmass 2021的pMSSM参数空间大规模扫描",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.15373",
+      "title_zh": "b和c夸克弱衰变的格点QCD视角",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2103.08623",
+      "title_zh": "用于黑暗时代21厘米宇宙学的月球背面低频射电阵列",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08033",
+      "title_zh": "用于物理发现的缪子对撞机设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08278",
+      "title_zh": "费米实验室的新带电轻子味破坏项目",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.02309",
+      "title_zh": "用于暗物质和中微子物理的下一代液氙天文台",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2112.09548",
+      "title_zh": "关于粒子物理中新物理搜索盲技术的注记",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08210",
+      "title_zh": "未来轻子对撞机上低质量标量粒子的简短综述",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.03585",
+      "title_zh": "宇宙前沿的光谱路线图：DESI、DESI-II、第五阶段",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.13985",
+      "title_zh": "推进下一代对撞机磁体技术的战略方法",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08463",
+      "title_zh": "在SuperCDMS SNOLAB设施中使用低温探测器搜索低质量暗物质的策略",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07287",
+      "title_zh": "基于TPC的未来Belle II升级径迹系统",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.13998",
+      "title_zh": "未来缪子对撞机磁体技术合作研究的工作提案",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06816",
+      "title_zh": "加速器与束流物理：重大挑战与研究机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08335",
+      "title_zh": "加速器建模共同体白皮书",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08748",
+      "title_zh": "高能物理中的可及性：Snowmass过程中的经验教训",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.04391",
+      "title_zh": "时变系统的自适应机器学习：面向短强流带电粒子束的六维相空间诊断",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2212.09524",
+      "title_zh": "利用频闪缪子信息减少DUNE中的系统不确定性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08425",
+      "title_zh": "中等能量先进加速器线性对撞机演示设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15984",
+      "title_zh": "面向经济型未来对撞机的先进射频源研发",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08374",
+      "title_zh": "用于尾场加速和高梯度研究的先进射频结构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08869",
+      "title_zh": "推进未来对撞机的超导磁体诊断技术",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10074",
+      "title_zh": "推进下一个十年多信使科学的版图",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05052",
+      "title_zh": "8 GeV 直线加速器作为费米实验室功率升级中增强器的替代方案",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09718",
+      "title_zh": "未来加速器用超导 Nb3Sn 镀膜铜射频腔的客观视角",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2106.02133",
+      "title_zh": "费米实验室加速器综合体的升级路径",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08811",
+      "title_zh": "分析网络基础设施：挑战与机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09886",
+      "title_zh": "分析描述语言：一种用于高能物理分析的领域特定语言",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08010",
+      "title_zh": "HL-LHC 的分析设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.03700",
+      "title_zh": "在 LHC 上通过角度切割降低 Higgsino 信号的 tau tau-bar+jet 本底",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08135",
+      "title_zh": "缪子对撞机上反常四规范玻色子耦合",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.14706",
+      "title_zh": "以应用驱动的大学合作与其他资助机构的协同",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.05838",
+      "title_zh": "机器学习在格点量子场论中的应用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06380",
+      "title_zh": "暗物质的天体物理与宇宙学探针",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09198",
+      "title_zh": "AWAKE：用于近期与长期粒子物理应用的电子束等离子体尾场加速",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.14923",
+      "title_zh": "轴子暗物质",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05484",
+      "title_zh": "高能缪子对撞机上的类轴子粒子",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.02760",
+      "title_zh": "方位角关联：一种新的增强顶夸克喷注子结构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.03505",
+      "title_zh": "未来强子对撞机的本底蒙特卡罗样本",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05731",
+      "title_zh": "SuperKEKB 上 Belle II 的束流本底预期",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11290",
+      "title_zh": "加速器科学与技术研发的束流测试设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10203",
+      "title_zh": "Belle II 执行摘要",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07564",
+      "title_zh": "基于网格的 Belle II 用户分析",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.06307",
+      "title_zh": "Belle II 物理潜力与未来十年及以后计划",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10811",
+      "title_zh": "标准模型之外对中微子味道的效应",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08973",
+      "title_zh": "惠及高能物理的大型工业合作：大型 CAD 公司的微电子支持",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.07163",
+      "title_zh": "弦论的自举",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08809",
+      "title_zh": "拓宽高能物理中的教育、职业与开放科学范围",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08106",
+      "title_zh": "基于回旋加速器的中微子源的更广泛影响",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.11730",
+      "title_zh": "缪子对撞机上的 BSM 希格斯产生",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06131",
+      "title_zh": "BSM 中微子物理：跨能量的互补性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.01849",
+      "title_zh": "在当今粒子物理界为边缘化成员建立公平准入与成功的文化",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2110.15800",
+      "title_zh": "C3：通往希格斯玻色子及更远物理的‘酷’路线",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09076",
+      "title_zh": "C^3 示范研发计划",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07623",
+      "title_zh": "暗物质直接探测的标定与本底",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09467",
+      "title_zh": "Celeritas：高能物理实验中探测器模拟的GPU加速粒子输运",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2111.11392",
+      "title_zh": "天体全息",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.03281",
+      "title_zh": "未来正负电子对撞机上利用 e+e−→μ+μ-(γ) 事例确定质心能量",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07358",
+      "title_zh": "CERC——采用能量回收直线加速器的环形正负电子对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08315",
+      "title_zh": "下一代粒子加速器超导射频理论的挑战与机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2208.12379",
+      "title_zh": "确保加速器领域磁体导体未来制造的挑战与机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2004.13687",
+      "title_zh": "高亮度LHC下蒙特卡罗事例产生器软件的挑战",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07459",
+      "title_zh": "晶体与纳米结构中的沟道加速及固态等离子体研究：新机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.14919",
+      "title_zh": "τ子领域的带电轻子味破坏",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.03211",
+      "title_zh": "高亮度超级τ-粲工厂中的粲物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:1912.11871",
+      "title_zh": "环形与线形正负电子对撞机：互补性的另一面",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09451",
+      "title_zh": "环形正负电子对撞机（CEPC）",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12389",
+      "title_zh": "粒子物理的气候影响",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.03713",
+      "title_zh": "领域气候：Snowmass 2021",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05728",
+      "title_zh": "CMB-HD 白皮书",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:1906.10134",
+      "title_zh": "CMB-HD：覆盖半个天区的超深高分辨率毫米波巡天",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08024",
+      "title_zh": "CMB-S4 白皮书",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07361",
+      "title_zh": "相干弹性中微子-原子核散射：地球与天体物理应用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10161",
+      "title_zh": "利用软件即基础设施技术为分析设施提供协同计算支持",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.13305",
+      "title_zh": "扩展翘曲额外维模型的对撞机物理机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.03852",
+      "title_zh": "HL-LHC上重希格斯粒子和矢量样费米子的联合信号",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.06507",
+      "title_zh": "关于共线因子化的评注",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08750",
+      "title_zh": "用于高场磁体设计与研发的通用线圈二极磁体",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2111.03096",
+      "title_zh": "自然超对称和弦景观预言中超对称谱产生器的比较",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07455",
+      "title_zh": "Snowmass 复标量单重态模型基准点",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.04200",
+      "title_zh": "多圈对撞机唯象学的计算挑战",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.01072",
+      "title_zh": "20特斯拉混合加速器磁体用Bi2212二极插入件的导体性能与线圈技术",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08275",
+      "title_zh": "面向能量前沿机器的结构尾场加速（SWFA）发展的持续协调努力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06240",
+      "title_zh": "宇宙前沿：基础物理与标准模型之外",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07638",
+      "title_zh": "宇宙微波背景辐射测量白皮书",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.02882",
+      "title_zh": "中微子实验中的宇宙成因暗物质与奇异粒子搜寻",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07049",
+      "title_zh": "暗物质物理的宇宙学模拟",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07506",
+      "title_zh": "从三维大尺度结构研究宇宙学与基础物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07629",
+      "title_zh": "理论前沿的宇宙学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06142",
+      "title_zh": "交织的宇宙学：与宇宙学张力和异常相关的粒子物理、天体物理和宇宙学综述",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07258",
+      "title_zh": "利用毫米波谱线强度成图的宇宙学研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.07429",
+      "title_zh": "b夸克和c夸克衰变中的CP破坏",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10431",
+      "title_zh": "能量前沿缪子对撞机的关键问题：光学、磁铁与辐射",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06146",
+      "title_zh": "用于惰性液体探测器与低温器件研发的低温用户设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08192",
+      "title_zh": "轻暗物质实验（LDMX）的现状与未来展望",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08084",
+      "title_zh": "暗物质直接探测与中微子雾",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07984",
+      "title_zh": "极端天体物理环境中的暗物质",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07354",
+      "title_zh": "基于暗物质晕测量的暗物质物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07064",
+      "title_zh": "来自CMB-S4实验的暗物质物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.06898",
+      "title_zh": "利用中微子束流进行暗扇区研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08338",
+      "title_zh": "暗物质与中微子计算探索（DANCE）对Snowmass的社区意见",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10057",
+      "title_zh": "数据与分析保存、再铸与再解释",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08113",
+      "title_zh": "宇宙学数据保存",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.09060",
+      "title_zh": "教育中的数据科学与机器学习",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07885",
+      "title_zh": "高性能计算时代高能物理实验的数据存储",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08280",
+      "title_zh": "领域科学工作流的数据传输与网络服务管理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07946",
+      "title_zh": "数据驱动的宇宙学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08969",
+      "title_zh": "深度学习在粒子探测器建造质量控制中的应用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08064",
+      "title_zh": "LHC及未来对撞机上顶夸克对产生中测量的顶夸克质量对部分子分布函数的依赖性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06843",
+      "title_zh": "部署网内缓存以支持分布式科学数据共享",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08276",
+      "title_zh": "DUNE/LBNF时代费米实验室多兆瓦质子设施的设计考虑",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07972",
+      "title_zh": "早期宇宙引力波信号探测与基础物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07614",
+      "title_zh": "下一代高能物理实验的探测器与束线模拟",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07352",
+      "title_zh": "Nb₃Sn加速器磁铁下一代技术的开发与演示：降低成本、提高性能均匀性以及12-14 T范围内更高工作点",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07144",
+      "title_zh": "DIMUS：费米实验室超紧凑双μ子谱仪对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06037",
+      "title_zh": "利用固态量子传感进行暗物质的方向性探测",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08127",
+      "title_zh": "在HL-LHC和未来对撞机上直接探测Higgs-Top Yukawa耦合的CP结构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10998",
+      "title_zh": "在稀有Kaon衰变中发现新物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06114",
+      "title_zh": "在U(1)_{B−L}模型中用位移胖喷注和径迹探测 boosted 右手性中微子",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12035",
+      "title_zh": "展示不同简化模型参数下对撞机的暗物质约束",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.04312",
+      "title_zh": "用于未来基础物理实验的双读出量能器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06100",
+      "title_zh": "DUNE物理概要",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06104",
+      "title_zh": "DUNE软件与高性能计算",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06680",
+      "title_zh": "早期宇宙模型构建",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10110",
+      "title_zh": "凝聚态系统的有效场论",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08232",
+      "title_zh": "宇宙学中的有效场论",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.14249",
+      "title_zh": "引力的有效场论与致密双星动力学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07336",
+      "title_zh": "有效场论匹配及其应用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08103",
+      "title_zh": "电偶极矩与新物理搜索",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.13199",
+      "title_zh": "用于高能物理的电子离子对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06853",
+      "title_zh": "电子散射与中微子物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.08875",
+      "title_zh": "加速器电子源",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.00149",
+      "title_zh": "快时间测量电子学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11129",
+      "title_zh": "高能电弱碎裂",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.01995",
+      "title_zh": "基本粒子非微扰质量产生：迈向超越标准模型模型的一步",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.07285",
+      "title_zh": "电子学与ASIC领域的基础设施和劳动力能力建设",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.01992",
+      "title_zh": "使旗舰暗能量实验充分发挥潜力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06255",
+      "title_zh": "支持美国参与未来Higgs工厂",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08319",
+      "title_zh": "通过Kaon标记增强中微子束流（ENUBET）",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11662",
+      "title_zh": "提升以本科教学为主的院校和社区学院的高能物理研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15729",
+      "title_zh": "在最具挑战性情景下评估ILC超对称探测范围：Stau NLSP、低ΔM、最低截面",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11110",
+      "title_zh": "高能物理实验事例产生器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2111.12119",
+      "title_zh": "基于事例的机器学习异常检测用于LHC新物理搜索",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2111.12156",
+      "title_zh": "利用异常喷注标记的半可见喷注事件级变量",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.14345",
+      "title_zh": "高能物理处理框架的演进",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.12198",
+      "title_zh": "当前及未来pp对撞机上II型2HDM中的奇异希格斯衰变",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08330",
+      "title_zh": "ILC上SiD探测器对不可见希格斯玻色子衰变的预期灵敏度",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07089",
+      "title_zh": "原子核中μ子到电子转换的实验搜索：COMET、DeeMe和Mu2e",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.06632",
+      "title_zh": "高能物理的可解释人工智能",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.06905",
+      "title_zh": "利用高强度实验探索暗扇区门户",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11665",
+      "title_zh": "促进非高能物理职业转型",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15062",
+      "title_zh": "快速（光学）链接",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06253",
+      "title_zh": "基于高温超导体的快速循环超导加速器磁体：由中微子物理和缪子对撞机需求驱动的可行性研究与就绪演示计划",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08554",
+      "title_zh": "基于碳化硅低增益雪崩探测器的快速定时",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:1906.02693",
+      "title_zh": "FCC-ee：您关心的问题解答",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07551",
+      "title_zh": "面向经济型未来加速器磁体的铁基高场超导体",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.00701",
+      "title_zh": "未来线性对撞机的反馈与控制系统",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08309",
+      "title_zh": "用于未来加速器磁体的光纤诊断系统",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07726",
+      "title_zh": "味模型构建",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07339",
+      "title_zh": "FNAL PIP-II积累环",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08129",
+      "title_zh": "前向物理、BFKL、饱和物理与衍射",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.10618",
+      "title_zh": "量子引力前沿：共同挑战与汇聚方向",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07088",
+      "title_zh": "超越多重对数函数的函数在精密对撞机物理中的应用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07479",
+      "title_zh": "基于光子的中微子探测器的未来进展",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07804",
+      "title_zh": "未来环形强子对撞机FCC-hh：概述与现状",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08310",
+      "title_zh": "未来环形轻子对撞机FCC-ee：概述与现状",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08088",
+      "title_zh": "美国未来对撞机选项",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08228",
+      "title_zh": "未来引力波探测器设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "external:https://cds.cern.ch/record/2806113",
+      "title_zh": "LHCb的未来物理潜力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06799",
+      "title_zh": "部分子簇射的未来前景",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2107.06021",
+      "title_zh": "费米实验室(g−2)_μ之后LHC上的超对称未来搜索",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.09545",
+      "title_zh": "量子场论中的广义对称性及其超越",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07883",
+      "title_zh": "结合未来对撞机结果的2HDM全局拟合",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.08326",
+      "title_zh": "未来对撞机上的全局SMEFT拟合",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.01396",
+      "title_zh": "额外希格斯二重态的有益用途",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12852",
+      "title_zh": "粒子物理中的图神经网络：实现、创新与挑战",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.05194",
+      "title_zh": "引力波与散射振幅",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07141",
+      "title_zh": "STCF上的强子谱学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08290",
+      "title_zh": "光生过程中的强子谱学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.03230",
+      "title_zh": "格点QCD强子谱学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2201.11696",
+      "title_zh": "哈密顿截断",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06705",
+      "title_zh": "电子-离子对撞机上的重中性轻子搜寻",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.06703",
+      "title_zh": "未来线性e+e−对撞机上的重中微子",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07237",
+      "title_zh": "面向未来十年挑战的高能物理计算合作",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2106.06494",
+      "title_zh": "隐藏扇区与多温度宇宙",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.08273",
+      "title_zh": "通过c夸克碎裂的希格斯玻色子衰变到粲偶素",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09512",
+      "title_zh": "希格斯耦合灵敏度与新物理能标的无模型依赖界限",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06164",
+      "title_zh": "希格斯工厂的考量",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2107.01252",
+      "title_zh": "希格斯门户矢量暗物质诠释：有效场论方法与紫外完备模型综述",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08042",
+      "title_zh": "未来质子-质子对撞机上的希格斯自耦合测量",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08211",
+      "title_zh": "基于先进超导射频技术的希格斯能量轻子（HELEN）对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.10774",
+      "title_zh": "驱动未来先进加速器的高平均功率超快激光技术",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07291",
+      "title_zh": "宇宙加速时期的高密度星系成团",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12043",
+      "title_zh": "用于加速器和对撞机的高效率低成本射频源",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08353",
+      "title_zh": "高能高亮度γγ对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07214",
+      "title_zh": "利用反应堆反中微子的高能物理机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08054",
+      "title_zh": "欧洲高能物理高场磁体研发：LDG HFM专家组建议",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09425",
+      "title_zh": "高能缪子对撞机上的高精度希格斯物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.11055",
+      "title_zh": "b和c衰变中CKM幺正性检验的高精度",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09942",
+      "title_zh": "高计数率和高精度时间测量与量能器探测器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10564",
+      "title_zh": "用于能量前沿环形对撞机的高温超导Bi-2212磁体",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08096",
+      "title_zh": "高能与超高能中微子",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06262",
+      "title_zh": "加压洞室中的高压时间投影室：暗物质与中微子物理的机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.01567",
+      "title_zh": "高自旋引力与高自旋对称性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.03698",
+      "title_zh": "高能下t tbar产生的高阶修正",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.02194",
+      "title_zh": "HL-LHC计算评审第二阶段，通用软件项目：数据分析科学工具",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2109.14938",
+      "title_zh": "HL-LHC计算评审第二阶段，通用软件项目：事件产生器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2008.13636",
+      "title_zh": "HL-LHC计算评审：通用工具与社区软件",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.06755",
+      "title_zh": "社区协议如何改善物理学工作场所文化",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11523",
+      "title_zh": "如何阅读关于物理学中的权力动态、物理学培训中的非正式社交以及STEM中的监管与把关的Snowmass白皮书",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08132",
+      "title_zh": "用于下一代强子对撞机的混合保形REBCO偶极磁铁",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.02029",
+      "title_zh": "超神冈实验",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.07944",
+      "title_zh": "格点s(x)−sbar(x)数据对CTEQ-TEA全局分析的影响",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.02928",
+      "title_zh": "能量峰对碰撞器唯象学的影响：顶夸克质量测定及更深入的研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07624",
+      "title_zh": "量子引力对粒子物理的影响",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07353",
+      "title_zh": "利用机器学习提高未来对撞机强子末态双希格斯灵敏度",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10393",
+      "title_zh": "追寻物理学的卓越与公平",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08128",
+      "title_zh": "暴胀：理论与观测",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11518",
+      "title_zh": "物理学培训中的非正式社交",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.06890",
+      "title_zh": "量子引力的红外性质：紫外/红外混合，量子引力化——理论与观测",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07620",
+      "title_zh": "下一代物理设施的触发与数据获取系统创新",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06731",
+      "title_zh": "用于未来高能物理实验的无机闪烁体",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06093",
+      "title_zh": "集成与封装",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2208.03284",
+      "title_zh": "高能物理中人工智能的可解释不确定性量化",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07901",
+      "title_zh": "低质量暗物质项目ALETHEIA简介：液氦时间投影室暗物质探测器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06809",
+      "title_zh": "用于量子信息科学的储存环中离子库仑晶体",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.12873",
+      "title_zh": "用于产生高电荷态离子束的离子源",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08239",
+      "title_zh": "高功率靶的辐照设施与辐照方法",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08804",
+      "title_zh": "IsoDAR概述",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.13979",
+      "title_zh": "日本高能物理未来项目战略",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2011.05329",
+      "title_zh": "Jas4pp——用于物理与探测器研究的数据分析框架",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.03285",
+      "title_zh": "未来对撞机上基于快速模拟的喷注味标记",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07462",
+      "title_zh": "未来对撞机上的喷注与喷注子结构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08059",
+      "title_zh": "KATRIN：中微子质量的现状与前景及其更远目标",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.01178",
+      "title_zh": "超导射频腔研发的关键方向",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.13431",
+      "title_zh": "粒子唯象学的运动学变量与特征工程",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.01860",
+      "title_zh": "用于改进相干 Captain Mills 实验暗区粒子搜寻的 LANSCE-PSR 短脉冲升级",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15902",
+      "title_zh": "面向毫米波段高能物理的大幅面传输线耦合动态电感探测器阵列",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08427",
+      "title_zh": "H- 束流的激光操控",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08981",
+      "title_zh": "激光驱动的结构型加速器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.07641",
+      "title_zh": "格点 QCD 与粒子物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.00039",
+      "title_zh": "格点 QCD 与计算前沿",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.07193",
+      "title_zh": "格点 QCD 对部分子物理的计算",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07654",
+      "title_zh": "旨在下一个十年内进行能量前沿环形对撞机就绪演示的前沿技术与可行性导向（LEAF）计划",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.01851",
+      "title_zh": "b 与 c 衰变中的轻子味破坏和轻子味普适性破坏",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07048",
+      "title_zh": "LHCb 针对 Snowmass 2021 的未来暗区灵敏度投影",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08631",
+      "title_zh": "粒子物理研究活动中的生活方式与个人健康",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2201.04219",
+      "title_zh": "轻暗物质探测：富氢晶体与低 Tc TES 探测器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07492",
+      "title_zh": "与凝聚态物理交叉的轻暗物质直接探测",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07323",
+      "title_zh": "轻惰性中微子搜寻及相关唯象学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.14347",
+      "title_zh": "面向未来径迹探测器的轻质高热导支撑结构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08366",
+      "title_zh": "基于激光等离子体加速器的线性对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2107.13581",
+      "title_zh": "缪子对撞机上纵向极化的 ZZ 散射",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08821",
+      "title_zh": "低本底千吨级液氩时间投影室",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.00740",
+      "title_zh": "中微子液氩时间投影室中的低能物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08056",
+      "title_zh": "机器学习与宇宙学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07154",
+      "title_zh": "未来量能器的材料",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07944",
+      "title_zh": "利用 ILC 250 的辐射返回测量 ALR",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06819",
+      "title_zh": "在正负电子对撞机上测量希格斯扇区的 CP 性质",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07572",
+      "title_zh": "利用 163Ho 电子俘获衰变测量电子中微子质量",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2004.00580",
+      "title_zh": "利用重建后的单参数拟合测量液氩中的中微子事例时间",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07668",
+      "title_zh": "在 ILC 上测量 τ 极化",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07371",
+      "title_zh": "面向科学前沿和加速器应用的中等晶粒铌 SRF 腔制造技术",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06309",
+      "title_zh": "用于核物理的微图案气体探测器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.04981",
+      "title_zh": "黑洞的微观与宏观结构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.11578",
+      "title_zh": "迷你综述：弦景观对超对称的预期",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.03303",
+      "title_zh": "模型无关的精确希格斯玻色子耦合测量质量可达范围探索",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2103.10217",
+      "title_zh": "多体不变质量中新物理的模型无关搜索",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.04714",
+      "title_zh": "高功率靶的建模需求",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07700",
+      "title_zh": "直接暗物质探测的建模、统计、模拟与计算需求",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2003.09084",
+      "title_zh": "现代与未来对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.03988",
+      "title_zh": "MoEDAL-MAPP：LHC专用探测器搜索设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07626",
+      "title_zh": "CMOS技术上的单片有源像素传感器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2201.13321",
+      "title_zh": "月光",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.17258",
+      "title_zh": "多者异矣：非最小暗扇区及其对粒子物理、天体物理和宇宙学的影响——Snowmass 2021的13条要点",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06267",
+      "title_zh": "用于未来轻子对撞机TPC的MPGD",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06525",
+      "title_zh": "用于未来高能物理对撞机径迹和μ子探测的MPGD",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06562",
+      "title_zh": "MPGD：近期进展与当前研发",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.11920",
+      "title_zh": "希格斯工厂下的MSSM",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07569",
+      "title_zh": "Mu2e-II：利用PIP-II的μ子到电子转换",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11226",
+      "title_zh": "暗能量的多实验探针——暂现源",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07256",
+      "title_zh": "μ子对撞机物理总结",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11406",
+      "title_zh": "μ子素到反μ子素的转换",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.05708",
+      "title_zh": "自然性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06752",
+      "title_zh": "Nb3Sn超导射频腔：粒子加速器和探测器的成熟技术",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09094",
+      "title_zh": "先进加速器概念驱动的近期应用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08208",
+      "title_zh": "新强子发现中振幅分析的需求",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.08668",
+      "title_zh": "中微子味模型构建及味和CP破坏的起源",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11298",
+      "title_zh": "氢和氘上中微子散射测量",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.01955",
+      "title_zh": "中微子自相互作用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12169",
+      "title_zh": "无中微子双β衰变：理论与实验匹配的路线图",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07545",
+      "title_zh": "存储μ子产生的中微子(nuSTORM)",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06776",
+      "title_zh": "基于单光子特征搜索暗物质(DM)的新方法",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08806",
+      "title_zh": "高能物理探测器模拟的替代模型与可微分编程新方向",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.14915",
+      "title_zh": "新视野：标量与矢量超轻暗物质",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05010",
+      "title_zh": "重子产生的新思想",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2006.04824",
+      "title_zh": "B介子混合中的新物理：未来灵敏度与局限性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2201.07805",
+      "title_zh": "K介子与超子工厂的新物理搜寻",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07913",
+      "title_zh": "未来轻子对撞机上缺失能量的新物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.02536",
+      "title_zh": "基于先进薄膜技术与创新材料的下一代超导射频技术，用于提升加速器性能与能量范围",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09939",
+      "title_zh": "用于量热与探测的新型低功函数半导体：高能、暗物质与中微子现象",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08357",
+      "title_zh": "用于下一代高功率靶应用的新型材料与概念",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.11828",
+      "title_zh": "用于粒子径迹探测的新型传感器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2112.12593",
+      "title_zh": "中微子工具：探索中微子在核能与安全中的实际作用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08139",
+      "title_zh": "用于下一代引力波基本物理探测的数值相对论",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10377",
+      "title_zh": "培育美国工业加速器技术基础",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06200",
+      "title_zh": "用于研究暗物质的观测设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.01799",
+      "title_zh": "量子引力的观测特征",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09524",
+      "title_zh": "论稀有K介子衰变的重要性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2109.15181",
+      "title_zh": "关于ttbar W±多轻子特征的建模不确定性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05939",
+      "title_zh": "在对撞机上利用重离子搜寻新物理的机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.02280",
+      "title_zh": "在Belle II上研究强子化中精确QCD物理的机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06795",
+      "title_zh": "静态探针交叉巡天分析的机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2103.00522",
+      "title_zh": "使用遗传算法优化CLIC上的顶夸克阈值扫描",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15138",
+      "title_zh": "粒子流量热法",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09585",
+      "title_zh": "非传统场所的粒子物理科普推广",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10953",
+      "title_zh": "面向K-12学校的粒子物理科普与本科教育中的机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05525",
+      "title_zh": "基于色心的无源低能核反冲探测——PALEOCCENE",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09202",
+      "title_zh": "升级后LHC注入器链的性能与潜在发展",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11623",
+      "title_zh": "每米拍伏等离激元光子学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07270",
+      "title_zh": "复合希格斯方案的现象学：奇异标量与类矢量夸克",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09941",
+      "title_zh": "作为未来实验中高计数率抗辐射原位传感器的光电倍增管",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12542",
+      "title_zh": "利用半导体与超导技术实现从真空紫外到短波红外光子计数",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05078",
+      "title_zh": "物理数学2021",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.00031",
+      "title_zh": "未来对撞机物理：能量与亮度之间的相互作用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.16255",
+      "title_zh": "面向机器学习的物理学界需求、工具与资源",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.08943",
+      "title_zh": "BESIII上的τ-粲能区物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.03925",
+      "title_zh": "费米实验室增强器替换的物理机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.02883",
+      "title_zh": "ORNL散裂中子源第二靶站时代的物理机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.12343",
+      "title_zh": "PROSPECT-II的物理机遇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2005.05221",
+      "title_zh": "未来对撞机探测器中时间层的物理潜力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2105.12962",
+      "title_zh": "Belle II上长寿命粒子探测器的物理潜力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "external:https://cds.cern.ch/record/2806962",
+      "title_zh": "Phase-2 ATLAS和CMS探测器上的物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08079",
+      "title_zh": "PIP2-BD：费米实验室PIP-II直线加速器上的GeV质子束流dump",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12442",
+      "title_zh": "用于超导射频(SRF)低温模组原位场发射抑制的等离子体处理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08379",
+      "title_zh": "基于等离子体的粒子源",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11508",
+      "title_zh": "STEM中的监管与把关",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09945",
+      "title_zh": "可移植性：未来科学软件的必要途径",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.02222",
+      "title_zh": "对撞机上的门户物质与暗部门现象学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.13245",
+      "title_zh": "未来高能物理对撞机的正电子源",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11513",
+      "title_zh": "物理学中的权力动态",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09691",
+      "title_zh": "时空对称性与引力物理的精密研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07286",
+      "title_zh": "基于对撞机实验的量热法精密定时",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08967",
+      "title_zh": "原初黑洞暗物质",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15954",
+      "title_zh": "利用小尺度天体物理观测探询暗物质",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.04045",
+      "title_zh": "利用多模态宇宙线事件探索基础物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06929",
+      "title_zh": "在标准模型的U(1)_{B−L}扩展中探索ILC上重Majorana中微子对产生",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06207",
+      "title_zh": "在强子对撞机上探索重味部分子分布函数",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07495",
+      "title_zh": "在缪子对撞机上通过mu+mu− → bs探索新物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.05745",
+      "title_zh": "利用月球环形山射电望远镜探索宇宙黑暗时代",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08206",
+      "title_zh": "通过奇异希格斯衰变探索电弱相变",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15128",
+      "title_zh": "促进国家实验室深度技术转移的项目",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07224",
+      "title_zh": "未来缪子对撞机探测器的有前景技术与研发方向",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07212",
+      "title_zh": "LHC前向区域中瞬发电子中微子、τ中微子及反中微子",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.10404",
+      "title_zh": "缪子对撞机上重WIMP暗物质搜索的前景",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.16994",
+      "title_zh": "底夸克质量测量前景",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07491",
+      "title_zh": "利用DESI获得暗物质约束的前景",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15810",
+      "title_zh": "标准模型中a_μ精确预言的前景",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08270",
+      "title_zh": "ILC上希格斯玻色子衰变到暗光子搜索的前景",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08874",
+      "title_zh": "缪子对撞机上标准模型希格斯玻色子对产生测量的前景",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.02140",
+      "title_zh": "顶夸克耦合测量的前景",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.13923",
+      "title_zh": "精确前沿的质子结构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.00124",
+      "title_zh": "公共政策与政府参与：HEP经费以外领域的国会倡导",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.00122",
+      "title_zh": "公共政策与政府参与：HEP经费的国会倡导（“华盛顿之行”）",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.00125",
+      "title_zh": "公共政策与政府参与：非国会政府接触",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06859",
+      "title_zh": "暗物质搜索中的费解过剩及其解决办法",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2201.03096",
+      "title_zh": "黑洞的量子方面与时空涌现",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08805",
+      "title_zh": "高能物理数据分析中的量子计算",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.08605",
+      "title_zh": "用于HEP算法与传感的量子计算硬件",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07091",
+      "title_zh": "用于高能物理研究的量子计算系统与软件",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.05104",
+      "title_zh": "量子引力与唯象学：暗物质、暗能量、真空选择、涌现时空及虫洞",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07117",
+      "title_zh": "量子场论与量子引力中的量子信息",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.16979",
+      "title_zh": "用于高能物理的量子网络",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07250",
+      "title_zh": "用于HEP科学的量子传感器——干涉仪、力学、阱与钟",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09488",
+      "title_zh": "自旋相关相互作用高精度测量的量子传感器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.03381",
+      "title_zh": "用于高能物理的量子模拟",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06961",
+      "title_zh": "未来超级τ-粲工厂的R测量与QCD研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12118",
+      "title_zh": "日本未来加速器应用中超导磁体的研发工作",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06024",
+      "title_zh": "面向多兆瓦束流设施的耐辐射束流仪器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12806",
+      "title_zh": "RADiCAL：精确计时、超紧凑、耐辐射电磁量能器",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.11331",
+      "title_zh": "b和c强子的稀有衰变",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.00098",
+      "title_zh": "未来对撞机量能器的读出",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.14894",
+      "title_zh": "未来探测器的读出技术",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05924",
+      "title_zh": "基于高精度光谱与天体测量的实时宇宙学",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08736",
+      "title_zh": "REBCO——我们下一代高场磁体和对撞机预算的银弹？",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08126",
+      "title_zh": "MATHUSLA长寿命粒子探测器的最新进展与后续步骤",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05914",
+      "title_zh": "面向暗物质、中微子及标准模型之外物理的反冲成像",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07919",
+      "title_zh": "Snowmass'21高功率回旋加速器与FFA研讨会报告",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07907",
+      "title_zh": "面向未来对撞机的重求和",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.06667",
+      "title_zh": "CMS对强子谱学贡献的综述",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05531",
+      "title_zh": "中性自然性综述",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07220",
+      "title_zh": "LSST之后的鲁宾天文台",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.02421",
+      "title_zh": "S矩阵自举",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08102",
+      "title_zh": "SBN-BD：费米实验室PIP-II直线加速器上的O(10 GeV)质子束流倾倒",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10046",
+      "title_zh": "对撞机与引力波探测器上的标量中介暗物质模型",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.12400",
+      "title_zh": "闪烁气泡室：用于暗物质和CEνNS探测的液态惰性气体气泡室",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08771",
+      "title_zh": "中微子实验中的重子数破坏搜寻",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05502",
+      "title_zh": "未来FCC-ee上长寿命粒子的搜寻",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.12714",
+      "title_zh": "利用超导射频腔对新粒子、暗物质和引力波的搜寻",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.13394",
+      "title_zh": "利用高强度Kaon束流搜寻新物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08347",
+      "title_zh": "ILC上长寿命暗光子衰变的灵敏度",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.03389",
+      "title_zh": "质子-质子对撞机上双喷注共振的灵敏度",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.01899",
+      "title_zh": "DUNE ND复合体上SAND探测器对重中性轻子的灵敏度",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07994",
+      "title_zh": "未来强子对撞机上W±W±jj纵向矢量玻色子散射的灵敏度",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.14379",
+      "title_zh": "信号强度和W玻色子质量测量作为对撞机上电弱相变的探针",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08107",
+      "title_zh": "含带电媒介子的简化暗物质模型",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07964",
+      "title_zh": "缪子对撞机上模拟探测器性能",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09740",
+      "title_zh": "面向高能物理量子计算设备研发的模拟",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06216",
+      "title_zh": "高能物理实验中硅辐射探测器的模拟",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.03333",
+      "title_zh": "在LHC和FCC-hh/SppC对撞机上通过色磁相互作用的单类矢量顶夸克产生",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07406",
+      "title_zh": "LHC及其之后的标准模型有效场论",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07328",
+      "title_zh": "Snowmass 2021社区问卷调查报告",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.07508",
+      "title_zh": "Snowmass青年学者：关键倡议组织",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07995",
+      "title_zh": "粒子物理项目的社会影响",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07645",
+      "title_zh": "小型高能物理实验的软件与计算",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07501",
+      "title_zh": "SoLAr：液氩中的太阳中微子",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09010",
+      "title_zh": "解决缪子对撞机希格斯工厂的关键问题：光学、磁铁及其保护、探测器本底",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.10636",
+      "title_zh": "N=4超杨-米尔斯理论中的散射求解",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06112",
+      "title_zh": "用AI/ML求解模拟系统误差",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.11529",
+      "title_zh": "电子离子对撞机对能量前沿粒子物理影响的若干方面",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08026",
+      "title_zh": "轴子理论中的一些开放问题",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.15345",
+      "title_zh": "超越III-V族半导体的自旋极化电子束产生",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07056",
+      "title_zh": "ILC上的Stau研究及其对缪子g-2反常的启示",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07535",
+      "title_zh": "奇异夸克作为希格斯扇区新物理的探针",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06773",
+      "title_zh": "缪子对撞机束流诱导本底抑制策略",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06800",
+      "title_zh": "保形REBCO绕组的策略",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08919",
+      "title_zh": "教育、推广和包容策略以增强美国加速器科学与工程劳动力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07646",
+      "title_zh": "理解希格斯物理的策略：冷铜对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.01742",
+      "title_zh": "弦理论与粒子物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07218",
+      "title_zh": "超越轴子直接探测的强CP问题",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:1901.11146",
+      "title_zh": "100 TeV质子对撞机上数十TeV喷注的强子量能器颗粒度研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.03035",
+      "title_zh": "在超级粲-陶工厂用极化电子束研究超子衰变中的CP破坏",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10184",
+      "title_zh": "CEPC上奇特希格斯衰变中的电弱相变研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07202",
+      "title_zh": "ILC上hγZ耦合的研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07987",
+      "title_zh": "超级质子-质子对撞机研究概述",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.16583",
+      "title_zh": "多夸克强子的亚结构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.03456",
+      "title_zh": "汇总对撞机实验对暗物质模型的实验灵敏度并与其他实验比较",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07799",
+      "title_zh": "用于高能物理的超导探测器磁体",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.01919",
+      "title_zh": "超导纳米线单光子探测器及材料中多余能量的积累和不稳定释放效应",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.15978",
+      "title_zh": "用于高能物理科学的超导传感器制造能力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.08154",
+      "title_zh": "超对称格点理论",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07423",
+      "title_zh": "加速器和对撞机设施的可持续性考量",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06153",
+      "title_zh": "物理的对称群等变架构",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06781",
+      "title_zh": "暗物质搜寻与多波长/多信使天体物理学的协同作用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07377",
+      "title_zh": "中微子物理中宇宙学与实验室搜寻的协同",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11846",
+      "title_zh": "红外量子引力的桌面实验",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "external:https://hal.archives-ouvertes.fr/hal-03634918",
+      "title_zh": "标记中微子束",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05591",
+      "title_zh": "未来十年中的τ中微子：从GeV到EeV",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.04902",
+      "title_zh": "高能物理中的张量网络",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09944",
+      "title_zh": "测试束与辐照设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07274",
+      "title_zh": "加速器磁体研发的测试样品与基础设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05505",
+      "title_zh": "在PIONEER实验中用稀有π介子衰变检验轻子味普适性和CKM幺正性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06219",
+      "title_zh": "检验中微子味模型",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.11012",
+      "title_zh": "解析共形自举",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11349",
+      "title_zh": "Belle II探测器升级计划",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.13768",
+      "title_zh": "用于中微子分析的CAFAna框架",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2208.10466",
+      "title_zh": "拟议的e+e-希格斯工厂的碳足迹",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09186",
+      "title_zh": "CLIC项目",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.04575",
+      "title_zh": "COHERENT实验计划",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.03710",
+      "title_zh": "下一代大型对撞机上的复合希格斯信号",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08121",
+      "title_zh": "宇宙学自举",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.08292",
+      "title_zh": "最深的问题：量子引力的一些观点",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.07412",
+      "title_zh": "致密物质状态方程与QCD相变",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.06547",
+      "title_zh": "双拷贝及其应用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2111.02442",
+      "title_zh": "高能缪子碰撞中的有效矢量玻色子近似",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08803",
+      "title_zh": "欧洲散裂源中微子超束",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05090",
+      "title_zh": "高亮度LHC上的前向物理设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2109.10905",
+      "title_zh": "前向物理设施：场地、实验与物理潜力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06520",
+      "title_zh": "未来环形对撞机：美国2021年Snowmass进程总结",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07360",
+      "title_zh": "MeV-EeV范围内伽马射线实验的未来",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08324",
+      "title_zh": "重光子搜寻实验",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07622",
+      "title_zh": "国际直线对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10198",
+      "title_zh": "离子荧光室（IFC）：用于方向性暗物质和拓扑成像无中微子双β衰变搜寻的新概念",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06894",
+      "title_zh": "粒子暗物质的宇宙射线与高能光子探测概览",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08297",
+      "title_zh": "未来十年低阈值暗物质直接探测概览",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2101.08320",
+      "title_zh": "LHC 奥运会 2020：高能物理中异常检测的社区挑战",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.04322",
+      "title_zh": "MegaMapper：用于研究暴胀和暗能量的第五阶段光谱仪器概念",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.00001",
+      "title_zh": "Mu3e 实验",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09336",
+      "title_zh": "国际粒子物理机会对美国教育的必要性",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07888",
+      "title_zh": "进一步开发磁控管作为高能物理射频源的需求",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08916",
+      "title_zh": "美国粒子物理需要结构性变革以形成有影响力的公众参与",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08117",
+      "title_zh": "数值共形自举",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06730",
+      "title_zh": "通往 N3LO 的前进之路",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08094",
+      "title_zh": "中微子工厂的物理依据",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07261",
+      "title_zh": "3 TeV 缪子对撞机阶段的物理依据",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07943",
+      "title_zh": "轻遗迹的物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.08553",
+      "title_zh": "CEPC 的物理潜力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06258",
+      "title_zh": "TeV 尺度缪子-离子对撞机的潜力",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08039",
+      "title_zh": "重中性轻子的现状与未来",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07349",
+      "title_zh": "Project 8 中微子质量实验",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08053",
+      "title_zh": "定义 QFT 的探索",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07651",
+      "title_zh": "REDTOP 实验：稀有 η/η′ 衰变探测新物理",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06476",
+      "title_zh": "ReLiC：回收型线性正负电子对撞机",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07316",
+      "title_zh": "CODEX-b 的前进之路",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08293",
+      "title_zh": "桑福德地下研究设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08779",
+      "title_zh": "Selena 中微子实验",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.13215",
+      "title_zh": "SLAC 直线加速器至 ESA（LESA）束线，用于暗扇区搜索和测试束流",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08271",
+      "title_zh": "强耦合常数：最新进展与未来十年",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07242",
+      "title_zh": "Windchime 项目",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.12839",
+      "title_zh": "Theia：物理项目总结",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06771",
+      "title_zh": "SMEFT 在维度8及以上的理论发展",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09030",
+      "title_zh": "中微子散射的理论工具：格点 QCD、有效场论、核物理、唯象学和中微子事例产生器之间的相互作用",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07059",
+      "title_zh": "可检验重子生成机制的理论与实验",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10089",
+      "title_zh": "理论前沿：理论与实验相结合",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.09503",
+      "title_zh": "暗簇射的理论、唯象与实验途径",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07344",
+      "title_zh": "在LHC上从t tbar j+X事件提取顶夸克质量：理论预言",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08386",
+      "title_zh": "迈向CUPID-1T",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08861",
+      "title_zh": "迈向HPC互补计算设施",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07314",
+      "title_zh": "基于径迹的奇特信号触发",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.11047",
+      "title_zh": "FLASH放射治疗的变革性技术",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2204.08983",
+      "title_zh": "变革美国粒子物理教育：Snowmass 2021研究",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.05729",
+      "title_zh": "VBF产生Vh中的树级干涉",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07272",
+      "title_zh": "国际线性对撞机上的双费米子末态",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.14486",
+      "title_zh": "双实单态模型(TRSM)基准平面",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07786",
+      "title_zh": "标准模型的U(1)_T3R扩展：一个亚GeV暗物质模型",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2209.10109",
+      "title_zh": "美国CMS——PURSUE（本科生研究暑期体验项目）",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2207.06213",
+      "title_zh": "美国未来对撞机国家加速器研发计划",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.05845",
+      "title_zh": "超高能宇宙线：宇宙前沿与能量前沿的交汇",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06788",
+      "title_zh": "具有大规模生产能力的超快无机晶体用于未来高计数率实验",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06508",
+      "title_zh": "超重粒子暗物质",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08871",
+      "title_zh": "利用声发射诊断理解超导加速器磁体的训练",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.01847",
+      "title_zh": "理解真空电弧和梯度极限",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2205.12847",
+      "title_zh": "用极化电子束升级SuperKEKB：发现潜力和实施建议",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.06805",
+      "title_zh": "紫外对红外物理的约束",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2005.10289",
+      "title_zh": "多TeV缪子对撞机上的矢量玻色子融合",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2106.01393",
+      "title_zh": "矢量玻色子散射过程：现状与展望",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07252",
+      "title_zh": "作为旗舰暗物质实验的Vera C. Rubin天文台",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07533",
+      "title_zh": "粒子物理、宇宙学和量子引力中的翘曲紧化",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2208.07910",
+      "title_zh": "何时、何地以及如何开放数据：个人观点",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2202.07683",
+      "title_zh": "超共形场论白皮书",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.10060",
+      "title_zh": "为什么美国应关注非洲和拉丁美洲的高能物理？",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.07351",
+      "title_zh": "高能缪子对撞机上的WIMP暗物质",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2203.08484",
+      "title_zh": "XCC：基于X射线自由电子激光的γγ对撞机希格斯工厂",
+      "status": "machine-draft"
+    },
+    {
+      "record_id": "arxiv:2206.12465",
+      "title_zh": "xFitter：一个开源的QCD分析框架",
+      "status": "machine-draft"
+    }
+  ]
+}

@@ -14,6 +14,9 @@
 | `paper_id` | string | 面向用户的论文身份，例如 `arXiv:2203.07864` |
 | `record_id` | string | 规范化唯一键，例如 `arxiv:2203.07864` |
 | `title` | string | 官方目录题名 |
+| `title_zh` | string | 项目生成的中文译题；不替代官方英文题名 |
+| `title_zh_status` | enum | 中文译题状态；首批值为 `machine-draft` |
+| `title_zh_model` | string | 生成中文译题的模型标识 |
 | `authors_as_listed` | string | 官方目录作者列，不用于推断通讯作者 |
 | `frontiers` | string[] | Snowmass Frontier 代码；跨 Frontier 记录保留多个值 |
 | `topics` | string[] | 官方 Frontier 页面的专题归类 |

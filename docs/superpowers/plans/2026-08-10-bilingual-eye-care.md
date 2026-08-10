@@ -25,10 +25,10 @@
 - Modify: `scripts/test_public_manifest.py`
 - Modify: `site/data/papers.json`
 
-- [ ] Add failing coverage requiring `title_zh`, `title_zh_status`, and `title_zh_model` on all 541 records.
-- [ ] Generate a complete ID-keyed Chinese-title mapping with the configured machine model.
-- [ ] Merge the mapping deterministically and reject missing, extra, or duplicate identities.
-- [ ] Regenerate public data and prove source titles and rights fields are unchanged.
+- [x] Add failing coverage requiring `title_zh`, `title_zh_status`, and `title_zh_model` on all 541 records.
+- [x] Generate a complete ID-keyed Chinese-title mapping with the configured machine model.
+- [x] Merge the mapping deterministically and reject missing, extra, or duplicate identities.
+- [x] Regenerate public data and prove source titles and rights fields are unchanged.
 
 ### Task 2: Independent language and theme controls
 
@@ -37,10 +37,10 @@
 - Modify: `site/app.js`
 - Modify: `site/styles.css`
 
-- [ ] Add accessible language and theme buttons to the header plus pre-paint theme initialization.
-- [ ] Add a complete Chinese/English UI dictionary and rerender visible state on language change.
-- [ ] Persist explicit choices, honor system/browser defaults, and synchronize `?lang=`.
-- [ ] Render bilingual paper cards/details in Chinese mode and English-only titles in English mode.
+- [x] Add accessible language and theme buttons to the header plus pre-paint theme initialization.
+- [x] Add a complete Chinese/English UI dictionary and rerender visible state on language change.
+- [x] Persist explicit choices, honor system/browser defaults, and synchronize `?lang=`.
+- [x] Render bilingual paper cards/details in Chinese mode and English-only titles in English mode.
 
 ### Task 3: Slate Mist visual system and verification
 
@@ -49,7 +49,7 @@
 - Modify: `.github/workflows/validate-public-site.yml`
 - Modify: `README.md`
 
-- [ ] Replace pure-bright surfaces with the approved fog-blue palette and add midnight-blue overrides.
-- [ ] Verify responsive controls, keyboard focus, reduced motion, search in both titles, and no theme flash.
-- [ ] Run unit, privacy, syntax, static HTTP, and visual checks in both modes.
+- [x] Replace pure-bright surfaces with the approved fog-blue palette and add midnight-blue overrides.
+- [x] Verify responsive controls, keyboard focus, reduced motion, search in both titles, and no theme flash.
+- [x] Run unit, privacy, syntax, static HTTP, and visual checks in both modes.
 - [ ] Push public `main`, verify GitHub Actions and Netlify, and inspect the production URL.

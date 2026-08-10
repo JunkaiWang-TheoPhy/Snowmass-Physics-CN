@@ -24,6 +24,9 @@ Snowmass 官方提交索引曾报告 548 份 submissions，其中有跨 Frontier
 
 静态站点位于 [`site/`](site/)，支持：
 
+- 中文 / English 界面一键切换，语言状态可通过 URL 分享；
+- 雾蓝浅色与午夜蓝灰深色主题一键切换，并记住读者选择；
+- 中文模式为全部 541 篇论文显示“英文原题 + 浅色小号中文机器译题”；
 - 按题名、作者、arXiv 编号、Frontier 和专题检索；
 - 按来源许可证、授权状态、翻译状态和发布资格筛选；
 - 按引用数、影响力代理、篇幅和年份排序；
@@ -83,6 +86,7 @@ python3 -m unittest scripts.test_public_manifest -v
 
 - [`site/data/papers.json`](site/data/papers.json)：541 条逐篇公开记录；
 - [`site/data/stats.json`](site/data/stats.json)：许可证、授权、Frontier、年份、篇幅和引用汇总。
+- [`data/snowmass_title_zh.json`](data/snowmass_title_zh.json)：以 `record_id` 对齐的中文机器译题快照；原始英文题名始终是规范题名。
 
 构建测试会拒绝重复论文 ID、缺失权利字段、无依据的 `publication_allowed=true`、邮箱地址和常见凭据模式。
 

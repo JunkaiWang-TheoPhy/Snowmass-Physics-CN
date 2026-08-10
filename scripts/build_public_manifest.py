@@ -22,6 +22,7 @@ DEFAULT_RIGHTS = ROOT / "output/snowmass2021/rights/snowmass2021_rights_manifest
 DEFAULT_CATALOG = ROOT / "output/snowmass2021/snowmass2021_whitepapers.json"
 DEFAULT_ANALYSIS = ROOT / "output/snowmass2021/analysis/enriched_papers.json"
 DEFAULT_LENGTHS = ROOT / "output/snowmass2021/analysis/length_records.json"
+DEFAULT_TITLES_ZH = ROOT / "data/snowmass_title_zh.json"
 DEFAULT_OUT_DIR = ROOT / "site/data"
 
 
@@ -107,6 +108,7 @@ def _safe_public_record(
     catalog: dict[str, Any],
     analysis: dict[str, Any],
     lengths: dict[str, Any],
+    title_zh: dict[str, Any],
 ) -> dict[str, Any]:
     state = _rights_public_state(rights)
     record_id = rights["record_id"]
@@ -116,6 +118,9 @@ def _safe_public_record(
         "paper_id": rights.get("paper_id", record_id),
         "record_id": record_id,
         "title": title,
+        "title_zh": title_zh["title_zh"],
+        "title_zh_status": title_zh.get("status", "machine-draft"),
+        "title_zh_model": title_zh["machine_model"],
         "authors_as_listed": rights.get("authors_as_listed") or catalog.get("authors_as_listed") or "",
         "frontiers": rights.get("frontiers") or catalog.get("frontiers") or [],
         "topics": rights.get("topics") or catalog.get("topics") or [],
@@ -210,12 +215,27 @@ def build_manifest(
     catalog_path: Path = DEFAULT_CATALOG,
     analysis_path: Path = DEFAULT_ANALYSIS,
     lengths_path: Path = DEFAULT_LENGTHS,
+    titles_zh_path: Path = DEFAULT_TITLES_ZH,
     out_dir: Path = DEFAULT_OUT_DIR,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rights_records = _read_json(rights_path)
     catalog_records = _by_record_id(_read_json(catalog_path))
     analysis_records = _by_record_id(_read_json(analysis_path))
     length_records = _by_record_id(_read_json(lengths_path))
+    title_payload = _read_json(titles_zh_path)
+    title_model = str(title_payload.get("machine_model", "")).strip()
+    if not title_model:
+        raise ValueError("Chinese title mapping is missing machine_model")
+    title_records = _by_record_id([
+        {**item, "machine_model": title_model}
+        for item in title_payload.get("translations", [])
+    ])
+    rights_ids = {str(item["record_id"]).casefold() for item in rights_records}
+    title_ids = set(title_records)
+    if rights_ids != title_ids:
+        missing = sorted(rights_ids - title_ids)
+        extra = sorted(title_ids - rights_ids)
+        raise ValueError(f"Chinese title mapping identity mismatch: missing={missing[:5]} extra={extra[:5]}")
 
     source_dates: list[str] = []
     records: list[dict[str, Any]] = []
@@ -228,6 +248,7 @@ def build_manifest(
             catalog_records.get(key, {}),
             analysis_records.get(key, {}),
             length_records.get(key, {}),
+            title_records[key],
         ))
 
     records.sort(key=lambda item: (item["title"].casefold(), item["record_id"].casefold()))
@@ -250,6 +271,7 @@ def main() -> None:
     parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--analysis", type=Path, default=DEFAULT_ANALYSIS)
     parser.add_argument("--lengths", type=Path, default=DEFAULT_LENGTHS)
+    parser.add_argument("--titles-zh", type=Path, default=DEFAULT_TITLES_ZH)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args()
     records, stats = build_manifest(
@@ -257,6 +279,7 @@ def main() -> None:
         catalog_path=args.catalog,
         analysis_path=args.analysis,
         lengths_path=args.lengths,
+        titles_zh_path=args.titles_zh,
         out_dir=args.out_dir,
     )
     print(json.dumps({

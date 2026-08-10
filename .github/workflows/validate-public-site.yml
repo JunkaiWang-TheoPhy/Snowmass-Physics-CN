@@ -33,7 +33,7 @@ jobs:
         run: git diff --exit-code -- site/data/papers.json site/data/stats.json
 
       - name: Run manifest and privacy tests
-        run: python3 -m unittest scripts.test_public_manifest -v
+        run: python3 -m unittest scripts.test_public_manifest scripts.test_site_contract -v
 
       - name: Audit tracked public tree
         run: python3 scripts/check_public_tree.py
@@ -41,6 +41,7 @@ jobs:
       - name: Validate static assets
         run: |
           python3 -m json.tool site/data/papers.json >/dev/null
+          python3 -m json.tool data/snowmass_title_zh.json >/dev/null
           python3 -m json.tool site/data/stats.json >/dev/null
           node --check site/app.js
 
@@ -57,4 +58,6 @@ jobs:
           done
           grep -q "Snowmass 中文翻译计划" /tmp/snowmass-home.html
           grep -q 'mailto:WangTheoPhys@outlook.com' /tmp/snowmass-home.html
+          grep -q 'id="language-toggle"' /tmp/snowmass-home.html
+          grep -q 'id="theme-toggle"' /tmp/snowmass-home.html
           curl --fail --silent --show-error http://127.0.0.1:4173/data/papers.json | python3 -m json.tool >/dev/null

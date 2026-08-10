@@ -15,11 +15,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "site" / "data" / "papers.json"
 STATS_PATH = ROOT / "site" / "data" / "stats.json"
+TITLE_MAP_PATH = ROOT / "data" / "snowmass_title_zh.json"
 
 REQUIRED_FIELDS = {
     "paper_id",
     "record_id",
     "title",
+    "title_zh",
+    "title_zh_status",
+    "title_zh_model",
     "authors_as_listed",
     "frontiers",
     "topics",
@@ -64,6 +68,9 @@ class PublicManifestTests(unittest.TestCase):
             self.assertIsInstance(record["frontiers"], list)
             self.assertIsInstance(record["topics"], list)
             self.assertIsInstance(record["human_reviewers"], list)
+            self.assertTrue(record["title_zh"].strip(), record["record_id"])
+            self.assertEqual(record["title_zh_status"], "machine-draft")
+            self.assertTrue(record["title_zh_model"].strip(), record["record_id"])
             self.assertIn(record["translation_status"], {
                 "not-started",
                 "machine-draft",
@@ -109,6 +116,23 @@ class PublicManifestTests(unittest.TestCase):
         records = _load_manifest()
         keys = [(record["title"].casefold(), record["record_id"].casefold()) for record in records]
         self.assertEqual(keys, sorted(keys))
+
+    def test_all_records_have_distinct_machine_titles(self) -> None:
+        records = _load_manifest()
+        self.assertEqual(len(records), 541)
+        for record in records:
+            self.assertNotEqual(record["title_zh"].casefold(), record["title"].casefold(), record["record_id"])
+
+    def test_title_mapping_matches_manifest(self) -> None:
+        records = _load_manifest()
+        payload = json.loads(TITLE_MAP_PATH.read_text(encoding="utf-8"))
+        translations = payload["translations"]
+        self.assertEqual(payload["machine_model"], "deepseek-v4-flash")
+        self.assertEqual(len(translations), 541)
+        self.assertEqual(
+            {item["record_id"].casefold() for item in translations},
+            {record["record_id"].casefold() for record in records},
+        )
 
     def test_stats_match_manifest(self) -> None:
         records = _load_manifest()
