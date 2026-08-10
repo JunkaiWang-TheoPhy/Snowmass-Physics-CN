@@ -75,8 +75,6 @@ def inspect_source_package(record: dict[str, Any], source_root: Path) -> dict[st
         return inspection
 
     inspection["source_package_type"] = package_type
-    if package_type != "tar":
-        return inspection
 
     with tempfile.TemporaryDirectory(prefix=".snowmass-production-") as temporary:
         extract_root = Path(temporary) / "extract"

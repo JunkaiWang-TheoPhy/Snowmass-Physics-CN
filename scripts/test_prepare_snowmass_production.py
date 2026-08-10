@@ -312,6 +312,47 @@ class PrepareSnowmassProductionTests(unittest.TestCase):
         for directory, expected_hashes in original_hashes.items():
             self.assertEqual(self.artifact_hashes(directory), expected_hashes, directory)
 
+    def test_main_records_single_tex_selection_and_include_audit(self) -> None:
+        preparer = self.require_module()
+        self.write_source_manifest([{"record_id": "arxiv:single", "directory": "papers/arxiv_single"}])
+        self.write_rights_manifest([{"record_id": "arxiv:single", "publication_allowed": True}])
+        self.write_single_tex_gzip(
+            "papers/arxiv_single",
+            (
+                "\\documentclass{article}\n"
+                "\\title{Single TeX Audit}\n"
+                "\\begin{document}\n"
+                "Single file TeX payload.\n"
+                "\\input{source}\n"
+                "\\input{missing}\n"
+                "\\end{document}\n"
+            ),
+        )
+
+        exit_code = preparer.main(
+            [
+                "--rights-manifest",
+                str(self.rights_manifest),
+                "--source-root",
+                str(self.source_root),
+                "--output-root",
+                str(self.output_root),
+            ]
+        )
+
+        self.assertEqual(exit_code, 0)
+        report = self.load_report()
+        self.assertEqual(report["counts"], {"complete": 1, "ambiguous": 0, "failed": 0, "reused": 0})
+        record = self.record_by_id(report, "arxiv:single")
+        self.assertEqual(record["source_package_type"], "single_tex")
+        self.assertEqual(record["selected_main_path"], "source.tex")
+        self.assertEqual(record["selected_main_score"], record["main_tex_candidates"][0]["score"])
+        self.assertIsInstance(record["selected_main_score"], int)
+        self.assertIsInstance(record["unresolved_include_count"], int)
+        self.assertEqual(record["unresolved_include_count"], 1)
+        self.assertIsInstance(record["include_cycle_count"], int)
+        self.assertEqual(record["include_cycle_count"], 1)
+
     def test_main_resumes_after_keyboard_interrupt_without_rewriting_completed_artifacts(self) -> None:
         preparer = self.require_module()
         rows = self.fixture_rows()[:2]
