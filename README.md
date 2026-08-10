@@ -2,7 +2,7 @@
 
 Snowmass 2021 contributed/white papers 的非官方中文翻译、权利核验与开放协作目录。
 
-公开网站：<https://snowmass-zh.netlify.app/>
+公开网站：<https://snowmass-physics-cn.netlify.app/>
 
 本项目先核验每篇论文是否允许翻译和公开传播，再推进机器初译、术语统一与人工审校。没有明确开放改编许可、或没有取得范围明确书面授权的论文，可以记录进度，但不会在公开仓库或网站发布完整译文。
 
@@ -35,7 +35,7 @@ Snowmass 官方提交索引曾报告 548 份 submissions，其中有跨 Frontier
 python3 -m http.server 4173 --directory site
 ```
 
-打开 `http://127.0.0.1:4173/`。仓库包含 [`netlify.toml`](netlify.toml)，连接 GitHub 后可由 Netlify 直接发布 `site/`。当前生产站点是 <https://snowmass-zh.netlify.app/>。
+打开 `http://127.0.0.1:4173/`。仓库包含 [`netlify.toml`](netlify.toml)，连接 GitHub 后可由 Netlify 直接发布 `site/`。当前生产站点是 <https://snowmass-physics-cn.netlify.app/>。
 
 ## 权利处置原则
 

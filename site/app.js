@@ -378,7 +378,7 @@ function renderDetail(recordId, { push = false } = {}) {
           : "如果希望翻译这篇论文，请先由授权工作流联系通讯作者或权利人，并保存范围明确的书面回复。"}</p>
         <div class="detail-actions">
           <a class="button button-primary" href="${safeURL(paper.source_url)}" target="_blank" rel="noreferrer">查看原文 ↗</a>
-          <a class="button button-secondary" href="https://github.com/JunkaiWang-TheoPhy/snowmass-zh" target="_blank" rel="noreferrer">前往 GitHub</a>
+          <a class="button button-secondary" href="https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN" target="_blank" rel="noreferrer">前往 GitHub</a>
         </div>
       </section>
     </div>`;

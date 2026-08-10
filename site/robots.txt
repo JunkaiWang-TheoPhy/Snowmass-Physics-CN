@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://snowmass-zh.netlify.app/sitemap.xml
+Sitemap: https://snowmass-physics-cn.netlify.app/sitemap.xml

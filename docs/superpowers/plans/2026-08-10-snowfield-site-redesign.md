@@ -86,7 +86,7 @@ git commit -m "Protect the catalog contract during the visual redesign"
 
 - [ ] **Step 1: Add the local hero artwork and its provenance**
 
-Create `site/assets/snowmass-mountain.svg` as an original project-owned vector illustration using layered pale sky, mountain silhouettes, snowcaps, and contour paths. Record it in `site/assets/IMAGE_CREDITS.md` as “Original vector illustration created for snowmass-zh; project code/artwork license AGPL-3.0; no third-party source.”
+Create `site/assets/snowmass-mountain.svg` as an original project-owned vector illustration using layered pale sky, mountain silhouettes, snowcaps, and contour paths. Record it in `site/assets/IMAGE_CREDITS.md` as “Original vector illustration created for Snowmass-Physics-CN; project code/artwork license AGPL-3.0; no third-party source.”
 
 - [ ] **Step 2: Update semantic homepage copy and structure**
 
