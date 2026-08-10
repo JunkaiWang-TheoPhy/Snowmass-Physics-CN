@@ -52,4 +52,4 @@
 - [x] Replace pure-bright surfaces with the approved fog-blue palette and add midnight-blue overrides.
 - [x] Verify responsive controls, keyboard focus, reduced motion, search in both titles, and no theme flash.
 - [x] Run unit, privacy, syntax, static HTTP, and visual checks in both modes.
-- [ ] Push public `main`, verify GitHub Actions and Netlify, and inspect the production URL.
+- [x] Push public `main`, verify GitHub Actions and Netlify, and inspect the production URL.
