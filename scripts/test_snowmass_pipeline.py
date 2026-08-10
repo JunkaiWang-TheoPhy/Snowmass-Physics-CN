@@ -613,6 +613,14 @@ class StructureProtectionTests(unittest.TestCase):
         self.assertNotIn(r"\%", protected.text)
         self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
 
+    def test_protect_structures_round_trips_numeric_dimension_labels(self) -> None:
+        text = "Compare 2D tracers with a 3D survey.\n"
+
+        protected = self.pipeline.protect_structures(text)
+
+        self.assertEqual(list(protected.mapping.values()), ["2D", "3D"])
+        self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
+
     def test_restore_rejects_missing_sentinel(self) -> None:
         protected = self.pipeline.protect_structures("See \\cite{atlas} and $p_T$.")
         damaged = protected.text.replace(next(iter(protected.mapping)), "")

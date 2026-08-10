@@ -277,6 +277,20 @@ class GlossaryMergeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             self.assertEqual(RUNNER.load_article_glossary(Path(temporary)), [])
 
+    def test_select_glossary_terms_keeps_only_terms_present_in_source_or_aliases(self) -> None:
+        terms = [
+            {"source": "dark matter", "target": "暗物质"},
+            {"source": "cosmic microwave background", "aliases": ["CMB"], "target": "宇宙微波背景"},
+            {"source": "light relic", "target": "轻遗迹粒子"},
+        ]
+
+        selected = RUNNER.select_glossary_terms(
+            "CMB lensing constrains light relic particles.",
+            terms,
+        )
+
+        self.assertEqual(selected, terms[1:])
+
 
 class BudgetGuardTests(unittest.TestCase):
     def test_reservation_settles_to_reported_v4_flash_cost(self) -> None:

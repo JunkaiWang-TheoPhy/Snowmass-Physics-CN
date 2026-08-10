@@ -146,6 +146,7 @@ _STRUCTURE_PATTERNS = (
     re.compile(r"https?://[^\s<>()，。；：！？]*[^\s<>().,;:!?，。；：！？]"),
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"\\%"),
+    re.compile(r"\b\d+D\b"),
 )
 _SENTINEL_PATTERN = re.compile(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]")
 _WORD_PATTERN = re.compile(r"\S+")

@@ -154,6 +154,16 @@ def merge_glossary_terms(
     return merged
 
 
+def select_glossary_terms(source_text: str, terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    folded = source_text.casefold()
+    selected: list[dict[str, Any]] = []
+    for term in terms:
+        surfaces = [term.get("source", ""), *term.get("aliases", [])]
+        if any(str(surface).strip().casefold() in folded for surface in surfaces if str(surface).strip()):
+            selected.append(term)
+    return selected
+
+
 def resolve_glossary_path(root: Path, explicit: Path | None) -> Path:
     return explicit if explicit is not None else root / "global_glossary.json"
 
@@ -630,7 +640,8 @@ def process_chunk(
     chunk_id = chunk["id"]
     source_path = article_dir / chunk["source_file"]
     source = source_path.read_text(encoding="utf-8")
-    glossary = glossary_text(terms)
+    selected_terms = select_glossary_terms(source, terms)
+    glossary = glossary_text(selected_terms)
     status_path = article_dir / "chunk_status" / f"{chunk_id}.json"
     try:
         status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {
@@ -671,8 +682,8 @@ def process_chunk(
             current = output_path.read_text(encoding="utf-8")
             continue
 
-        decision = stage_decision(stage, current, terms)
-        qc_terms = [] if stage == "translate" else terms
+        decision = stage_decision(stage, current, selected_terms)
+        qc_terms = [] if stage == "translate" else selected_terms
         started = now()
         stage_status.update(
             {
