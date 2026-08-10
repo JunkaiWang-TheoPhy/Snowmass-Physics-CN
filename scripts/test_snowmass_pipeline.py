@@ -314,6 +314,53 @@ class MainTexSelectionTests(unittest.TestCase):
         self.assertFalse(by_path[commented_path].has_title)
         self.assertFalse(by_path[commented_path].has_abstract)
 
+    def test_rank_main_tex_prefers_include_rich_whole_paper_over_short_standalone(self) -> None:
+        whole_paper = self.write_tex(
+            "WhitePaper.tex",
+            "\\documentclass{article}\n"
+            "\\begin{document}\n"
+            "\\input{sections/one}\n"
+            "\\input{sections/two}\n"
+            "\\input{sections/three}\n"
+            "\\input{sections/four}\n"
+            "\\input{sections/five}\n"
+            "\\end{document}\n",
+        )
+        standalone = self.write_tex(
+            "Standalone.tex",
+            "\\documentclass{article}\n"
+            "\\title{Short standalone}\n"
+            "\\begin{document}\n"
+            "Short body.\n"
+            "\\end{document}\n",
+        )
+        for name in ("one", "two", "three", "four", "five"):
+            self.write_tex(f"sections/{name}.tex", f"{name} section body\n")
+
+        candidates = self.pipeline.rank_main_tex(self.root)
+
+        self.assertEqual(candidates[0].path, whole_paper)
+        self.assertEqual(candidates[0].outgoing_includes, 5)
+        self.assertGreater(candidates[0].score, next(item.score for item in candidates if item.path == standalone))
+
+    def test_rank_main_tex_prefers_root_main_over_nested_duplicate(self) -> None:
+        content = (
+            "\\documentclass{article}\n"
+            "\\title{Whole paper}\n"
+            "\\begin{document}\n"
+            "Same complete body.\n"
+            "\\end{document}\n"
+        )
+        root_main = self.write_tex("main.tex", content)
+        nested_main = self.write_tex("archive/copy/main.tex", content)
+
+        candidates = self.pipeline.rank_main_tex(self.root)
+
+        self.assertEqual(candidates[0].path, root_main)
+        self.assertEqual(candidates[0].path_depth, 0)
+        self.assertEqual(next(item.path_depth for item in candidates if item.path == nested_main), 2)
+        self.assertGreater(candidates[0].score, next(item.score for item in candidates if item.path == nested_main))
+
 
 class ExpandTexTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -329,7 +376,7 @@ class ExpandTexTests(unittest.TestCase):
         return path
 
     def test_expand_tex_preserves_nested_include_order(self) -> None:
-        main_path = self.write_tex("main.tex", "start\n\\input{sections/first}\n\\input{sections/second}\nend\n")
+        main_path = self.write_tex("main.tex", "start\n\\input{sections/first}\n\\include{sections/second}\nend\n")
         self.write_tex("sections/first.tex", "first section\n\\input{sub/third}\n")
         self.write_tex("sections/sub/third.tex", "third nested\n")
         self.write_tex("sections/second.tex", "second section\n")
@@ -372,6 +419,70 @@ class ExpandTexTests(unittest.TestCase):
 
         with self.assertRaises(self.pipeline.UnsafeIncludeError):
             self.pipeline.expand_tex(main_path, self.root)
+
+    def test_expand_tex_supports_unbraced_input_and_include(self) -> None:
+        main_path = self.write_tex(
+            "main.tex",
+            "start\n\\input first\n\\include sections/second\nend\n",
+        )
+        first = self.write_tex("first.tex", "first body\n")
+        second = self.write_tex("sections/second.tex", "second body\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertIn("first body", result.text)
+        self.assertIn("second body", result.text)
+        self.assertEqual(result.includes, (first, second))
+
+    def test_expand_tex_resolves_main_prefixed_subfiles_from_root(self) -> None:
+        main_path = self.write_tex(
+            "report.tex",
+            "\\newcommand{\\main}{.}\n\\subfile{\\main/sections/first}\n",
+        )
+        first = self.write_tex(
+            "sections/first.tex",
+            "first body\n\\subfile{\\main/sections/second}\n",
+        )
+        second = self.write_tex("sections/second.tex", "second body\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertIn("first body", result.text)
+        self.assertIn("second body", result.text)
+        self.assertEqual(result.includes, (first, second))
+
+    def test_expand_tex_falls_back_to_root_for_nested_master_relative_input(self) -> None:
+        main_path = self.write_tex("main.tex", "\\input chapters/overview\n")
+        overview = self.write_tex(
+            "chapters/overview.tex",
+            "overview body\n\\input chapters/detail\n",
+        )
+        detail = self.write_tex("chapters/detail.tex", "detail body\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertIn("overview body", result.text)
+        self.assertIn("detail body", result.text)
+        self.assertEqual(result.includes, (overview, detail))
+
+    def test_expand_tex_rejects_main_prefixed_subfile_traversal(self) -> None:
+        main_path = self.write_tex("report.tex", "\\subfile{\\main/../escape}\n")
+
+        with self.assertRaises(self.pipeline.UnsafeIncludeError):
+            self.pipeline.expand_tex(main_path, self.root)
+
+    def test_expand_tex_ignores_commented_unbraced_inputs(self) -> None:
+        main_path = self.write_tex(
+            "main.tex",
+            "% \\input hidden\n\\input visible % \\input hidden\n",
+        )
+        self.write_tex("hidden.tex", "hidden body\n")
+        self.write_tex("visible.tex", "visible body\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertIn("visible body", result.text)
+        self.assertNotIn("hidden body", result.text)
 
 
 class StructureProtectionTests(unittest.TestCase):

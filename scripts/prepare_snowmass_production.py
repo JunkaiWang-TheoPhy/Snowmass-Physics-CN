@@ -40,11 +40,14 @@ def atomic_json(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
-def candidate_to_dict(candidate: Any) -> dict[str, Any]:
+def candidate_to_dict(candidate: Any, root: Path) -> dict[str, Any]:
     return {
-        "path": candidate.path.as_posix(),
+        "path": candidate.path.relative_to(root).as_posix(),
         "score": candidate.score,
         "incoming_includes": candidate.incoming_includes,
+        "outgoing_includes": candidate.outgoing_includes,
+        "path_depth": candidate.path_depth,
+        "content_hash": candidate.content_hash,
         "has_document_marker": candidate.has_document_marker,
         "has_title": candidate.has_title,
         "has_abstract": candidate.has_abstract,
@@ -58,6 +61,10 @@ def inspect_source_package(record: dict[str, Any], source_root: Path) -> dict[st
         "source_package_type": None,
         "main_tex_candidates": [],
         "ambiguity_reasons": [],
+        "selected_main_path": None,
+        "selected_main_score": None,
+        "unresolved_include_count": None,
+        "include_cycle_count": None,
     }
     if not archive_path.exists():
         return inspection
@@ -81,9 +88,21 @@ def inspect_source_package(record: dict[str, Any], source_root: Path) -> dict[st
         except Exception:  # noqa: BLE001 - keep report inspection best-effort
             return inspection
 
-    inspection["main_tex_candidates"] = [candidate_to_dict(candidate) for candidate in candidates]
-    if len(candidates) > 1:
-        inspection["ambiguity_reasons"] = ["multiple_main_tex_candidates"]
+        inspection["main_tex_candidates"] = [candidate_to_dict(candidate, extract_root) for candidate in candidates]
+        if candidates:
+            selected = candidates[0]
+            inspection["selected_main_path"] = selected.path.relative_to(extract_root).as_posix()
+            inspection["selected_main_score"] = selected.score
+            tied = [candidate for candidate in candidates if candidate.score == selected.score]
+            if len({candidate.content_hash for candidate in tied}) > 1:
+                inspection["ambiguity_reasons"] = ["multiple_main_tex_candidates"]
+            try:
+                expanded = PIPELINE.expand_tex(selected.path, extract_root)
+            except Exception:  # noqa: BLE001 - selection remains auditable when expansion fails
+                pass
+            else:
+                inspection["unresolved_include_count"] = len(expanded.missing_includes)
+                inspection["include_cycle_count"] = len(expanded.cycles)
     return inspection
 
 
@@ -117,6 +136,10 @@ def build_record_report(
         "manifest": status.get("manifest") if status else None,
         "main_tex_candidates": inspection["main_tex_candidates"],
         "ambiguity_reasons": list(inspection["ambiguity_reasons"]),
+        "selected_main_path": inspection["selected_main_path"],
+        "selected_main_score": inspection["selected_main_score"],
+        "unresolved_include_count": inspection["unresolved_include_count"],
+        "include_cycle_count": inspection["include_cycle_count"],
         "error": error,
     }
     if error is None and report["ambiguity_reasons"]:

@@ -27,6 +27,9 @@ class MainCandidate(NamedTuple):
     path: Path
     score: int
     incoming_includes: int
+    outgoing_includes: int
+    path_depth: int
+    content_hash: str
     has_document_marker: bool
     has_title: bool
     has_abstract: bool
@@ -121,7 +124,10 @@ _TEX_MARKER = re.compile(
 _DOCUMENT_MARKER_PATTERN = re.compile(r"\\(?:documentclass|documentstyle|begin\s*\{document\})")
 _TITLE_PATTERN = re.compile(r"\\title\s*\{")
 _ABSTRACT_PATTERN = re.compile(r"\\begin\s*\{abstract\}")
-_INCLUDE_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
+_INCLUDE_PATTERN = re.compile(
+    r"\\(?P<command>input|include|subfile)(?![A-Za-z@])\s*"
+    r"(?:\{(?P<braced>[^{}]+)\}|(?P<unbraced>[^\s%{}]+))"
+)
 _DISPLAY_ENV_PATTERN = re.compile(
     r"\\begin\{(?P<env>equation\*?|align\*?|gather\*?|multline\*?)\}.*?\\end\{(?P=env)\}",
     re.DOTALL,
@@ -244,13 +250,21 @@ def _strip_tex_comments(text: str) -> str:
     return "".join(_strip_tex_comment(line) for line in text.splitlines(keepends=True))
 
 
-def _iter_include_specs(text: str) -> list[tuple[int, int, str]]:
-    matches: list[tuple[int, int, str]] = []
+def _iter_include_specs(text: str) -> list[tuple[int, int, str, str]]:
+    matches: list[tuple[int, int, str, str]] = []
     offset = 0
     for line in text.splitlines(keepends=True):
         visible = _strip_tex_comment(line)
         for match in _INCLUDE_PATTERN.finditer(visible):
-            matches.append((offset + match.start(), offset + match.end(), match.group(1).strip()))
+            spec = match.group("braced") or match.group("unbraced")
+            matches.append(
+                (
+                    offset + match.start(),
+                    offset + match.end(),
+                    match.group("command"),
+                    spec.strip(),
+                )
+            )
         offset += len(line)
     return matches
 
@@ -270,16 +284,29 @@ def _candidate_include_paths(spec: str, base_dir: Path) -> list[Path]:
     return [logical.with_suffix(".tex"), logical]
 
 
-def _resolve_include_target(spec: str, base_dir: Path, root: Path) -> Path:
+def _resolve_include_target(spec: str, base_dir: Path, root: Path, command: str) -> Path:
+    if command == "subfile" and spec.startswith("\\main/"):
+        spec = spec[len("\\main/") :]
+        base_dir = root
     logical_spec = Path(spec)
     if logical_spec.is_absolute():
         raise UnsafeIncludeError(f"Unsafe include path: {spec}")
-    candidates = _candidate_include_paths(spec, base_dir)
-    for candidate in candidates:
-        resolved = _ensure_within_root(candidate, root, UnsafeIncludeError, f"Unsafe include path: {spec}")
+    search_dirs = [base_dir]
+    if not spec.startswith(".") and base_dir.resolve() != root.resolve():
+        search_dirs.append(root)
+    candidates = [
+        candidate
+        for directory in search_dirs
+        for candidate in _candidate_include_paths(spec, directory)
+    ]
+    validated = [
+        _ensure_within_root(candidate, root, UnsafeIncludeError, f"Unsafe include path: {spec}")
+        for candidate in candidates
+    ]
+    for candidate in validated:
         if candidate.exists():
-            return resolved
-    return _ensure_within_root(candidates[0], root, UnsafeIncludeError, f"Unsafe include path: {spec}")
+            return candidate
+    return validated[0]
 
 
 def _tex_source_files(root: Path) -> list[Path]:
@@ -290,18 +317,20 @@ def rank_main_tex(root: Path) -> list[MainCandidate]:
     tex_files = _tex_source_files(root)
     contents = {path.resolve(): path.read_text(encoding="utf-8") for path in tex_files}
     incoming_counts = {path.resolve(): 0 for path in tex_files}
+    outgoing_targets: dict[Path, set[Path]] = {path.resolve(): set() for path in tex_files}
     candidate_paths = set(incoming_counts)
 
     for path in tex_files:
         source_path = path.resolve()
-        for _, _, spec in _iter_include_specs(contents[source_path]):
+        for _, _, command, spec in _iter_include_specs(contents[source_path]):
             try:
-                target = _resolve_include_target(spec, path.parent, root)
+                target = _resolve_include_target(spec, path.parent, root, command)
             except UnsafeIncludeError:
                 continue
             resolved_target = target.resolve(strict=False)
             if resolved_target in candidate_paths and resolved_target != source_path:
                 incoming_counts[resolved_target] += 1
+                outgoing_targets[source_path].add(resolved_target)
 
     ranked: list[MainCandidate] = []
     for path in tex_files:
@@ -312,6 +341,8 @@ def rank_main_tex(root: Path) -> list[MainCandidate]:
         has_document_marker = _DOCUMENT_MARKER_PATTERN.search(visible_text) is not None
         has_title = _TITLE_PATTERN.search(visible_text) is not None
         has_abstract = _ABSTRACT_PATTERN.search(visible_text) is not None
+        outgoing_includes = len(outgoing_targets[resolved_path])
+        path_depth = len(path.resolve().relative_to(root.resolve()).parent.parts)
 
         score = 0
         if has_document_marker:
@@ -321,6 +352,8 @@ def rank_main_tex(root: Path) -> list[MainCandidate]:
         if has_abstract:
             score += 35
         score -= incoming_counts[resolved_path] * 80
+        score += min(outgoing_includes * 8, 160)
+        score -= min(path_depth, 8) * 20
         if lower_stem == "main":
             score += 40
         if any(token in lower_stem for token in ("supplement", "supp", "appendix", "response", "cover")):
@@ -332,6 +365,9 @@ def rank_main_tex(root: Path) -> list[MainCandidate]:
                 path=path,
                 score=score,
                 incoming_includes=incoming_counts[resolved_path],
+                outgoing_includes=outgoing_includes,
+                path_depth=path_depth,
+                content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
                 has_document_marker=has_document_marker,
                 has_title=has_title,
                 has_abstract=has_abstract,
@@ -364,9 +400,9 @@ def expand_tex(main_path: Path, root: Path) -> ExpandedTex:
         text = path.read_text(encoding="utf-8")
         expanded_parts: list[str] = []
         cursor = 0
-        for start, end, spec in _iter_include_specs(text):
+        for start, end, command, spec in _iter_include_specs(text):
             expanded_parts.append(text[cursor:start])
-            target = _resolve_include_target(spec, path.parent, root)
+            target = _resolve_include_target(spec, path.parent, root, command)
             target_key = target.resolve(strict=False)
             display_target = display_paths.setdefault(target_key, target)
             if not target.exists():

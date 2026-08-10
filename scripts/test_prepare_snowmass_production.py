@@ -126,10 +126,20 @@ class PrepareSnowmassProductionTests(unittest.TestCase):
                         "\\begin{document}\n"
                         "Tar body text.\n"
                         "\\input{sections/intro}\n"
+                        "\\input{sections/missing}\n"
                         "\\end{document}\n"
                     ).encode("utf-8"),
                 ),
                 ("sections/intro.tex", b"Included tar section.\n"),
+                (
+                    "nested/standalone.tex",
+                    (
+                        "\\documentclass{article}\n"
+                        "\\begin{document}\n"
+                        "Short standalone candidate.\n"
+                        "\\end{document}\n"
+                    ).encode("utf-8"),
+                ),
             ],
         )
 
@@ -151,22 +161,22 @@ class PrepareSnowmassProductionTests(unittest.TestCase):
             "papers/arxiv_ambiguous",
             [
                 (
-                    "main.tex",
+                    "alpha.tex",
                     (
                         "\\documentclass{article}\n"
-                        "\\title{Main Candidate}\n"
+                        "\\title{Alpha Candidate}\n"
                         "\\begin{document}\n"
-                        "Chosen ambiguous main body.\n"
+                        "Alpha ambiguous body.\n"
                         "\\end{document}\n"
                     ).encode("utf-8"),
                 ),
                 (
-                    "overview.tex",
+                    "omega.tex",
                     (
                         "\\documentclass{article}\n"
-                        "\\title{Overview Candidate}\n"
+                        "\\title{Omega Candidate}\n"
                         "\\begin{document}\n"
-                        "Alternative ambiguous body.\n"
+                        "Omega ambiguous body.\n"
                         "\\end{document}\n"
                     ).encode("utf-8"),
                 ),
@@ -225,6 +235,16 @@ class PrepareSnowmassProductionTests(unittest.TestCase):
         self.assertEqual(tar_record["source_kind"], "expanded_tex")
         self.assertEqual(tar_record["source_package_type"], "tar")
         self.assertFalse(tar_record["reused"])
+        self.assertEqual(tar_record["ambiguity_reasons"], [])
+        self.assertEqual(tar_record["selected_main_path"], "main.tex")
+        self.assertEqual(tar_record["selected_main_score"], tar_record["main_tex_candidates"][0]["score"])
+        self.assertEqual(tar_record["unresolved_include_count"], 1)
+        self.assertEqual(tar_record["include_cycle_count"], 0)
+        self.assertEqual(len(tar_record["main_tex_candidates"]), 2)
+        self.assertGreater(
+            tar_record["main_tex_candidates"][0]["score"],
+            tar_record["main_tex_candidates"][1]["score"],
+        )
 
         self.assertEqual(single_record["status"], "complete")
         self.assertEqual(single_record["source_kind"], "expanded_tex")
@@ -236,7 +256,19 @@ class PrepareSnowmassProductionTests(unittest.TestCase):
 
         self.assertEqual(ambiguous_record["status"], "ambiguous")
         self.assertEqual(ambiguous_record["ambiguity_reasons"], ["multiple_main_tex_candidates"])
-        self.assertGreaterEqual(len(ambiguous_record["main_tex_candidates"]), 2)
+        self.assertEqual(
+            [candidate["score"] for candidate in ambiguous_record["main_tex_candidates"][:2]],
+            [ambiguous_record["selected_main_score"], ambiguous_record["selected_main_score"]],
+        )
+        self.assertEqual(
+            [candidate["path_depth"] for candidate in ambiguous_record["main_tex_candidates"][:2]],
+            [0, 0],
+        )
+        self.assertEqual(
+            len({candidate["content_hash"] for candidate in ambiguous_record["main_tex_candidates"][:2]}),
+            2,
+        )
+        self.assertEqual(ambiguous_record["selected_main_path"], "alpha.tex")
 
         self.assertEqual(failed_record["status"], "failed")
         self.assertIn("Missing PDF text fallback", failed_record["error"])
