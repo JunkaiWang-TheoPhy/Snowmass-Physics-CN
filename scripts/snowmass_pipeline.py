@@ -39,6 +39,15 @@ class ExpandedTex(NamedTuple):
     cycles: tuple[Path, ...]
 
 
+class ProtectedText(NamedTuple):
+    text: str
+    mapping: dict[str, str]
+
+
+class StructureMismatchError(RuntimeError):
+    """Raised when protected sentinels are missing, duplicated, or unexpected."""
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -113,6 +122,22 @@ _DOCUMENT_MARKER_PATTERN = re.compile(r"\\(?:documentclass|documentstyle|begin\s
 _TITLE_PATTERN = re.compile(r"\\title\s*\{")
 _ABSTRACT_PATTERN = re.compile(r"\\begin\s*\{abstract\}")
 _INCLUDE_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
+_DISPLAY_ENV_PATTERN = re.compile(
+    r"\\begin\{(?P<env>equation\*?|align\*?|gather\*?|multline\*?)\}.*?\\end\{(?P=env)\}",
+    re.DOTALL,
+)
+_STRUCTURE_PATTERNS = (
+    re.compile(r"\$\$.*?\$\$", re.DOTALL),
+    re.compile(r"\\\[.*?\\\]", re.DOTALL),
+    _DISPLAY_ENV_PATTERN,
+    re.compile(r"\\\(.+?\\\)", re.DOTALL),
+    re.compile(r"(?<!\$)\$(?!\$)(?:\\.|[^$\\\n])+\$(?!\$)"),
+    re.compile(r"\\(?:cite|citet|citep|ref|eqref|autoref|label)\{[^{}]+\}"),
+    re.compile(r"https?://[^\s<>()]+"),
+    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+)
+_SENTINEL_PATTERN = re.compile(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]")
+_WORD_PATTERN = re.compile(r"\S+")
 
 
 def _classify_source_payload(payload: bytes, path: Path) -> Literal["tar", "single_tex"]:
@@ -364,3 +389,100 @@ def expand_tex(main_path: Path, root: Path) -> ExpandedTex:
         missing_includes=tuple(missing_includes),
         cycles=tuple(cycles),
     )
+
+
+def _sentinel_for(index: int, value: str) -> str:
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:10]
+    return f"[[SM_{index:04d}_{digest}]]"
+
+
+def protect_structures(text: str) -> ProtectedText:
+    protected = text
+    mapping: dict[str, str] = {}
+    index = 1
+
+    for pattern in _STRUCTURE_PATTERNS:
+        def replace(match: re.Match[str]) -> str:
+            nonlocal index
+            value = match.group(0)
+            sentinel = _sentinel_for(index, value)
+            while sentinel in protected or sentinel in mapping:
+                index += 1
+                sentinel = _sentinel_for(index, value)
+            mapping[sentinel] = value
+            index += 1
+            return sentinel
+
+        protected = pattern.sub(replace, protected)
+
+    return ProtectedText(text=protected, mapping=mapping)
+
+
+def validate_and_restore(text: str, mapping: dict[str, str]) -> str:
+    restored = text
+    for sentinel, value in mapping.items():
+        count = restored.count(sentinel)
+        if count != 1:
+            raise StructureMismatchError(f"Expected sentinel {sentinel} exactly once, found {count}")
+        restored = restored.replace(sentinel, value)
+    if _SENTINEL_PATTERN.search(restored):
+        raise StructureMismatchError("Unexpected protected sentinel remained after restore")
+    return restored
+
+
+def _word_count(text: str) -> int:
+    return len(_WORD_PATTERN.findall(text))
+
+
+def _split_blocks(text: str) -> list[str]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+    return [block.strip() for block in re.split(r"\n\s*\n+", stripped) if block.strip()]
+
+
+def semantic_chunks(
+    text: str,
+    target_words: int = 1500,
+    min_words: int = 1200,
+    max_words: int = 1800,
+) -> list[str]:
+    if min_words > target_words or target_words > max_words:
+        raise ValueError("Chunk thresholds must satisfy min_words <= target_words <= max_words")
+
+    blocks = _split_blocks(text)
+    if not blocks:
+        return []
+
+    chunks: list[str] = []
+    current_blocks: list[str] = []
+    current_words = 0
+
+    for block in blocks:
+        block_words = _word_count(block)
+        if not current_blocks:
+            current_blocks = [block]
+            current_words = block_words
+            continue
+
+        combined_words = current_words + block_words
+        if combined_words <= target_words:
+            current_blocks.append(block)
+            current_words = combined_words
+            continue
+
+        if current_words < min_words and combined_words <= max_words:
+            current_blocks.append(block)
+            chunks.append("\n\n".join(current_blocks).strip() + "\n")
+            current_blocks = []
+            current_words = 0
+            continue
+
+        chunks.append("\n\n".join(current_blocks).strip() + "\n")
+        current_blocks = [block]
+        current_words = block_words
+
+    if current_blocks:
+        chunks.append("\n\n".join(current_blocks).strip() + "\n")
+
+    return chunks

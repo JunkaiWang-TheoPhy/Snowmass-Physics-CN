@@ -8,20 +8,34 @@ import hashlib
 import importlib.util
 import io
 import json
+import sys
 import tarfile
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("snowmass_pipeline.py")
+CHUNK_MODULE_PATH = Path(__file__).with_name("prepare_snowmass_chunks.py")
 
 
 def load_pipeline(test_case: unittest.TestCase):
     if not MODULE_PATH.exists():
         test_case.fail(f"missing module under test: {MODULE_PATH}")
     spec = importlib.util.spec_from_file_location("snowmass_pipeline", MODULE_PATH)
+    test_case.assertIsNotNone(spec)
+    test_case.assertIsNotNone(spec.loader)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_chunk_preparer(test_case: unittest.TestCase):
+    if not CHUNK_MODULE_PATH.exists():
+        test_case.fail(f"missing module under test: {CHUNK_MODULE_PATH}")
+    spec = importlib.util.spec_from_file_location("prepare_snowmass_chunks", CHUNK_MODULE_PATH)
     test_case.assertIsNotNone(spec)
     test_case.assertIsNotNone(spec.loader)
     module = importlib.util.module_from_spec(spec)
@@ -346,6 +360,245 @@ class ExpandTexTests(unittest.TestCase):
 
         with self.assertRaises(self.pipeline.UnsafeIncludeError):
             self.pipeline.expand_tex(main_path, self.root)
+
+
+class StructureProtectionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.pipeline = load_pipeline(self)
+
+    def mapping_for_chunk(self, chunk: str, mapping: dict[str, str]) -> dict[str, str]:
+        return {sentinel: value for sentinel, value in mapping.items() if sentinel in chunk}
+
+    def test_protect_structures_round_trips_math_citations_refs_and_links(self) -> None:
+        text = (
+            "Inline math $p_T$ and display:\n"
+            "\\[\nE = mc^2\n\\]\n"
+            "See \\cite{atlas}, \\ref{sec:intro}, \\label{sec:intro}, "
+            "https://example.com/paper?ref=1 and author@example.com.\n"
+        )
+
+        protected = self.pipeline.protect_structures(text)
+        restored = self.pipeline.validate_and_restore(protected.text, protected.mapping)
+
+        self.assertEqual(restored, text)
+        for literal in (
+            "$p_T$",
+            "\\[\nE = mc^2\n\\]",
+            "\\cite{atlas}",
+            "\\ref{sec:intro}",
+            "\\label{sec:intro}",
+            "https://example.com/paper?ref=1",
+            "author@example.com",
+        ):
+            self.assertNotIn(literal, protected.text)
+        self.assertEqual(len(protected.mapping), 7)
+
+    def test_restore_rejects_missing_sentinel(self) -> None:
+        protected = self.pipeline.protect_structures("See \\cite{atlas} and $p_T$.")
+        damaged = protected.text.replace(next(iter(protected.mapping)), "")
+
+        with self.assertRaises(self.pipeline.StructureMismatchError):
+            self.pipeline.validate_and_restore(damaged, protected.mapping)
+
+    def test_restore_rejects_duplicate_sentinel(self) -> None:
+        protected = self.pipeline.protect_structures("See \\cite{atlas} and $p_T$.")
+        sentinel = next(iter(protected.mapping))
+        duplicated = protected.text.replace(sentinel, f"{sentinel} {sentinel}", 1)
+
+        with self.assertRaises(self.pipeline.StructureMismatchError):
+            self.pipeline.validate_and_restore(duplicated, protected.mapping)
+
+    def test_semantic_chunks_keep_paragraphs_and_lists_whole(self) -> None:
+        first_paragraph = "alpha beta gamma delta epsilon zeta"
+        list_block = "- bullet one two\n- bullet three four"
+        second_paragraph = "eta theta iota kappa lambda mu"
+        text = f"{first_paragraph}\n\n{list_block}\n\n{second_paragraph}\n"
+
+        chunks = self.pipeline.semantic_chunks(text, target_words=6, min_words=4, max_words=8)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[0].strip(), first_paragraph)
+        self.assertEqual(chunks[1].strip(), list_block)
+        self.assertEqual(chunks[2].strip(), second_paragraph)
+
+    def test_semantic_chunks_do_not_split_protected_spans(self) -> None:
+        text = (
+            "alpha beta gamma delta epsilon zeta\n\n"
+            "This paragraph keeps $p_T$ with \\cite{atlas} intact across chunking.\n\n"
+            "eta theta iota kappa lambda mu\n"
+        )
+        protected = self.pipeline.protect_structures(text)
+
+        chunks = self.pipeline.semantic_chunks(protected.text, target_words=8, min_words=4, max_words=10)
+
+        sentinel_hits = {
+            sentinel: sum(1 for chunk in chunks if sentinel in chunk) for sentinel in protected.mapping
+        }
+        self.assertEqual(set(sentinel_hits.values()), {1})
+        restored = [
+            self.pipeline.validate_and_restore(chunk, self.mapping_for_chunk(chunk, protected.mapping)) for chunk in chunks
+        ]
+        self.assertIn("$p_T$", restored[1])
+        self.assertIn("\\cite{atlas}", restored[1])
+
+
+class PrepareSnowmassChunksTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "sources"
+        self.translation_root = Path(self.temporary.name) / "translation"
+        self.root.mkdir()
+        self.translation_root.mkdir()
+        self.preparer = load_chunk_preparer(self)
+
+    def write_source_manifest(self, records: list[dict[str, object]]) -> None:
+        (self.root / "manifest.json").write_text(
+            json.dumps({"schema_version": 1, "records": records}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def write_rights_snapshot(self, record_ids: list[str]) -> Path:
+        snapshot_path = Path(self.temporary.name) / "rights_snapshot.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "source_manifest_path": "site/data/papers.json",
+                    "source_manifest_sha256": "deadbeef",
+                    "created_at": "2026-08-10T00:00:00+00:00",
+                    "eligible_count": len(record_ids),
+                    "records": [{"record_id": record_id} for record_id in record_ids],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return snapshot_path
+
+    def write_archive(self, directory: str, members: list[tuple[str, bytes]]) -> None:
+        item_dir = self.root / directory
+        item_dir.mkdir(parents=True, exist_ok=True)
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as archive:
+            for member_name, payload in members:
+                info = tarfile.TarInfo(member_name)
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+        (item_dir / "source.tar.gz").write_bytes(gzip.compress(buffer.getvalue()))
+
+    def write_invalid_archive(self, directory: str, payload: bytes) -> None:
+        item_dir = self.root / directory
+        item_dir.mkdir(parents=True, exist_ok=True)
+        (item_dir / "source.tar.gz").write_bytes(gzip.compress(payload))
+
+    def write_pdf_text(self, directory: str, text: str) -> None:
+        item_dir = self.root / directory
+        item_dir.mkdir(parents=True, exist_ok=True)
+        (item_dir / "source.txt").write_text(text, encoding="utf-8")
+
+    def test_build_one_prefers_source_archive_and_records_source_kind(self) -> None:
+        record = {"record_id": "arxiv:allowed", "directory": "papers/arxiv_allowed"}
+        self.write_pdf_text(record["directory"], "PDF fallback text only.\n")
+        self.write_archive(
+            record["directory"],
+            [
+                (
+                    "main.tex",
+                    (
+                        "\\documentclass{article}\n"
+                        "\\begin{document}\n"
+                        "Archive preferred body.\n"
+                        "\\input{sections/intro}\n"
+                        "\\end{document}\n"
+                    ).encode("utf-8"),
+                ),
+                ("sections/intro.tex", b"Nested section body.\n"),
+            ],
+        )
+
+        status = self.preparer.build_one(record, self.root, self.translation_root)
+        article_dir = self.translation_root / record["directory"]
+
+        self.assertEqual(status["source_kind"], "expanded_tex")
+        self.assertIsNone(status["fallback_reason"])
+        source_md = (article_dir / "source.md").read_text(encoding="utf-8")
+        self.assertIn("Archive preferred body.", source_md)
+        self.assertIn("Nested section body.", source_md)
+        self.assertNotIn("PDF fallback text only.", source_md)
+
+    def test_build_one_falls_back_to_pdf_text_and_records_reason(self) -> None:
+        record = {"record_id": "arxiv:fallback", "directory": "papers/arxiv_fallback"}
+        self.write_pdf_text(record["directory"], "PDF fallback survives.\n")
+        self.write_invalid_archive(record["directory"], b"not a tex source archive")
+
+        status = self.preparer.build_one(record, self.root, self.translation_root)
+        article_dir = self.translation_root / record["directory"]
+
+        self.assertEqual(status["source_kind"], "pdf_text")
+        self.assertEqual(status["fallback_reason"], "archive_unusable")
+        self.assertEqual((article_dir / "source.md").read_text(encoding="utf-8"), "PDF fallback survives.\n")
+
+    def test_build_one_refuses_to_replace_translated_outputs_when_source_hash_changes(self) -> None:
+        record = {"record_id": "arxiv:translated", "directory": "papers/arxiv_translated"}
+        self.write_pdf_text(record["directory"], "PDF fallback text.\n")
+        self.write_archive(
+            record["directory"],
+            [("main.tex", b"\\documentclass{article}\n\\begin{document}\nFirst archive text.\n\\end{document}\n")],
+        )
+
+        self.preparer.build_one(record, self.root, self.translation_root)
+        article_dir = self.translation_root / record["directory"]
+        (article_dir / "output_chunk0001.md").write_text("Existing translation stays put.\n", encoding="utf-8")
+
+        self.write_archive(
+            record["directory"],
+            [("main.tex", b"\\documentclass{article}\n\\begin{document}\nSecond archive text.\n\\end{document}\n")],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "manual review required"):
+            self.preparer.build_one(record, self.root, self.translation_root)
+
+        self.assertEqual(
+            (article_dir / "output_chunk0001.md").read_text(encoding="utf-8"),
+            "Existing translation stays put.\n",
+        )
+        self.assertIn("First archive text.", (article_dir / "source.md").read_text(encoding="utf-8"))
+
+    def test_main_processes_only_records_from_rights_snapshot(self) -> None:
+        allowed = {"record_id": "arxiv:allowed", "directory": "papers/arxiv_allowed"}
+        blocked = {"record_id": "arxiv:blocked", "directory": "papers/arxiv_blocked"}
+        self.write_source_manifest([allowed, blocked])
+        self.write_pdf_text(allowed["directory"], "Allowed record text.\n")
+        self.write_pdf_text(blocked["directory"], "Blocked record text.\n")
+        self.write_invalid_archive(allowed["directory"], b"invalid archive")
+        self.write_invalid_archive(blocked["directory"], b"invalid archive")
+        rights_snapshot = self.write_rights_snapshot(["arxiv:allowed"])
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "prepare_snowmass_chunks.py",
+                "--root",
+                str(self.root),
+                "--translation-root",
+                str(self.translation_root),
+                "--rights-snapshot",
+                str(rights_snapshot),
+                "--workers",
+                "1",
+            ],
+        ):
+            exit_code = self.preparer.main()
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads((self.translation_root / "chunk_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["total_records"], 1)
+        self.assertTrue((self.translation_root / allowed["directory"]).exists())
+        self.assertFalse((self.translation_root / blocked["directory"]).exists())
 
 
 if __name__ == "__main__":
