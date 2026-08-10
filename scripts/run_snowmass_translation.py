@@ -15,6 +15,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from snowmass_translation_qc import stage_decision, validate_chunk
+from snowmass_pipeline import StructureMismatchError, protect_structures, validate_and_restore
 
 
 TRANSLATION_ROOT = Path("output/snowmass2021_translation")
@@ -32,6 +34,11 @@ API_URL = "https://api.deepseek.com/responses"
 MODEL = "deepseek-v4-flash"
 STAGES = ("translate", "terminology", "anti_ai", "academic")
 RETRYABLE_HTTP_CODES = {408, 409, 429, 500, 502, 503, 504}
+# Official DeepSeek V4 Flash rates, RMB per million tokens:
+# https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+INPUT_CACHE_HIT_RMB_PER_MILLION = 0.02
+INPUT_CACHE_MISS_RMB_PER_MILLION = 1.0
+OUTPUT_RMB_PER_MILLION = 2.0
 
 
 class ResponseValidationError(RuntimeError):
@@ -106,6 +113,66 @@ def load_api_key() -> str:
 def load_glossary(path: Path) -> list[dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     return data.get("terms", [])
+
+
+def resolve_glossary_path(root: Path, explicit: Path | None) -> Path:
+    return explicit if explicit is not None else root / "global_glossary.json"
+
+
+def _token_count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def estimate_cost_rmb(usage: dict[str, Any]) -> float:
+    input_tokens = _token_count(usage.get("input_tokens"))
+    cached_tokens = min(_token_count(usage.get("cached_tokens")), input_tokens)
+    uncached_tokens = input_tokens - cached_tokens
+    output_tokens = _token_count(usage.get("output_tokens"))
+    return (
+        uncached_tokens * INPUT_CACHE_MISS_RMB_PER_MILLION
+        + cached_tokens * INPUT_CACHE_HIT_RMB_PER_MILLION
+        + output_tokens * OUTPUT_RMB_PER_MILLION
+    ) / 1_000_000
+
+
+def collect_run_usage(tasks: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
+    totals = {
+        "api_calls": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+    seen: set[tuple[Path, str]] = set()
+    for task in tasks:
+        article_dir = Path(task["article_dir"])
+        chunk_id = str(task["chunk"]["id"])
+        identity = (article_dir.resolve(), chunk_id)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        status_path = article_dir / "chunk_status" / f"{chunk_id}.json"
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            continue
+        stages = status.get("stages")
+        if not isinstance(stages, dict):
+            continue
+        for stage in stages.values():
+            if (
+                not isinstance(stage, dict)
+                or stage.get("run_id") != run_id
+            ):
+                continue
+            usage = stage.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            totals["api_calls"] += 1
+            for key in ("input_tokens", "cached_tokens", "output_tokens", "total_tokens"):
+                totals[key] += _token_count(usage.get(key))
+    totals["estimated_cost_rmb"] = estimate_cost_rmb(totals)
+    return totals
 
 
 def glossary_text(terms: list[dict[str, Any]]) -> str:
@@ -325,7 +392,10 @@ class DeepSeekClient:
                     response = json.loads(response_stream.read().decode("utf-8"))
                 return response, round(time.monotonic() - started, 3)
             except urllib.error.HTTPError as error:
-                error_body = error.read().decode("utf-8", errors="replace")
+                try:
+                    error_body = error.read().decode("utf-8", errors="replace")
+                finally:
+                    error.close()
                 last_error = f"HTTP {error.code}: {' '.join(error_body.split())[:500]}"
                 if error.code not in RETRYABLE_HTTP_CODES or attempt >= self.max_retries:
                     raise RuntimeError(last_error) from error
@@ -398,13 +468,17 @@ def load_allowed_record_ids(path: Path) -> set[str]:
     return allowed
 
 
-def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict[str, Any]]) -> dict[str, Any]:
+def process_chunk(
+    task: dict[str, Any],
+    client: DeepSeekClient,
+    terms: list[dict[str, Any]],
+    run_id: str | None = None,
+) -> dict[str, Any]:
     article_dir = task["article_dir"]
     chunk = task["chunk"]
     chunk_id = chunk["id"]
     source_path = article_dir / chunk["source_file"]
     source = source_path.read_text(encoding="utf-8")
-    mapping = chunk.get("mapping") or {}
     glossary = glossary_text(terms)
     status_path = article_dir / "chunk_status" / f"{chunk_id}.json"
     try:
@@ -423,7 +497,14 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
     for stage in STAGES:
         output_path = stage_output_path(article_dir, chunk_id, chunk["output_file"], stage)
         instructions = stage_instructions(stage, glossary)
-        input_text = stage_input(stage, source, current, glossary)
+        protected = protect_structures(current)
+        protected_current = protected.text
+        mapping = protected.mapping
+        input_text = (
+            protected_current
+            if stage == "translate"
+            else stage_input(stage, source, protected_current, glossary)
+        )
         # Keep long non-streaming responses below the local proxy's practical
         # response size while leaving enough headroom for Chinese output.
         max_output = max(4096, min(20000, int(max(len(current), 4000) * 0.8)))
@@ -450,11 +531,22 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
                 "decision": decision.to_dict(),
             }
         )
-        for stale_field in ("finished_at", "error", "output_hash", "raw_response", "response_id", "usage", "qc", "max_output_tokens"):
+        for stale_field in (
+            "finished_at",
+            "error",
+            "output_hash",
+            "response_output_hash",
+            "raw_response",
+            "response_id",
+            "usage",
+            "qc",
+            "max_output_tokens",
+            "run_id",
+        ):
             stage_status.pop(stale_field, None)
 
         if not decision.should_call_model:
-            qc_report = validate_chunk(source, current, mapping, qc_terms)
+            qc_report = validate_chunk(source, current, {}, qc_terms)
             stage_status["qc"] = qc_report.to_dict()
             if not qc_report.ok:
                 stage_status.update(
@@ -486,6 +578,8 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
                 "max_output_tokens": max_output,
             }
         )
+        if run_id is not None:
+            stage_status["run_id"] = run_id
         atomic_json(status_path, status)
         try:
             response, latency_seconds = client.complete(instructions, input_text, max_output)
@@ -504,6 +598,7 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
 
         stage_status["raw_response"] = response_metadata(response)
         stage_status["response_id"] = str(response.get("id", "")) if isinstance(response, dict) else ""
+        stage_status["usage"] = coarse_response_usage(response)
         atomic_json(status_path, status)
 
         try:
@@ -515,7 +610,16 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
             atomic_json(status_path, status)
             raise
 
-        qc_report = validate_chunk(source, parsed.text, mapping, qc_terms)
+        try:
+            restored_text = validate_and_restore(parsed.text, mapping)
+        except StructureMismatchError as exc:
+            stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
+            status["status"] = "failed"
+            status["updated_at"] = now()
+            atomic_json(status_path, status)
+            raise
+
+        qc_report = validate_chunk(source, restored_text, {}, qc_terms)
         stage_status["qc"] = qc_report.to_dict()
         if not qc_report.ok:
             stage_status.update(
@@ -530,7 +634,7 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
             atomic_json(status_path, status)
             raise RuntimeError(stage_status["error"])
 
-        atomic_text(output_path, parsed.text)
+        atomic_text(output_path, restored_text)
         usage = dict(parsed.usage)
         usage["latency_seconds"] = latency_seconds
         stage_status.update(
@@ -539,11 +643,12 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
                 "finished_at": now(),
                 "response_id": parsed.response_id,
                 "usage": usage,
-                "output_hash": parsed.output_hash,
+                "response_output_hash": parsed.output_hash,
+                "output_hash": text_hash(restored_text),
             }
         )
         atomic_json(status_path, status)
-        current = parsed.text
+        current = restored_text
 
     meta_path = article_dir / f"{chunk['output_file'][:-3]}.meta.json"
     if not meta_path.exists():
@@ -602,7 +707,7 @@ def finalize_run_states(root: Path, completed: list[dict[str, Any]]) -> None:
         subprocess.run(command, capture_output=True, text=True, check=False)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=TRANSLATION_ROOT)
     parser.add_argument("--concurrency", type=int, default=8)
@@ -610,10 +715,12 @@ def main() -> int:
     parser.add_argument("--max-chunks", type=int, default=0)
     parser.add_argument("--article", default="")
     parser.add_argument("--rights-manifest", type=Path, default=RIGHTS_MANIFEST)
-    args = parser.parse_args()
+    parser.add_argument("--glossary", type=Path)
+    args = parser.parse_args(argv)
     if args.concurrency < 1 or args.concurrency > 64:
         parser.error("--concurrency must be between 1 and 64")
-    terms = load_glossary(args.root / "global_glossary.json")
+    glossary_path = resolve_glossary_path(args.root, args.glossary)
+    terms = load_glossary(glossary_path)
     allowed_record_ids = load_allowed_record_ids(args.rights_manifest)
     tasks = collect_tasks(
         args.root,
@@ -626,6 +733,7 @@ def main() -> int:
         raise SystemExit("No chunk tasks found")
     api_key = load_api_key()
     client = DeepSeekClient(api_key)
+    run_id = uuid.uuid4().hex
     print(
         f"START chunks={len(tasks)} eligible_records={len(allowed_record_ids)} "
         f"concurrency={args.concurrency} stages={','.join(STAGES)}",
@@ -635,7 +743,9 @@ def main() -> int:
     uncertain: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as executor:
-        future_map = {executor.submit(process_chunk, task, client, terms): task for task in tasks}
+        future_map = {
+            executor.submit(process_chunk, task, client, terms, run_id): task for task in tasks
+        }
         for index, future in enumerate(concurrent.futures.as_completed(future_map), 1):
             task = future_map[future]
             try:
@@ -670,6 +780,9 @@ def main() -> int:
         "model": MODEL,
         "eligible_records": len(allowed_record_ids),
         "rights_manifest": str(args.rights_manifest),
+        "glossary": str(glossary_path),
+        "run_id": run_id,
+        "usage": collect_run_usage(tasks, run_id),
     }
     atomic_json(args.root / "translation_summary.json", summary)
     printable = {key: value for key, value in summary.items() if key not in {"failed", "uncertain"}}

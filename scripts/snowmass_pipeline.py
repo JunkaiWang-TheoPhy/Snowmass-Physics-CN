@@ -128,6 +128,10 @@ _INCLUDE_PATTERN = re.compile(
     r"\\(?P<command>input|include|subfile)(?![A-Za-z@])\s*"
     r"(?:\{(?P<braced>[^{}]+)\}|(?P<unbraced>[^\s%{}]+))"
 )
+_OPTIONAL_INCLUDE_PREFIX_PATTERN = re.compile(
+    r"\\IfFileExists\s*\{(?P<probe>[^{}]+)\}\s*\{\s*$"
+)
+_EXTERNAL_TEX_INPUTS = {"epsf"}
 _DISPLAY_ENV_PATTERN = re.compile(
     r"\\begin\{(?P<env>equation\*?|align\*?|gather\*?|multline\*?)\}.*?\\end\{(?P=env)\}",
     re.DOTALL,
@@ -139,7 +143,7 @@ _STRUCTURE_PATTERNS = (
     re.compile(r"\\\(.+?\\\)", re.DOTALL),
     re.compile(r"(?<!\$)\$(?!\$)(?:\\.|[^$\\\n])+\$(?!\$)"),
     re.compile(r"\\(?:cite|citet|citep|ref|eqref|autoref|label)\{[^{}]+\}"),
-    re.compile(r"https?://[^\s<>()]+"),
+    re.compile(r"https?://[^\s<>()，。；：！？]*[^\s<>().,;:!?，。；：！？]"),
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
 )
 _SENTINEL_PATTERN = re.compile(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]")
@@ -250,22 +254,33 @@ def _strip_tex_comments(text: str) -> str:
     return "".join(_strip_tex_comment(line) for line in text.splitlines(keepends=True))
 
 
-def _iter_include_specs(text: str) -> list[tuple[int, int, str, str]]:
-    matches: list[tuple[int, int, str, str]] = []
-    offset = 0
+def _mask_tex_comments(text: str) -> str:
+    masked: list[str] = []
     for line in text.splitlines(keepends=True):
         visible = _strip_tex_comment(line)
-        for match in _INCLUDE_PATTERN.finditer(visible):
-            spec = match.group("braced") or match.group("unbraced")
-            matches.append(
-                (
-                    offset + match.start(),
-                    offset + match.end(),
-                    match.group("command"),
-                    spec.strip(),
-                )
+        masked.append(visible + "".join("\n" if char == "\n" else " " for char in line[len(visible) :]))
+    return "".join(masked)
+
+
+def _iter_include_specs(text: str) -> list[tuple[int, int, str, str, bool]]:
+    matches: list[tuple[int, int, str, str, bool]] = []
+    visible = _mask_tex_comments(text)
+    for match in _INCLUDE_PATTERN.finditer(visible):
+        spec = (match.group("braced") or match.group("unbraced")).strip()
+        external_name = Path(spec).name.casefold()
+        if "#" in spec or external_name in _EXTERNAL_TEX_INPUTS or external_name == "epsf.tex":
+            continue
+        optional_prefix = _OPTIONAL_INCLUDE_PREFIX_PATTERN.search(visible[: match.start()])
+        optional = bool(optional_prefix and optional_prefix.group("probe").strip() == spec)
+        matches.append(
+            (
+                match.start(),
+                match.end(),
+                match.group("command"),
+                spec,
+                optional,
             )
-        offset += len(line)
+        )
     return matches
 
 
@@ -279,9 +294,9 @@ def _ensure_within_root(path: Path, root: Path, error_type: type[RuntimeError], 
 
 def _candidate_include_paths(spec: str, base_dir: Path) -> list[Path]:
     logical = base_dir / Path(spec)
-    if logical.suffix:
+    if logical.suffix.lower() in {".tex", ".sty", ".cls", ".ltx"}:
         return [logical]
-    return [logical.with_suffix(".tex"), logical]
+    return [logical.with_suffix(logical.suffix + ".tex"), logical]
 
 
 def _resolve_include_target(spec: str, base_dir: Path, root: Path, command: str) -> Path:
@@ -322,7 +337,7 @@ def rank_main_tex(root: Path) -> list[MainCandidate]:
 
     for path in tex_files:
         source_path = path.resolve()
-        for _, _, command, spec in _iter_include_specs(contents[source_path]):
+        for _, _, command, spec, _optional in _iter_include_specs(contents[source_path]):
             try:
                 target = _resolve_include_target(spec, path.parent, root, command)
             except UnsafeIncludeError:
@@ -400,13 +415,13 @@ def expand_tex(main_path: Path, root: Path) -> ExpandedTex:
         text = path.read_text(encoding="utf-8")
         expanded_parts: list[str] = []
         cursor = 0
-        for start, end, command, spec in _iter_include_specs(text):
+        for start, end, command, spec, optional in _iter_include_specs(text):
             expanded_parts.append(text[cursor:start])
             target = _resolve_include_target(spec, path.parent, root, command)
             target_key = target.resolve(strict=False)
             display_target = display_paths.setdefault(target_key, target)
             if not target.exists():
-                if target_key not in missing_seen:
+                if not optional and target_key not in missing_seen:
                     missing_seen.add(target_key)
                     missing_includes.append(display_target)
             elif target_key in stack:
@@ -469,6 +484,10 @@ def protect_structures(text: str) -> ProtectedText:
 
     ordered_mapping = dict(sorted(mapping.items(), key=lambda item: protected.index(item[0])))
     return ProtectedText(text=protected, mapping=ordered_mapping)
+
+
+def protected_literals(text: str) -> tuple[str, ...]:
+    return tuple(protect_structures(text).mapping.values())
 
 
 def validate_and_restore(text: str, mapping: dict[str, str]) -> str:

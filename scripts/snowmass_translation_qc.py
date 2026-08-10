@@ -8,6 +8,8 @@ from collections import Counter
 import re
 from typing import Any
 
+from snowmass_pipeline import protected_literals
+
 
 _SENTINEL_RE = re.compile(r"\[\[SM_[0-9]{4}_[0-9a-f]{5,10}\]\]")
 _URL_RE = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
@@ -116,6 +118,8 @@ def validate_chunk(source: str, translated: str, mapping: dict[str, str], glossa
         failures.append("urls_mismatch")
     if not _same_multiset(tuple(_CITATION_RE.findall(source)), tuple(_CITATION_RE.findall(translated))):
         failures.append("citations_mismatch")
+    if protected_literals(source) != protected_literals(translated):
+        failures.append("protected_literals_mismatch")
     if not _sentinel_sequence_is_valid(translated, mapping):
         failures.append("sentinels_mismatch")
     failures.extend(_locked_term_failures(source, translated, glossary))

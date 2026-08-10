@@ -414,6 +414,63 @@ class ExpandTexTests(unittest.TestCase):
         self.assertIn("start", result.text)
         self.assertIn("end", result.text)
 
+    def test_expand_tex_appends_tex_to_dotted_stem(self) -> None:
+        main_path = self.write_tex("main.tex", "\\input{sections/03.1_results}\n")
+        section = self.write_tex("sections/03.1_results.tex", "dotted section body\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertEqual(result.includes, (section,))
+        self.assertEqual(result.missing_includes, ())
+        self.assertIn("dotted section body", result.text)
+
+    def test_expand_tex_does_not_report_missing_optional_iffileexists_input(self) -> None:
+        main_path = self.write_tex(
+            "main.tex",
+            "before\n\\IfFileExists{optional.tex}{\\input{optional.tex}}{}\nafter\n",
+        )
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertEqual(result.missing_includes, ())
+        self.assertIn("before", result.text)
+        self.assertIn("after", result.text)
+
+    def test_expand_tex_does_not_report_multiline_missing_optional_iffileexists_input(self) -> None:
+        main_path = self.write_tex(
+            "main.tex",
+            "before\n\\IfFileExists{optional.tex}{\n  \\input{optional.tex}\n}{}\nafter\n",
+        )
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertEqual(result.missing_includes, ())
+
+    def test_expand_tex_expands_present_optional_iffileexists_input(self) -> None:
+        main_path = self.write_tex(
+            "main.tex",
+            "\\IfFileExists{optional.tex}{\\input{optional.tex}}{}\n",
+        )
+        optional = self.write_tex("optional.tex", "optional body\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertEqual(result.includes, (optional,))
+        self.assertIn("optional body", result.text)
+
+    def test_expand_tex_ignores_macro_parameter_and_known_external_input(self) -> None:
+        main_path = self.write_tex(
+            "main.tex",
+            "\\def\\scaled#1{\\input #1pt.rtx}\n"
+            "\\def\\sectionfile#1{\\input section#1}\n"
+            "\\input epsf\n\\input epsf.tex\nbody\n",
+        )
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertEqual(result.missing_includes, ())
+        self.assertIn("body", result.text)
+
     def test_expand_tex_rejects_include_outside_root(self) -> None:
         main_path = self.write_tex("main.tex", "\\input{../escape}\n")
 
@@ -536,6 +593,15 @@ class StructureProtectionTests(unittest.TestCase):
             list(protected.mapping.values()),
             ["$^{#3}$", "https://example.org/model"],
         )
+        self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
+
+    def test_protect_structures_excludes_sentence_punctuation_from_url_sentinel(self) -> None:
+        text = "See https://example.org/paper. Then continue."
+
+        protected = self.pipeline.protect_structures(text)
+
+        self.assertEqual(list(protected.mapping.values()), ["https://example.org/paper"])
+        self.assertIn(next(iter(protected.mapping)) + ".", protected.text)
         self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
 
     def test_restore_rejects_missing_sentinel(self) -> None:

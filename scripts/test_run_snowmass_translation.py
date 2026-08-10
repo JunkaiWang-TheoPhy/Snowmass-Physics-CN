@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -109,6 +110,125 @@ class RightsGateTests(unittest.TestCase):
                 [(task["record_id"], task["chunk"]["id"]) for task in tasks],
                 [("arxiv:allowed", "chunk0001")],
             )
+
+    def test_explicit_glossary_path_overrides_root_default(self) -> None:
+        root = Path("translation-root")
+        explicit = Path("locked-terms.json")
+
+        self.assertEqual(RUNNER.resolve_glossary_path(root, explicit), explicit)
+        self.assertEqual(RUNNER.resolve_glossary_path(root, None), root / "global_glossary.json")
+
+    def test_main_loads_external_glossary_for_production_root_and_records_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "production"
+            article = root / "papers" / "arxiv_allowed"
+            article.mkdir(parents=True)
+            (article / "chunk0001.md").write_text("source\n", encoding="utf-8")
+            (article / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "chunks": [
+                            {
+                                "id": "chunk0001",
+                                "order": 1,
+                                "source_file": "chunk0001.md",
+                                "output_file": "output_chunk0001.md",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (article / "chunking_status.json").write_text(
+                json.dumps({"record_id": "arxiv:allowed"}), encoding="utf-8"
+            )
+            rights = base / "papers.json"
+            rights.write_text(
+                json.dumps([{"record_id": "arxiv:allowed", "publication_allowed": True}]),
+                encoding="utf-8",
+            )
+            glossary = base / "locked.json"
+            expected_terms = [{"source": "dark matter", "target": "暗物质"}]
+            glossary.write_text(json.dumps({"terms": expected_terms}), encoding="utf-8")
+            observed_terms: list[list[dict[str, str]]] = []
+
+            def fake_process(task: dict[str, object], client: object, terms: list[dict[str, str]], run_id: str) -> dict[str, str]:
+                observed_terms.append(terms)
+                return {"record_id": "arxiv:allowed", "chunk_id": "chunk0001", "status": "complete"}
+
+            with (
+                mock.patch.object(RUNNER, "load_api_key", return_value="test-key"),
+                mock.patch.object(RUNNER, "DeepSeekClient", return_value=object()),
+                mock.patch.object(RUNNER, "process_chunk", side_effect=fake_process),
+                mock.patch.object(RUNNER, "finalize_run_states"),
+            ):
+                exit_code = RUNNER.main(
+                    [
+                        "--root", str(root),
+                        "--rights-manifest", str(rights),
+                        "--glossary", str(glossary),
+                        "--concurrency", "1",
+                    ]
+                )
+
+            summary = json.loads((root / "translation_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(observed_terms, [expected_terms])
+            self.assertEqual(summary["glossary"], str(glossary))
+
+
+class UsageAccountingTests(unittest.TestCase):
+    def test_cost_uses_uncached_cached_and_output_v4_flash_rates(self) -> None:
+        cost = RUNNER.estimate_cost_rmb(
+            {"input_tokens": 1_000_000, "cached_tokens": 250_000, "output_tokens": 500_000}
+        )
+
+        self.assertAlmostEqual(cost, 1.755)
+
+    def test_collect_run_usage_aggregates_completed_stage_checkpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary) / "papers" / "paper"
+            status_dir = article / "chunk_status"
+            status_dir.mkdir(parents=True)
+            (status_dir / "chunk0001.json").write_text(
+                json.dumps(
+                    {
+                        "stages": {
+                            "translate": {
+                                "status": "complete",
+                                "run_id": "run-current",
+                                "usage": {"input_tokens": 100, "cached_tokens": 20, "output_tokens": 50},
+                            },
+                            "terminology": {
+                                "status": "complete",
+                                "run_id": "run-previous",
+                                "usage": {"input_tokens": 999},
+                            },
+                            "academic": {
+                                "status": "failed",
+                                "run_id": "run-current",
+                                "usage": {"input_tokens": 10, "cached_tokens": 0, "output_tokens": 1},
+                            },
+                            "anti_ai": {"status": "complete"},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {"article_dir": article, "chunk": {"id": "chunk0001"}}
+
+            usage = RUNNER.collect_run_usage([task, task], "run-current")
+
+            self.assertEqual(usage["api_calls"], 2)
+            self.assertEqual(usage["input_tokens"], 110)
+            self.assertEqual(usage["cached_tokens"], 20)
+            self.assertEqual(usage["output_tokens"], 51)
+            self.assertAlmostEqual(usage["estimated_cost_rmb"], RUNNER.estimate_cost_rmb(usage))
+
+            resumed_usage = RUNNER.collect_run_usage([task], "checkpoint-only-rerun")
+            self.assertEqual(resumed_usage["api_calls"], 0)
+            self.assertEqual(resumed_usage["estimated_cost_rmb"], 0)
 
 
 class ResponseValidationTests(unittest.TestCase):
@@ -305,6 +425,46 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(translate["output_hash"], hashlib.sha256("阶段产物\n".encode("utf-8")).hexdigest())
         self.assertEqual(translate["raw_response"]["status"], "completed")
 
+    def test_process_chunk_protects_and_restores_math_citations_and_urls_around_api_call(self) -> None:
+        source = "Equation $E=mc^2$ follows \\cite{einstein}; see https://example.org/paper.\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+
+        class ProtectingClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                self.assertions(input_text)
+                sentinels = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)
+                return completed_response("方程 " + " 依次参见 ".join(sentinels)), 0.1
+
+            @staticmethod
+            def assertions(input_text: str) -> None:
+                if "$E=mc^2$" in input_text or "\\cite{einstein}" in input_text or "https://example.org/paper" in input_text:
+                    raise AssertionError("protected literals must not be sent directly in the translatable text")
+
+        with mock.patch.object(RUNNER, "STAGES", ("translate",)):
+            result = RUNNER.process_chunk(self.task, ProtectingClient(), [])
+
+        output = (self.article_dir / "stage1_chunk0001.md").read_text(encoding="utf-8")
+        self.assertEqual(result["status"], "complete")
+        self.assertIn("$E=mc^2$", output)
+        self.assertIn("\\cite{einstein}", output)
+        self.assertIn("https://example.org/paper", output)
+        self.assertNotIn("[[SM_", output)
+
+    def test_process_chunk_rejects_model_output_that_drops_protected_structure(self) -> None:
+        (self.article_dir / "chunk0001.md").write_text("Equation $E=mc^2$.\n", encoding="utf-8")
+
+        class DroppingClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                return completed_response("方程。"), 0.1
+
+        with (
+            mock.patch.object(RUNNER, "STAGES", ("translate",)),
+            self.assertRaises(RUNNER.StructureMismatchError),
+        ):
+            RUNNER.process_chunk(self.task, DroppingClient(), [])
+
+        self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
+
     def test_process_chunk_reprocesses_legacy_checkpoint_without_qc(self) -> None:
         class InitialClient:
             calls = 0
@@ -431,17 +591,20 @@ class DeepSeekClientRetryTests(unittest.TestCase):
 
     def test_client_retries_retryable_http_errors_only_up_to_the_bound(self) -> None:
         client = RUNNER.DeepSeekClient("test-key", max_retries=2)
-        response = io.BytesIO(b'{"error":"rate limited"}')
-        http_error = RUNNER.urllib.error.HTTPError(
-            RUNNER.API_URL,
-            429,
-            "Too Many Requests",
-            hdrs=None,
-            fp=response,
-        )
+        errors = [
+            RUNNER.urllib.error.HTTPError(
+                RUNNER.API_URL,
+                429,
+                "Too Many Requests",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":"rate limited"}'),
+            )
+            for _ in range(3)
+        ]
+        self.addCleanup(lambda: [error.close() for error in errors])
 
         with (
-            mock.patch.object(RUNNER.urllib.request, "urlopen", side_effect=[http_error, http_error, http_error]) as urlopen,
+            mock.patch.object(RUNNER.urllib.request, "urlopen", side_effect=errors) as urlopen,
             mock.patch.object(RUNNER.time, "sleep") as sleep,
             mock.patch.object(RUNNER.random, "random", return_value=0.0),
         ):

@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -139,6 +140,17 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("sentinels_mismatch", report.failures)
 
+    def test_validate_chunk_rejects_duplicated_latex_reference_after_restore(self) -> None:
+        report = QC.validate_chunk(
+            source=r"See \ref{sec:intro} and $E=mc^2$.",
+            translated=r"见 \ref{sec:intro} 和 $E=mc^2$，另见 \ref{sec:intro}。",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertFalse(report.ok)
+        self.assertIn("protected_literals_mismatch", report.failures)
+
     def test_validate_chunk_rejects_locked_term_violation(self) -> None:
         report = QC.validate_chunk(
             source="The Energy Frontier report was released.\n",
@@ -217,9 +229,11 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
 
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
                 self.calls += 1
+                sentinels = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)
+                protected_url = sentinels[-1]
                 if self.calls == 1:
-                    return completed_response("探测器达到 14 TeV，见 [12] 和 https://example.org。\n"), 0.1
-                return completed_response("该探测器达到 14 TeV，见 [12] 和 https://example.org。\n"), 0.2
+                    return completed_response(f"探测器达到 14 TeV，见 [12] 和 {protected_url}。\n"), 0.1
+                return completed_response(f"该探测器达到 14 TeV，见 [12] 和 {protected_url}。\n"), 0.2
 
         client = FakeClient()
         result = RUNNER.process_chunk(self.task, client, [{"source": "Energy Frontier", "target": "能量前沿"}])
@@ -246,7 +260,8 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
 
         class FakeClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
-                return completed_response("探测器达到 15 TeV，见 [12] 和 https://example.org。\n"), 0.1
+                protected_url = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)[-1]
+                return completed_response(f"探测器达到 15 TeV，见 [12] 和 {protected_url}。\n"), 0.1
 
         with self.assertRaises(RuntimeError):
             RUNNER.process_chunk(self.task, FakeClient(), [])
@@ -257,6 +272,36 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
         self.assertEqual(translate["status"], "failed")
         self.assertIn("numbers_mismatch", translate["qc"]["failures"])
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
+
+    def test_terminology_stage_rejects_extra_raw_reference_copied_from_source(self) -> None:
+        (self.article_dir / "chunk0001.md").write_text(
+            "Energy Frontier result in \\ref{sec:intro}.\n",
+            encoding="utf-8",
+        )
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                self.calls += 1
+                sentinel = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)[-1]
+                if self.calls == 1:
+                    return completed_response(f"Energy Frontier 结果见 {sentinel}。\n"), 0.1
+                return completed_response(f"能量前沿结果见 {sentinel}，另见 \\ref{{sec:intro}}。\n"), 0.1
+
+        with self.assertRaises(RuntimeError):
+            RUNNER.process_chunk(
+                self.task,
+                FakeClient(),
+                [{"source": "Energy Frontier", "target": "能量前沿"}],
+            )
+
+        status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
+        terminology = status["stages"]["terminology"]
+        self.assertEqual(terminology["status"], "failed")
+        self.assertIn("protected_literals_mismatch", terminology["qc"]["failures"])
+        self.assertFalse((self.article_dir / "stage2_chunk0001.md").exists())
 
 
 if __name__ == "__main__":
