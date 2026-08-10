@@ -268,9 +268,15 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
 
         status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
         translate = status["stages"]["translate"]
+        rejected = self.article_dir / translate["rejected_candidate_file"]
 
         self.assertEqual(translate["status"], "failed")
         self.assertIn("numbers_mismatch", translate["qc"]["failures"])
+        self.assertEqual(
+            rejected.read_text(encoding="utf-8"),
+            "探测器达到 15 TeV，见 [12] 和 https://example.org。\n",
+        )
+        self.assertFalse(translate["rejected_candidate_protected"])
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
 
     def test_terminology_stage_rejects_extra_raw_reference_copied_from_source(self) -> None:

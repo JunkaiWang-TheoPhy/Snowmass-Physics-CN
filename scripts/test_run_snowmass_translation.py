@@ -582,9 +582,12 @@ class ProcessChunkTests(unittest.TestCase):
 
         status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
         diagnostics = status["stages"]["translate"]["structure_diagnostics"]
+        rejected = self.article_dir / status["stages"]["translate"]["rejected_candidate_file"]
         self.assertEqual(len(diagnostics["expected_sentinels"]), 1)
         self.assertEqual(diagnostics["observed_sentinels"], [])
         self.assertEqual(diagnostics["missing_sentinels"], diagnostics["expected_sentinels"])
+        self.assertEqual(rejected.read_text(encoding="utf-8"), "方程。\n")
+        self.assertTrue(status["stages"]["translate"]["rejected_candidate_protected"])
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
 
     def test_stage_instructions_make_sentinel_contract_explicit(self) -> None:

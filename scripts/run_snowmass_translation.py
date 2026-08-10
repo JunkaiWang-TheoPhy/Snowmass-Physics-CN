@@ -486,6 +486,32 @@ def stage_output_path(article_dir: Path, chunk_id: str, final_output_file: str, 
     return article_dir / final_output_file
 
 
+def persist_rejected_candidate(
+    article_dir: Path,
+    chunk_id: str,
+    stage: str,
+    request_key_value: str,
+    text: str,
+    *,
+    protected: bool,
+) -> dict[str, Any]:
+    candidate_hash = text_hash(text)
+    suffix = "_protected" if protected else ""
+    filename = (
+        f"{chunk_id}_{stage}_{request_key_value[:12]}_{candidate_hash[:12]}{suffix}.md"
+    )
+    path = article_dir / "rejected_candidates" / filename
+    if path.exists() and path.read_text(encoding="utf-8") != text:
+        raise RuntimeError(f"Rejected candidate hash collision: {path}")
+    if not path.exists():
+        atomic_text(path, text)
+    return {
+        "rejected_candidate_file": path.relative_to(article_dir).as_posix(),
+        "rejected_candidate_hash": candidate_hash,
+        "rejected_candidate_protected": protected,
+    }
+
+
 class DeepSeekClient:
     def __init__(self, api_key: str, max_retries: int = 5) -> None:
         self.api_key = api_key
@@ -666,6 +692,9 @@ def process_chunk(
             "structure_diagnostics",
             "max_output_tokens",
             "run_id",
+            "rejected_candidate_file",
+            "rejected_candidate_hash",
+            "rejected_candidate_protected",
         ):
             stage_status.pop(stale_field, None)
 
@@ -761,6 +790,16 @@ def process_chunk(
         try:
             restored_text = validate_and_restore(parsed.text, mapping)
         except StructureMismatchError as exc:
+            stage_status.update(
+                persist_rejected_candidate(
+                    article_dir,
+                    chunk_id,
+                    stage,
+                    expected_key,
+                    parsed.text,
+                    protected=True,
+                )
+            )
             expected_sentinels = list(mapping)
             observed_sentinels = list(sentinel_sequence(parsed.text))
             expected_counts = Counter(expected_sentinels)
@@ -782,6 +821,16 @@ def process_chunk(
         qc_report = validate_chunk(source, restored_text, {}, qc_terms)
         stage_status["qc"] = qc_report.to_dict()
         if not qc_report.ok:
+            stage_status.update(
+                persist_rejected_candidate(
+                    article_dir,
+                    chunk_id,
+                    stage,
+                    expected_key,
+                    restored_text,
+                    protected=False,
+                )
+            )
             stage_status.update(
                 {
                     "status": "failed",
