@@ -58,7 +58,14 @@ def normalize_source(text: str) -> str:
     return normalized + "\n" if normalized else ""
 
 
-def manifest_is_current(article_dir: Path, source_hash: str) -> bool:
+def manifest_is_current(
+    article_dir: Path,
+    source_hash: str,
+    *,
+    target_words: int = TARGET_WORDS,
+    min_words: int = MIN_WORDS,
+    max_words: int = MAX_WORDS,
+) -> bool:
     status_path = article_dir / "chunking_status.json"
     manifest_path = article_dir / "manifest.json"
     if not status_path.exists() or not manifest_path.exists():
@@ -69,6 +76,12 @@ def manifest_is_current(article_dir: Path, source_hash: str) -> bool:
     except (OSError, json.JSONDecodeError, TypeError):
         return False
     if status.get("source_hash") != source_hash or manifest.get("source_hash") != source_hash:
+        return False
+    if (
+        status.get("chunk_target_words") != target_words
+        or status.get("chunk_min_words") != min_words
+        or status.get("chunk_max_words") != max_words
+    ):
         return False
     chunks = manifest.get("chunks")
     if not isinstance(chunks, list) or not chunks:
@@ -181,13 +194,27 @@ def build_manifest(source_hash: str, chunk_texts: list[str]) -> dict[str, Any]:
     return {"chunk_count": len(chunks), "source_hash": source_hash, "chunks": chunks}
 
 
-def build_one(record: dict[str, Any], root: Path, translation_root: Path) -> dict[str, Any]:
+def build_one(
+    record: dict[str, Any],
+    root: Path,
+    translation_root: Path,
+    *,
+    target_words: int = TARGET_WORDS,
+    min_words: int = MIN_WORDS,
+    max_words: int = MAX_WORDS,
+) -> dict[str, Any]:
     article_dir = translation_root / str(record["directory"])
     article_dir.mkdir(parents=True, exist_ok=True)
     source_text, source_kind, fallback_reason = select_source_text(record, root)
     source_hash = sha256_text(source_text)
 
-    if manifest_is_current(article_dir, source_hash):
+    if manifest_is_current(
+        article_dir,
+        source_hash,
+        target_words=target_words,
+        min_words=min_words,
+        max_words=max_words,
+    ):
         status = json.loads((article_dir / "chunking_status.json").read_text(encoding="utf-8"))
         status.update(
             {
@@ -215,15 +242,17 @@ def build_one(record: dict[str, Any], root: Path, translation_root: Path) -> dic
             old_source_hash = None
     if old_source_hash is not None and old_source_hash != source_hash and _translation_outputs_exist(article_dir):
         raise RuntimeError("source changed after translation outputs existed; manual review required")
+    if old_source_hash == source_hash and _translation_outputs_exist(article_dir):
+        raise RuntimeError("chunk size contract changed after translation outputs existed; use a fresh output root")
 
     protected = PIPELINE.protect_structures(source_text)
     chunk_texts = [
         PIPELINE.validate_and_restore(chunk, _mapping_for_chunk(chunk, protected.mapping))
         for chunk in PIPELINE.semantic_chunks(
             protected.text,
-            target_words=TARGET_WORDS,
-            min_words=MIN_WORDS,
-            max_words=MAX_WORDS,
+            target_words=target_words,
+            min_words=min_words,
+            max_words=max_words,
         )
     ]
     if not chunk_texts:
@@ -251,9 +280,9 @@ def build_one(record: dict[str, Any], root: Path, translation_root: Path) -> dic
         "source_kind": source_kind,
         "fallback_reason": fallback_reason,
         "chunk_count": len(chunk_texts),
-        "chunk_target_words": TARGET_WORDS,
-        "chunk_min_words": MIN_WORDS,
-        "chunk_max_words": MAX_WORDS,
+        "chunk_target_words": target_words,
+        "chunk_min_words": min_words,
+        "chunk_max_words": max_words,
         "chunker": "snowmass_pipeline.semantic_chunks",
         "manifest": "manifest.json",
         "status": "complete",
@@ -271,9 +300,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rights-snapshot", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--max-records", type=int, default=0)
+    parser.add_argument("--record-id", default="")
+    parser.add_argument("--target-words", type=int, default=TARGET_WORDS)
+    parser.add_argument("--min-words", type=int, default=MIN_WORDS)
+    parser.add_argument("--max-words", type=int, default=MAX_WORDS)
     args = parser.parse_args(argv)
+    if not (0 < args.min_words <= args.target_words <= args.max_words):
+        parser.error("chunk sizes must satisfy 0 < min-words <= target-words <= max-words")
     allowed_record_ids = load_rights_snapshot_record_ids(args.rights_snapshot)
-    records = load_source_records(args.root, allowed_record_ids)[: args.max_records or None]
+    records = load_source_records(args.root, allowed_record_ids)
+    if args.record_id:
+        records = [record for record in records if record["record_id"] == args.record_id]
+        if not records:
+            raise SystemExit(f"Allowed source record not found: {args.record_id}")
+    records = records[: args.max_records or None]
     args.translation_root.mkdir(parents=True, exist_ok=True)
     print(
         f"START total={len(records)} workers={args.workers} eligible_records={len(allowed_record_ids)}",
@@ -282,7 +322,16 @@ def main(argv: list[str] | None = None) -> int:
     results: list[dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
         future_map = {
-            executor.submit(build_one, record, args.root, args.translation_root): record for record in records
+            executor.submit(
+                build_one,
+                record,
+                args.root,
+                args.translation_root,
+                target_words=args.target_words,
+                min_words=args.min_words,
+                max_words=args.max_words,
+            ): record
+            for record in records
         }
         for index, future in enumerate(concurrent.futures.as_completed(future_map), 1):
             record = future_map[future]

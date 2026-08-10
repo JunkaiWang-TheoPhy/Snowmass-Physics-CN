@@ -813,6 +813,33 @@ class PrepareSnowmassChunksTests(unittest.TestCase):
         self.assertEqual(status["fallback_reason"], "archive_unusable")
         self.assertEqual((article_dir / "source.md").read_text(encoding="utf-8"), "PDF fallback survives.\n")
 
+    def test_build_one_rechunks_when_chunk_size_contract_changes(self) -> None:
+        record = {"record_id": "arxiv:sized", "directory": "papers/arxiv_sized"}
+        self.write_pdf_text(record["directory"], "One two three four five six seven eight nine ten.\n")
+
+        first = self.preparer.build_one(
+            record,
+            self.root,
+            self.translation_root,
+            target_words=8,
+            min_words=4,
+            max_words=10,
+        )
+        second = self.preparer.build_one(
+            record,
+            self.root,
+            self.translation_root,
+            target_words=4,
+            min_words=2,
+            max_words=5,
+        )
+
+        self.assertFalse(first["reused"])
+        self.assertFalse(second["reused"])
+        self.assertEqual(second["chunk_target_words"], 4)
+        self.assertEqual(second["chunk_min_words"], 2)
+        self.assertEqual(second["chunk_max_words"], 5)
+
     def test_build_one_refuses_to_replace_translated_outputs_when_source_hash_changes(self) -> None:
         record = {"record_id": "arxiv:translated", "directory": "papers/arxiv_translated"}
         self.write_pdf_text(record["directory"], "PDF fallback text.\n")
@@ -871,6 +898,36 @@ class PrepareSnowmassChunksTests(unittest.TestCase):
         self.assertEqual(summary["total_records"], 1)
         self.assertTrue((self.translation_root / allowed["directory"]).exists())
         self.assertFalse((self.translation_root / blocked["directory"]).exists())
+
+    def test_main_can_select_one_allowed_record_and_custom_chunk_sizes(self) -> None:
+        first = {"record_id": "arxiv:first", "directory": "papers/arxiv_first"}
+        second = {"record_id": "arxiv:second", "directory": "papers/arxiv_second"}
+        self.write_source_manifest([first, second])
+        self.write_pdf_text(first["directory"], "First paper text.\n")
+        self.write_pdf_text(second["directory"], "Second paper text.\n")
+        rights_snapshot = self.write_rights_snapshot(["arxiv:first", "arxiv:second"])
+
+        exit_code = self.preparer.main(
+            [
+                "--root", str(self.root),
+                "--translation-root", str(self.translation_root),
+                "--rights-snapshot", str(rights_snapshot),
+                "--record-id", "arxiv:second",
+                "--target-words", "600",
+                "--min-words", "400",
+                "--max-words", "800",
+                "--workers", "1",
+            ]
+        )
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads((self.translation_root / "chunk_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["total_records"], 1)
+        status = json.loads(
+            (self.translation_root / second["directory"] / "chunking_status.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(status["chunk_target_words"], 600)
+        self.assertFalse((self.translation_root / first["directory"]).exists())
 
 
 if __name__ == "__main__":
