@@ -16,3 +16,10 @@
 - Third-party source mirrored in the project: none
 - License: AGPL-3.0, as project artwork
 - Notes: the panorama is a generic alpine landscape and is not a Snowmass, SLAC, arXiv, or institutional mark.
+
+## `readme-mountains.webp`
+
+- Work: wide editorial crop of `snowmass-hero-mountains.webp`
+- Created for: the bilingual GitHub repository introduction
+- Third-party source mirrored in the project: none
+- License: AGPL-3.0, as project artwork
