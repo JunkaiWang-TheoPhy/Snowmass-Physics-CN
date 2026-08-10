@@ -38,6 +38,8 @@ class SiteContractTests(unittest.TestCase):
         self.assertIn('"paper-title-zh"', JAVASCRIPT)
         self.assertIn('"detail-title-zh"', JAVASCRIPT)
         self.assertIn('state.lang === "zh"', JAVASCRIPT)
+        self.assertNotIn("机器译名", JAVASCRIPT)
+        self.assertNotIn("machine-title-label", JAVASCRIPT)
 
     def test_slate_light_and_dark_tokens_exist(self) -> None:
         self.assertIn("--snow: #dce6ea", CSS)

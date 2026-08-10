@@ -27,7 +27,7 @@ const UI = {
     footerArxiv: "arXiv 翻译政策", footerLicense: "项目代码与自有文档采用 AGPL-3.0；第三方论文和每篇译文分别遵循其记录的许可证与书面授权。",
     noscript: "本目录需要 JavaScript 才能加载 541 篇论文的筛选与详情。", themeDark: "深色", themeLight: "浅色", languageAria: "切换为英文",
     themeAriaDark: "切换为深色模式", themeAriaLight: "切换为浅色模式", yearUnknown: "年份未知", authorUnknown: "作者信息待核验",
-    unclassified: "未分类", pages: "页", citations: "引用", source: "查看原文 ↗", details: "权利与进度详情 →", machineTitle: "机器译名",
+    unclassified: "未分类", pages: "页", citations: "引用", source: "查看原文 ↗", details: "权利与进度详情 →",
     results: (count, page, total) => `${count} 篇符合条件 · 第 ${page}/${total} 页`, noResults: "没有找到符合条件的论文",
     noResultsHint: "可以缩短关键词，或清除一项许可证、Frontier、授权或翻译筛选。", previous: "上一页", next: "下一页",
     back: "← 返回筛选结果", currentStatus: "当前状态", clearedExplanation: "来源许可允许制作改编作品；公开译文仍须完整落实署名、变更说明、相同方式共享或非商业条件。",
@@ -69,7 +69,7 @@ const UI = {
     footerArxiv: "arXiv translation policy", footerLicense: "Project code and original documentation use AGPL-3.0. Third-party papers and each translation follow their own recorded licenses and written permissions.",
     noscript: "JavaScript is required to filter and inspect the 541-paper catalog.", themeDark: "Dark", themeLight: "Light", languageAria: "Switch to Chinese",
     themeAriaDark: "Switch to dark mode", themeAriaLight: "Switch to light mode", yearUnknown: "Year unknown", authorUnknown: "Author information pending review",
-    unclassified: "Unclassified", pages: "pages", citations: "citations", source: "View source ↗", details: "Rights and progress →", machineTitle: "Machine-translated title",
+    unclassified: "Unclassified", pages: "pages", citations: "citations", source: "View source ↗", details: "Rights and progress →",
     results: (count, page, total) => `${count} results · page ${page}/${total}`, noResults: "No papers match these filters",
     noResultsHint: "Try a shorter query or clear a license, Frontier, permission, or translation filter.", previous: "Previous page", next: "Next page",
     back: "← Back to results", currentStatus: "Current status", clearedExplanation: "The source license permits adaptations. Any public translation must still satisfy attribution, change notices, ShareAlike, or non-commercial conditions.",
@@ -240,7 +240,7 @@ function filteredPapers() {
 }
 
 function bilingualTitle(paper, context = "card") {
-  const chinese = state.lang === "zh" ? `<p class="${context === "detail" ? "detail-title-zh" : "paper-title-zh"}">${escapeHTML(paper.title_zh)}</p><span class="machine-title-label">${t("machineTitle")}</span>` : "";
+  const chinese = state.lang === "zh" ? `<p class="${context === "detail" ? "detail-title-zh" : "paper-title-zh"}">${escapeHTML(paper.title_zh)}</p>` : "";
   return `${context === "detail" ? `<h1 id="detail-title">${escapeHTML(paper.title)}</h1>` : `<h3>${escapeHTML(paper.title)}</h3>`}${chinese}`;
 }
 
