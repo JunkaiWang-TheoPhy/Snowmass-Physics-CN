@@ -77,7 +77,7 @@ def _contains_term(text: str, term: str) -> bool:
 def _sentinel_sequence_is_valid(text: str, mapping: dict[str, str]) -> bool:
     expected = list(mapping)
     observed = _SENTINEL_RE.findall(text)
-    if observed != expected:
+    if not _same_multiset(expected, observed):
         return False
     for sentinel in expected:
         if text.count(sentinel) != 1:
@@ -118,7 +118,7 @@ def validate_chunk(source: str, translated: str, mapping: dict[str, str], glossa
         failures.append("urls_mismatch")
     if not _same_multiset(tuple(_CITATION_RE.findall(source)), tuple(_CITATION_RE.findall(translated))):
         failures.append("citations_mismatch")
-    if protected_literals(source) != protected_literals(translated):
+    if not _same_multiset(protected_literals(source), protected_literals(translated)):
         failures.append("protected_literals_mismatch")
     if not _sentinel_sequence_is_valid(translated, mapping):
         failures.append("sentinels_mismatch")

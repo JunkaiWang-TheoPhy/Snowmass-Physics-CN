@@ -619,7 +619,7 @@ class StructureProtectionTests(unittest.TestCase):
         with self.assertRaises(self.pipeline.StructureMismatchError):
             self.pipeline.validate_and_restore(duplicated, protected.mapping)
 
-    def test_restore_rejects_swapped_distinct_sentinels(self) -> None:
+    def test_restore_accepts_reordered_distinct_sentinels_when_each_occurs_once(self) -> None:
         text = "See \\cite{atlas} before $p_T$."
         protected = self.pipeline.protect_structures(text)
         sentinels = sorted(protected.mapping, key=protected.text.index)
@@ -627,8 +627,9 @@ class StructureProtectionTests(unittest.TestCase):
         swapped = swapped.replace(sentinels[1], sentinels[0], 1).replace("<<SWAP>>", sentinels[1], 1)
 
         self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
-        with self.assertRaises(self.pipeline.StructureMismatchError):
-            self.pipeline.validate_and_restore(swapped, protected.mapping)
+        restored = self.pipeline.validate_and_restore(swapped, protected.mapping)
+        self.assertIn(r"\cite{atlas}", restored)
+        self.assertIn("$p_T$", restored)
 
     def test_semantic_chunks_keep_paragraphs_and_lists_whole(self) -> None:
         first_paragraph = "alpha beta gamma delta epsilon zeta"

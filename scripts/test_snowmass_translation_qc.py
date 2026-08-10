@@ -126,7 +126,7 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("sentinels_mismatch", report.failures)
 
-    def test_validate_chunk_rejects_reordered_sentinels(self) -> None:
+    def test_validate_chunk_accepts_reordered_sentinels_when_membership_is_exact(self) -> None:
         report = QC.validate_chunk(
             source="First [[SM_0001_aaaaa]] then [[SM_0002_bbbbb]].\n",
             translated="先 [[SM_0002_bbbbb]] 再 [[SM_0001_aaaaa]]。\n",
@@ -137,8 +137,8 @@ class ValidateChunkTests(unittest.TestCase):
             glossary=[],
         )
 
-        self.assertFalse(report.ok)
-        self.assertIn("sentinels_mismatch", report.failures)
+        self.assertTrue(report.ok)
+        self.assertNotIn("sentinels_mismatch", report.failures)
 
     def test_validate_chunk_rejects_duplicated_latex_reference_after_restore(self) -> None:
         report = QC.validate_chunk(

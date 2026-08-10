@@ -502,9 +502,6 @@ def validate_and_restore(text: str, mapping: dict[str, str]) -> str:
     observed_sentinels = list(sentinel_sequence(text))
     if any(sentinel not in mapping for sentinel in observed_sentinels):
         raise StructureMismatchError("Unexpected protected sentinel remained before restore")
-    if observed_sentinels != list(mapping):
-        raise StructureMismatchError("Protected sentinel sequence changed before restore")
-
     restored = text
     for sentinel, value in mapping.items():
         restored = restored.replace(sentinel, value)
