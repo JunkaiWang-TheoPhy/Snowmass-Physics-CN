@@ -71,7 +71,15 @@ def _contains_term(text: str, term: str) -> bool:
         return False
     if _ACRONYM_RE.fullmatch(term):
         return term in text
-    return term.casefold() in text.casefold()
+    if term.casefold() in text.casefold():
+        return True
+    has_cjk = any("\u4e00" <= character <= "\u9fff" for character in term)
+    has_ascii_letters = any(character.isascii() and character.isalpha() for character in term)
+    if has_cjk and has_ascii_letters:
+        compact_term = re.sub(r"\s+", "", term).casefold()
+        compact_text = re.sub(r"\s+", "", text).casefold()
+        return compact_term in compact_text
+    return False
 
 
 def _sentinel_sequence_is_valid(text: str, mapping: dict[str, str]) -> bool:

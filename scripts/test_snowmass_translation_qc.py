@@ -182,6 +182,16 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("locked_terms_mismatch", report.failures)
 
+    def test_validate_chunk_accepts_mixed_script_term_with_spacing_difference(self) -> None:
+        report = QC.validate_chunk(
+            source="CMB lensing constrains the model.\n",
+            translated="CMB引力透镜约束了该模型。\n",
+            mapping={},
+            glossary=[{"source": "CMB lensing", "target": "CMB 引力透镜"}],
+        )
+
+        self.assertTrue(report.ok)
+
 
 class StageDecisionTests(unittest.TestCase):
     def test_stage_decision_skips_terminology_when_text_is_already_canonical(self) -> None:
@@ -203,6 +213,15 @@ class StageDecisionTests(unittest.TestCase):
 
         self.assertTrue(decision.should_call_model)
         self.assertEqual(decision.reason, "terminology_locked_term_conflict")
+
+    def test_stage_decision_treats_mixed_script_spacing_as_canonical(self) -> None:
+        decision = QC.stage_decision(
+            "terminology",
+            "CMB lensing（CMB引力透镜）已经完成。\n",
+            [{"source": "CMB lensing", "target": "CMB 引力透镜"}],
+        )
+
+        self.assertFalse(decision.should_call_model)
 
     def test_stage_decision_skips_anti_ai_when_no_formulaic_phrase_is_present(self) -> None:
         decision = QC.stage_decision("anti_ai", "探测器达到 14 TeV，见 [12]。\n", [])
