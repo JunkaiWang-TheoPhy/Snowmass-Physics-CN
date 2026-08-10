@@ -12,11 +12,31 @@ import re
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 
 class UnsafeArchiveError(RuntimeError):
     """Raised when an archive member would escape the extraction root."""
+
+
+class UnsafeIncludeError(RuntimeError):
+    """Raised when TeX include traversal escapes the allowed root."""
+
+
+class MainCandidate(NamedTuple):
+    path: Path
+    score: int
+    incoming_includes: int
+    has_document_marker: bool
+    has_title: bool
+    has_abstract: bool
+
+
+class ExpandedTex(NamedTuple):
+    text: str
+    includes: tuple[Path, ...]
+    missing_includes: tuple[Path, ...]
+    cycles: tuple[Path, ...]
 
 
 def now() -> str:
@@ -89,6 +109,10 @@ _TEX_MARKER = re.compile(
     rb"\\(?:documentclass|documentstyle|begin\s*\{document\}|"
     rb"(?:input|include)\s*\{|(?:newcommand|renewcommand|providecommand|def)\b)"
 )
+_DOCUMENT_MARKER_PATTERN = re.compile(r"\\(?:documentclass|documentstyle|begin\s*\{document\})")
+_TITLE_PATTERN = re.compile(r"\\title\s*\{")
+_ABSTRACT_PATTERN = re.compile(r"\\begin\s*\{abstract\}")
+_INCLUDE_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
 
 
 def _classify_source_payload(payload: bytes, path: Path) -> Literal["tar", "single_tex"]:
@@ -163,3 +187,170 @@ def safe_extract_source(path: Path, destination: Path) -> list[Path]:
     if package_type == "tar":
         return _extract_tar_payload(payload, destination)
     return _extract_single_tex(payload, path, destination)
+
+
+def _is_backup_tex(path: Path) -> bool:
+    name = path.name.lower()
+    stem = path.stem.lower()
+    return (
+        "~" in name
+        or ".bak." in name
+        or ".backup." in name
+        or ".orig." in name
+        or ".tmp." in name
+        or stem.endswith("_backup")
+        or stem.endswith("-backup")
+        or stem.startswith(".#")
+    )
+
+
+def _strip_tex_comment(line: str) -> str:
+    for index, character in enumerate(line):
+        if character == "%" and (index == 0 or line[index - 1] != "\\"):
+            return line[:index]
+    return line
+
+
+def _iter_include_specs(text: str) -> list[tuple[int, int, str]]:
+    matches: list[tuple[int, int, str]] = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        visible = _strip_tex_comment(line)
+        for match in _INCLUDE_PATTERN.finditer(visible):
+            matches.append((offset + match.start(), offset + match.end(), match.group(1).strip()))
+        offset += len(line)
+    return matches
+
+
+def _ensure_within_root(path: Path, root: Path, error_type: type[RuntimeError], message: str) -> Path:
+    resolved_root = root.resolve()
+    resolved_path = path.resolve(strict=False)
+    if resolved_path != resolved_root and resolved_root not in resolved_path.parents:
+        raise error_type(message)
+    return path
+
+
+def _candidate_include_paths(spec: str, base_dir: Path) -> list[Path]:
+    logical = base_dir / Path(spec)
+    if logical.suffix:
+        return [logical]
+    return [logical.with_suffix(".tex"), logical]
+
+
+def _resolve_include_target(spec: str, base_dir: Path, root: Path) -> Path:
+    logical_spec = Path(spec)
+    if logical_spec.is_absolute():
+        raise UnsafeIncludeError(f"Unsafe include path: {spec}")
+    candidates = _candidate_include_paths(spec, base_dir)
+    for candidate in candidates:
+        resolved = _ensure_within_root(candidate, root, UnsafeIncludeError, f"Unsafe include path: {spec}")
+        if candidate.exists():
+            return resolved
+    return _ensure_within_root(candidates[0], root, UnsafeIncludeError, f"Unsafe include path: {spec}")
+
+
+def _tex_source_files(root: Path) -> list[Path]:
+    return sorted(path for path in root.rglob("*.tex") if path.is_file() and not _is_backup_tex(path))
+
+
+def rank_main_tex(root: Path) -> list[MainCandidate]:
+    tex_files = _tex_source_files(root)
+    contents = {path.resolve(): path.read_text(encoding="utf-8") for path in tex_files}
+    incoming_counts = {path.resolve(): 0 for path in tex_files}
+    candidate_paths = set(incoming_counts)
+
+    for path in tex_files:
+        source_path = path.resolve()
+        for _, _, spec in _iter_include_specs(contents[source_path]):
+            try:
+                target = _resolve_include_target(spec, path.parent, root)
+            except UnsafeIncludeError:
+                continue
+            resolved_target = target.resolve(strict=False)
+            if resolved_target in candidate_paths and resolved_target != source_path:
+                incoming_counts[resolved_target] += 1
+
+    ranked: list[MainCandidate] = []
+    for path in tex_files:
+        resolved_path = path.resolve()
+        text = contents[resolved_path]
+        lower_stem = path.stem.lower()
+        has_document_marker = _DOCUMENT_MARKER_PATTERN.search(text) is not None
+        has_title = _TITLE_PATTERN.search(text) is not None
+        has_abstract = _ABSTRACT_PATTERN.search(text) is not None
+
+        score = 0
+        if has_document_marker:
+            score += 200
+        if has_title:
+            score += 35
+        if has_abstract:
+            score += 35
+        score -= incoming_counts[resolved_path] * 80
+        if lower_stem == "main":
+            score += 40
+        if any(token in lower_stem for token in ("supplement", "supp", "appendix", "response", "cover")):
+            score -= 25
+        score += min(len(text) // 200, 25)
+
+        ranked.append(
+            MainCandidate(
+                path=path,
+                score=score,
+                incoming_includes=incoming_counts[resolved_path],
+                has_document_marker=has_document_marker,
+                has_title=has_title,
+                has_abstract=has_abstract,
+            )
+        )
+
+    return sorted(ranked, key=lambda candidate: (-candidate.score, candidate.path.as_posix()))
+
+
+def expand_tex(main_path: Path, root: Path) -> ExpandedTex:
+    main_path = _ensure_within_root(main_path, root, UnsafeIncludeError, f"Unsafe main path: {main_path}")
+    max_depth = max(len(_tex_source_files(root)) + 1, 1)
+    includes: list[Path] = []
+    include_seen: set[Path] = set()
+    missing_includes: list[Path] = []
+    missing_seen: set[Path] = set()
+    cycles: list[Path] = []
+    cycle_seen: set[Path] = set()
+
+    def visit(path: Path, stack: tuple[Path, ...]) -> str:
+        if len(stack) > max_depth:
+            if path not in cycle_seen:
+                cycle_seen.add(path)
+                cycles.append(path)
+            return ""
+
+        text = path.read_text(encoding="utf-8")
+        expanded_parts: list[str] = []
+        cursor = 0
+        for start, end, spec in _iter_include_specs(text):
+            expanded_parts.append(text[cursor:start])
+            target = _resolve_include_target(spec, path.parent, root)
+            if not target.exists():
+                if target not in missing_seen:
+                    missing_seen.add(target)
+                    missing_includes.append(target)
+            elif target in stack:
+                if target not in cycle_seen:
+                    cycle_seen.add(target)
+                    cycles.append(target)
+            else:
+                if target not in include_seen:
+                    include_seen.add(target)
+                    includes.append(target)
+                expanded_parts.append(visit(target, stack + (target,)))
+            cursor = end
+        expanded_parts.append(text[cursor:])
+        return "".join(expanded_parts)
+
+    text = visit(main_path, (main_path,))
+    return ExpandedTex(
+        text=text,
+        includes=tuple(includes),
+        missing_includes=tuple(missing_includes),
+        cycles=tuple(cycles),
+    )

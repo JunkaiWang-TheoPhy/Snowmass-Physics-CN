@@ -189,5 +189,130 @@ class SourcePackageTests(unittest.TestCase):
         )
 
 
+class MainTexSelectionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.pipeline = load_pipeline(self)
+
+    def write_tex(self, relative: str, content: str) -> Path:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_rank_main_tex_prefers_document_with_title_abstract_and_main_name(self) -> None:
+        main_path = self.write_tex(
+            "main.tex",
+            "\\documentclass{article}\n"
+            "\\title{Signal}\n"
+            "\\begin{document}\n"
+            "\\begin{abstract}Summary\\end{abstract}\n"
+            "\\input{sections/intro}\n"
+            "\\end{document}\n",
+        )
+        self.write_tex("sections/intro.tex", "first section\n")
+        self.write_tex(
+            "supplement.tex",
+            "\\documentclass{article}\n\\begin{document}\nSupplement\n\\end{document}\n",
+        )
+
+        candidates = self.pipeline.rank_main_tex(self.root)
+
+        self.assertEqual(candidates[0].path, main_path)
+        self.assertGreater(candidates[0].score, candidates[1].score)
+
+    def test_rank_main_tex_keeps_multiple_candidates_visible(self) -> None:
+        main_path = self.write_tex(
+            "main.tex",
+            "\\documentclass{article}\n"
+            "\\title{Primary}\n"
+            "\\begin{document}\n"
+            "\\begin{abstract}Primary abstract\\end{abstract}\n"
+            "Long enough body to win the tiebreaker.\n"
+            "\\end{document}\n",
+        )
+        alternative_path = self.write_tex(
+            "draft.tex",
+            "\\documentclass{article}\n"
+            "\\title{Alternative}\n"
+            "\\begin{document}\n"
+            "Alternative body.\n"
+            "\\end{document}\n",
+        )
+
+        candidates = self.pipeline.rank_main_tex(self.root)
+
+        self.assertEqual([candidate.path for candidate in candidates[:2]], [main_path, alternative_path])
+
+    def test_rank_main_tex_excludes_backup_filenames(self) -> None:
+        self.write_tex(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\nLive paper\n\\end{document}\n",
+        )
+        self.write_tex(
+            "main.bak.tex",
+            "\\documentclass{article}\n\\begin{document}\nBackup paper\n\\end{document}\n",
+        )
+        self.write_tex(
+            "draft_backup.tex",
+            "\\documentclass{article}\n\\begin{document}\nAnother backup\n\\end{document}\n",
+        )
+
+        candidates = self.pipeline.rank_main_tex(self.root)
+
+        self.assertEqual([candidate.path.name for candidate in candidates], ["main.tex"])
+
+
+class ExpandTexTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.pipeline = load_pipeline(self)
+
+    def write_tex(self, relative: str, content: str) -> Path:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_expand_tex_preserves_nested_include_order(self) -> None:
+        main_path = self.write_tex("main.tex", "start\n\\input{sections/first}\n\\input{sections/second}\nend\n")
+        self.write_tex("sections/first.tex", "first section\n\\input{sub/third}\n")
+        self.write_tex("sections/sub/third.tex", "third nested\n")
+        self.write_tex("sections/second.tex", "second section\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertLess(result.text.index("first section"), result.text.index("third nested"))
+        self.assertLess(result.text.index("third nested"), result.text.index("second section"))
+
+    def test_expand_tex_reports_cycle_targets(self) -> None:
+        main_path = self.write_tex("main.tex", "start\n\\input{loop}\nend\n")
+        self.write_tex("loop.tex", "loop body\n\\input{main}\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertEqual(result.cycles, (main_path,))
+        self.assertEqual(result.text.count("loop body"), 1)
+
+    def test_expand_tex_reports_missing_includes(self) -> None:
+        main_path = self.write_tex("main.tex", "start\n\\input{missing}\nend\n")
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertEqual(result.missing_includes, (self.root / "missing.tex",))
+        self.assertIn("start", result.text)
+        self.assertIn("end", result.text)
+
+    def test_expand_tex_rejects_include_outside_root(self) -> None:
+        main_path = self.write_tex("main.tex", "\\input{../escape}\n")
+
+        with self.assertRaises(self.pipeline.UnsafeIncludeError):
+            self.pipeline.expand_tex(main_path, self.root)
+
+
 if __name__ == "__main__":
     unittest.main()
