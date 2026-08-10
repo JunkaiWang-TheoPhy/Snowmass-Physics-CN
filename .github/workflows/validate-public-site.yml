@@ -44,6 +44,7 @@ jobs:
           python3 -m json.tool data/snowmass_title_zh.json >/dev/null
           python3 -m json.tool site/data/stats.json >/dev/null
           node --check site/app.js
+          node --check site/theme-init.js
 
       - name: Smoke-test the static site
         run: |

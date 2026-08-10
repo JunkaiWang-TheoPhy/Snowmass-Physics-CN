@@ -10,15 +10,7 @@
     <meta property="og:description" content="541 篇 Snowmass 2021 白皮书的非官方中文翻译、来源许可与授权进度目录。">
     <meta property="og:url" content="https://snowmass-physics-cn.netlify.app/">
     <title>Snowmass 中文翻译计划</title>
-    <script>
-      (() => {
-        const saved = localStorage.getItem("snowmass-theme");
-        const theme = saved === "light" || saved === "dark"
-          ? saved
-          : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        document.documentElement.dataset.theme = theme;
-      })();
-    </script>
+    <script src="theme-init.js"></script>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>

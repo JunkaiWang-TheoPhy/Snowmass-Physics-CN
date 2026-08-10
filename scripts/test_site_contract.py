@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "site/index.html").read_text(encoding="utf-8")
 JAVASCRIPT = (ROOT / "site/app.js").read_text(encoding="utf-8")
 CSS = (ROOT / "site/styles.css").read_text(encoding="utf-8")
+THEME_INIT = (ROOT / "site/theme-init.js").read_text(encoding="utf-8")
 
 
 class SiteContractTests(unittest.TestCase):
@@ -27,7 +28,8 @@ class SiteContractTests(unittest.TestCase):
     def test_independent_accessible_view_controls_exist(self) -> None:
         self.assertIn('id="language-toggle"', HTML)
         self.assertIn('id="theme-toggle"', HTML)
-        self.assertIn('localStorage.getItem("snowmass-theme")', HTML)
+        self.assertIn('src="theme-init.js"', HTML)
+        self.assertIn('localStorage.getItem("snowmass-theme")', THEME_INIT)
         self.assertIn('localStorage.setItem(LANG_KEY', JAVASCRIPT)
         self.assertIn('localStorage.setItem(THEME_KEY', JAVASCRIPT)
 
