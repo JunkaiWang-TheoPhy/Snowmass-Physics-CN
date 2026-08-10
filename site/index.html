@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Snowmass 2021 白皮书中文翻译、来源许可证与授权进度的开放目录。">
-    <meta name="color-scheme" content="dark">
+    <meta name="color-scheme" content="light">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Snowmass 中文翻译计划">
     <meta property="og:description" content="541 篇 Snowmass 2021 白皮书的非官方中文翻译、来源许可与授权进度目录。">
@@ -17,36 +17,39 @@
 
     <header class="site-header">
       <a class="brand" href="./" aria-label="Snowmass 中文翻译计划首页">
-        <span class="brand-mark" aria-hidden="true">S</span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 42 42" focusable="false"><path d="M4 31 15 17l6 7 6-10 11 17H4Z"/><path d="m15 17 3 4 3-3 6-4 3 5"/></svg>
+        </span>
         <span>
           <strong>Snowmass 中文翻译计划</strong>
-          <small>Open translation &amp; rights tracker</small>
+          <small>Open Translation Atlas</small>
         </span>
       </a>
       <nav aria-label="主要导航">
         <a href="#catalog">论文目录</a>
-        <a href="https://github.com/JunkaiWang-TheoPhy/snowmass-zh/blob/main/docs/RIGHTS_PROTOCOL.md" rel="noreferrer">权利协议 ↗</a>
-        <a href="https://www.slac.stanford.edu/econf/C210711/" rel="noreferrer">官方文集 ↗</a>
+        <a href="#workflow">翻译流程</a>
+        <a href="https://github.com/JunkaiWang-TheoPhy/snowmass-zh/blob/main/docs/RIGHTS_PROTOCOL.md" rel="noreferrer">授权档案 ↗</a>
+        <a class="nav-cta" href="https://github.com/JunkaiWang-TheoPhy/snowmass-zh" rel="noreferrer">在 GitHub 参与</a>
       </nav>
     </header>
 
     <main>
-      <section class="hero" aria-labelledby="hero-title">
+      <section class="hero hero-landscape" aria-labelledby="hero-title">
         <div class="hero-copy">
-          <p class="eyebrow">Snowmass 2021 · 10 Frontiers · 541 papers</p>
-          <h1 id="hero-title">先把权利讲清楚，<br>再把知识翻译出来。</h1>
+          <p class="eyebrow">Snowmass 2021 · Open Translation Atlas</p>
+          <h1 id="hero-title">翻越语言的雪线，<br>抵达开放知识。</h1>
           <p class="hero-lede">
-            这是一个非官方、开放协作的中文翻译目录。每篇论文都独立记录来源许可证、授权进度、机器翻译和人工校订状态；没有明确改编许可的全文不会公开。
+            一个由机器翻译起步、由研究共同体持续审校的中文开放档案。每篇论文都独立记录来源许可证、授权进度、模型与人工修订；没有明确改编许可的全文不会公开。
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#catalog">浏览论文</a>
-            <a class="button button-secondary" href="https://github.com/JunkaiWang-TheoPhy/snowmass-zh" rel="noreferrer">参与 GitHub 协作</a>
+            <a class="button button-primary" href="#catalog">探索论文图谱</a>
+            <a class="button button-secondary" href="https://github.com/JunkaiWang-TheoPhy/snowmass-zh/blob/main/docs/RIGHTS_PROTOCOL.md" rel="noreferrer">了解授权原则</a>
           </div>
         </div>
 
         <aside class="rights-principle" aria-label="发布闸门说明">
-          <span class="principle-index">PUBLICATION GATE / 01</span>
-          <p>来源许可证允许改编，或权利人提供范围明确的书面授权，才能公开完整译文。</p>
+          <span class="principle-index">PUBLICATION GATE · 权利先行</span>
+          <p>只有来源许可证允许改编，或权利人给出范围明确的书面授权，完整译文才会公开。</p>
           <div class="signal-row">
             <span><i class="signal signal-green"></i>许可证已核验</span>
             <span><i class="signal signal-amber"></i>等待授权</span>
@@ -78,7 +81,7 @@
         </article>
       </section>
 
-      <section class="protocol-strip" aria-label="工作流">
+      <section class="protocol-strip" id="workflow" aria-label="工作流">
         <span>来源核验</span><b aria-hidden="true">→</b>
         <span>机器初译</span><b aria-hidden="true">→</b>
         <span>术语统一</span><b aria-hidden="true">→</b>

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 980" role="img" aria-labelledby="title desc">
+  <title id="title">雪山与等高线</title>
+  <desc id="desc">为 Snowmass 中文开放翻译计划绘制的浅色雪山景观</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dcecf0"/>
+      <stop offset=".52" stop-color="#edf4f4"/>
+      <stop offset="1" stop-color="#f7faf9"/>
+    </linearGradient>
+    <linearGradient id="far" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b8cdd2"/>
+      <stop offset="1" stop-color="#809da7"/>
+    </linearGradient>
+    <linearGradient id="near" x1="0" y1="0" x2=".9" y2="1">
+      <stop offset="0" stop-color="#7897a2"/>
+      <stop offset="1" stop-color="#385763"/>
+    </linearGradient>
+    <linearGradient id="snow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dce8e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="1800" height="980" fill="url(#sky)"/>
+  <circle cx="1440" cy="205" r="82" fill="#fff" opacity=".68"/>
+  <path d="M0 720 220 590 380 642 610 435 750 590 955 334 1120 545 1334 395 1510 560 1800 410V980H0Z" fill="url(#far)" opacity=".72"/>
+  <path d="m350 660 260-225 140 155 205-256 166 211 214-150 175 165 290-150v570H0V720l220-130Z" fill="url(#near)"/>
+  <path d="m438 584 172-149 65 72 41 78-90-53-42 70-64-28Z" fill="url(#snow)"/>
+  <path d="m787 545 168-211 105 134 61 77-111-61-45 62-51-55-60 77Z" fill="url(#snow)"/>
+  <path d="m1196 492 138-97 95 89 81 76-108-50-57 45-49-56-57 31Z" fill="url(#snow)"/>
+  <path d="M0 848c315-94 516-39 748 6 314 61 586-34 1052-116v242H0Z" fill="#edf4f3" opacity=".92"/>
+  <g fill="none" stroke="#416c79" stroke-width="2" opacity=".22">
+    <path d="M1050 87c153 3 280 45 304 120 21 67-44 110-142 119-111 10-203-20-211-82-10-79 123-111 259-98 168 17 279 78 271 158-8 77-131 119-284 113"/>
+    <path d="M1130 43c246-5 435 74 457 186 21 106-119 192-331 201-210 8-380-49-402-157"/>
+    <path d="M1265 5c292 21 511 135 513 284 2 144-204 251-489 261"/>
+    <path d="M50 750c228-102 426-119 596-55 153 57 261 54 397 8"/>
+    <path d="M-30 802c244-106 464-128 660-66 185 58 321 55 485-5"/>
+    <path d="M-56 865c273-112 516-132 731-61 176 58 337 47 520-23"/>
+  </g>
+</svg>
