@@ -38,7 +38,7 @@ The public atlas brings together original and Chinese titles, authors, fields, l
 ## Translation as inheritance
 
 > **“路漫漫其修远兮，吾将上下而求索。”**  
-> — Qu Yuan, *[Li Sao](https://www.china.org.cn/english/china_key_words/2022-10/13/content_78464373.html)* — “Long is the road ahead; I will search high and low.”
+> — Qu Yuan, *[Li Sao](https://en.wikipedia.org/wiki/Li_Sao)* — “Long is the road ahead; I will search high and low.”
 
 Machines take the first step; people decide how far the words can travel. Each translation records its model, terminology decisions, and human review. Anyone may correct a mistranslation, repair an equation, refine the prose, or adopt a paper that still needs a reader.
 
