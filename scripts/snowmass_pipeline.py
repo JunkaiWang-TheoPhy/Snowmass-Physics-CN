@@ -197,6 +197,10 @@ def _extract_tar_payload(payload: bytes, destination: Path) -> list[Path]:
 def _extract_single_tex(payload: bytes, path: Path, destination: Path) -> list[Path]:
     destination.mkdir(parents=True, exist_ok=True)
     output_name = path.name[:-3] if path.name.endswith(".gz") else path.name
+    if output_name.endswith(".tar"):
+        output_name = output_name[:-4] + ".tex"
+    elif "." not in Path(output_name).name:
+        output_name = output_name + ".tex"
     target = destination / output_name
     resolved_destination = destination.resolve()
     resolved_target = target.resolve(strict=False)

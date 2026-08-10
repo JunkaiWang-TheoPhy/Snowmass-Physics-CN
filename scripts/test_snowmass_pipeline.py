@@ -202,6 +202,18 @@ class SourcePackageTests(unittest.TestCase):
             "\\documentclass{article}\n\\begin{document}Hi\\end{document}\n",
         )
 
+    def test_safe_extract_renames_single_tex_payload_from_source_tar_gz_to_tex(self) -> None:
+        pipeline = load_pipeline(self)
+        archive = self.gzip_path("source.tar.gz", b"\\documentclass{article}\n\\begin{document}Hi\\end{document}\n")
+
+        extracted = pipeline.safe_extract_source(archive, self.destination)
+
+        self.assertEqual([path.name for path in extracted], ["source.tex"])
+        self.assertEqual(
+            (self.destination / "source.tex").read_text(encoding="utf-8"),
+            "\\documentclass{article}\n\\begin{document}Hi\\end{document}\n",
+        )
+
 
 class MainTexSelectionTests(unittest.TestCase):
     def setUp(self) -> None:
