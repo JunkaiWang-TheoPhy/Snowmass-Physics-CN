@@ -153,7 +153,13 @@ class RightsGateTests(unittest.TestCase):
             glossary.write_text(json.dumps({"terms": expected_terms}), encoding="utf-8")
             observed_terms: list[list[dict[str, str]]] = []
 
-            def fake_process(task: dict[str, object], client: object, terms: list[dict[str, str]], run_id: str) -> dict[str, str]:
+            def fake_process(
+                task: dict[str, object],
+                client: object,
+                terms: list[dict[str, str]],
+                run_id: str,
+                budget_guard: object,
+            ) -> dict[str, str]:
                 observed_terms.append(terms)
                 return {"record_id": "arxiv:allowed", "chunk_id": "chunk0001", "status": "complete"}
 
@@ -243,6 +249,103 @@ class UsageAccountingTests(unittest.TestCase):
         self.assertNotIn("article_dir", public)
         self.assertEqual(public["status"], "uncertain")
         json.dumps(public)
+
+
+class GlossaryMergeTests(unittest.TestCase):
+    def test_article_terms_override_global_terms_by_casefolded_source(self) -> None:
+        global_terms = [
+            {"source": "Light Relics", "target": "全局译名"},
+            {"source": "dark matter", "target": "暗物质"},
+        ]
+        article_terms = [
+            {"source": "light relics", "target": "轻遗迹粒子", "note": "paper-specific"},
+            {"source": "spectral index running", "target": "谱指数的跑动"},
+        ]
+
+        merged = RUNNER.merge_glossary_terms(global_terms, article_terms)
+
+        self.assertEqual(
+            merged,
+            [
+                {"source": "light relics", "target": "轻遗迹粒子", "note": "paper-specific"},
+                {"source": "dark matter", "target": "暗物质"},
+                {"source": "spectral index running", "target": "谱指数的跑动"},
+            ],
+        )
+
+    def test_load_article_glossary_returns_empty_when_file_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            self.assertEqual(RUNNER.load_article_glossary(Path(temporary)), [])
+
+
+class BudgetGuardTests(unittest.TestCase):
+    def test_reservation_settles_to_reported_v4_flash_cost(self) -> None:
+        guard = RUNNER.BudgetGuard(1.0)
+
+        reservation = guard.reserve("source text", 4096)
+        guard.settle(
+            reservation,
+            {"input_tokens": 1000, "cached_tokens": 200, "output_tokens": 500},
+        )
+
+        snapshot = guard.snapshot()
+        self.assertEqual(snapshot["active_reservations"], 0)
+        self.assertAlmostEqual(
+            snapshot["spent_rmb"],
+            RUNNER.estimate_cost_rmb(
+                {"input_tokens": 1000, "cached_tokens": 200, "output_tokens": 500}
+            ),
+        )
+
+    def test_reservation_rejects_request_that_would_exceed_cap(self) -> None:
+        guard = RUNNER.BudgetGuard(0.001)
+
+        with self.assertRaises(RUNNER.BudgetExceededError):
+            guard.reserve("large request", 4096)
+
+        self.assertEqual(guard.snapshot()["active_reservations"], 0)
+
+    def test_ambiguous_call_commits_conservative_reservation(self) -> None:
+        guard = RUNNER.BudgetGuard(1.0)
+        reservation = guard.reserve("source text", 4096)
+
+        guard.commit_estimate(reservation)
+
+        snapshot = guard.snapshot()
+        self.assertEqual(snapshot["active_reservations"], 0)
+        self.assertGreater(snapshot["spent_rmb"], 0)
+
+
+class RunHistoryTests(unittest.TestCase):
+    def test_write_run_summary_preserves_immutable_per_run_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = {"run_id": "run-one", "completed": 1}
+            second = {"run_id": "run-two", "completed": 2}
+
+            RUNNER.write_run_summary(root, first)
+            RUNNER.write_run_summary(root, second)
+
+            self.assertEqual(
+                json.loads((root / "runs" / "run-one" / "run.json").read_text(encoding="utf-8")),
+                first,
+            )
+            self.assertEqual(
+                json.loads((root / "runs" / "run-two" / "run.json").read_text(encoding="utf-8")),
+                second,
+            )
+            self.assertEqual(
+                json.loads((root / "translation_summary.json").read_text(encoding="utf-8")),
+                second,
+            )
+
+    def test_write_run_summary_refuses_to_mutate_existing_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            RUNNER.write_run_summary(root, {"run_id": "run-one", "completed": 1})
+
+            with self.assertRaises(RuntimeError):
+                RUNNER.write_run_summary(root, {"run_id": "run-one", "completed": 2})
 
 
 class ResponseValidationTests(unittest.TestCase):
@@ -553,6 +656,31 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(result["status"], "uncertain")
         self.assertEqual(translate["status"], "uncertain")
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
+
+    def test_process_chunk_reserves_budget_before_calling_model(self) -> None:
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                raise AssertionError("model must not be called after budget rejection")
+
+        guard = RUNNER.BudgetGuard(0.001)
+        with self.assertRaises(RUNNER.BudgetExceededError):
+            RUNNER.process_chunk(self.task, NoCallClient(), [], budget_guard=guard)
+
+        status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
+        self.assertEqual(status["stages"]["translate"]["status"], "failed")
+        self.assertEqual(guard.snapshot()["active_reservations"], 0)
+
+    def test_process_chunk_commits_reservation_after_ambiguous_transport(self) -> None:
+        class AmbiguousClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                raise RUNNER.AmbiguousTransportError("response may have been generated")
+
+        guard = RUNNER.BudgetGuard(1.0)
+        result = RUNNER.process_chunk(self.task, AmbiguousClient(), [], budget_guard=guard)
+
+        self.assertEqual(result["status"], "uncertain")
+        self.assertEqual(guard.snapshot()["active_reservations"], 0)
+        self.assertGreater(guard.snapshot()["spent_rmb"], 0)
 
     def test_process_chunk_persists_raw_response_before_validation_failure(self) -> None:
         class FakeClient:

@@ -8,10 +8,12 @@ import concurrent.futures
 import hashlib
 import http.client
 import json
+import math
 import os
 import random
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -61,6 +63,10 @@ class FailedResponseError(ResponseValidationError):
 
 class AmbiguousTransportError(RuntimeError):
     """Transport failed before a trustworthy API response could be validated."""
+
+
+class BudgetExceededError(RuntimeError):
+    """A request could not be reserved within the configured RMB budget."""
 
 
 class ParsedResponse:
@@ -121,6 +127,33 @@ def load_glossary(path: Path) -> list[dict[str, Any]]:
     return data.get("terms", [])
 
 
+def load_article_glossary(article_dir: Path) -> list[dict[str, Any]]:
+    path = article_dir / "glossary.json"
+    return load_glossary(path) if path.exists() else []
+
+
+def merge_glossary_terms(
+    global_terms: list[dict[str, Any]],
+    article_terms: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = [dict(term) for term in global_terms]
+    positions: dict[str, int] = {}
+    for index, term in enumerate(merged):
+        source = str(term.get("source", "")).strip().casefold()
+        if source:
+            positions[source] = index
+    for term in article_terms:
+        replacement = dict(term)
+        source = str(replacement.get("source", "")).strip().casefold()
+        if source and source in positions:
+            merged[positions[source]] = replacement
+        else:
+            if source:
+                positions[source] = len(merged)
+            merged.append(replacement)
+    return merged
+
+
 def resolve_glossary_path(root: Path, explicit: Path | None) -> Path:
     return explicit if explicit is not None else root / "global_glossary.json"
 
@@ -139,6 +172,70 @@ def estimate_cost_rmb(usage: dict[str, Any]) -> float:
         + cached_tokens * INPUT_CACHE_HIT_RMB_PER_MILLION
         + output_tokens * OUTPUT_RMB_PER_MILLION
     ) / 1_000_000
+
+
+class BudgetGuard:
+    """Thread-safe reservation accounting for paid DeepSeek requests."""
+
+    def __init__(self, max_cost_rmb: float) -> None:
+        if not math.isfinite(max_cost_rmb) or max_cost_rmb < 0:
+            raise ValueError("max_cost_rmb must be finite and non-negative")
+        self.max_cost_rmb = float(max_cost_rmb)
+        self._spent_rmb = 0.0
+        self._reservations: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _conservative_request_cost(input_text: str, max_output_tokens: int) -> float:
+        # A UTF-8 byte count is a conservative token ceiling for the submitted
+        # text. The fixed allowance covers request framing and tokenizer edge
+        # cases; output is reserved at the full configured maximum.
+        input_token_ceiling = len(input_text.encode("utf-8")) + 4096
+        output_token_ceiling = max(0, int(max_output_tokens))
+        return (
+            input_token_ceiling * INPUT_CACHE_MISS_RMB_PER_MILLION
+            + output_token_ceiling * OUTPUT_RMB_PER_MILLION
+        ) / 1_000_000
+
+    def reserve(self, input_text: str, max_output_tokens: int) -> str:
+        estimate = self._conservative_request_cost(input_text, max_output_tokens)
+        with self._lock:
+            reserved = sum(self._reservations.values())
+            projected = self._spent_rmb + reserved + estimate
+            if self.max_cost_rmb > 0 and projected > self.max_cost_rmb:
+                raise BudgetExceededError(
+                    f"DeepSeek budget cap would be exceeded: "
+                    f"projected ¥{projected:.6f} > cap ¥{self.max_cost_rmb:.6f}"
+                )
+            reservation = uuid.uuid4().hex
+            self._reservations[reservation] = estimate
+            return reservation
+
+    def settle(self, reservation: str, usage: dict[str, Any]) -> None:
+        actual = estimate_cost_rmb(usage)
+        with self._lock:
+            estimate = self._reservations.pop(reservation)
+            self._spent_rmb += actual if actual > 0 else estimate
+
+    def commit_estimate(self, reservation: str) -> None:
+        with self._lock:
+            self._spent_rmb += self._reservations.pop(reservation)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            reserved = sum(self._reservations.values())
+            remaining = (
+                max(0.0, self.max_cost_rmb - self._spent_rmb - reserved)
+                if self.max_cost_rmb > 0
+                else None
+            )
+            return {
+                "max_cost_rmb": self.max_cost_rmb,
+                "spent_rmb": self._spent_rmb,
+                "reserved_rmb": reserved,
+                "remaining_rmb": remaining,
+                "active_reservations": len(self._reservations),
+            }
 
 
 def collect_run_usage(tasks: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
@@ -183,6 +280,20 @@ def collect_run_usage(tasks: list[dict[str, Any]], run_id: str) -> dict[str, Any
 
 def summary_result(result: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in result.items() if key != "article_dir"}
+
+
+def write_run_summary(root: Path, summary: dict[str, Any]) -> None:
+    run_id = summary.get("run_id")
+    if not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id:
+        raise ValueError("summary must contain a safe, non-empty run_id")
+    run_path = root / "runs" / run_id / "run.json"
+    if run_path.exists():
+        existing = json.loads(run_path.read_text(encoding="utf-8"))
+        if existing != summary:
+            raise RuntimeError(f"Refusing to overwrite immutable run record: {run_path}")
+    else:
+        atomic_json(run_path, summary)
+    atomic_json(root / "translation_summary.json", summary)
 
 
 def glossary_text(terms: list[dict[str, Any]]) -> str:
@@ -484,6 +595,7 @@ def process_chunk(
     client: DeepSeekClient,
     terms: list[dict[str, Any]],
     run_id: str | None = None,
+    budget_guard: BudgetGuard | None = None,
 ) -> dict[str, Any]:
     article_dir = task["article_dir"]
     chunk = task["chunk"]
@@ -593,20 +705,44 @@ def process_chunk(
         if run_id is not None:
             stage_status["run_id"] = run_id
         atomic_json(status_path, status)
+        reservation: str | None = None
         try:
+            if budget_guard is not None:
+                reservation = budget_guard.reserve(instructions + "\n" + input_text, max_output)
             response, latency_seconds = client.complete(instructions, input_text, max_output)
+        except BudgetExceededError as exc:
+            stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
+            status["status"] = "failed"
+            status["updated_at"] = now()
+            atomic_json(status_path, status)
+            raise
         except AmbiguousTransportError as exc:
+            if reservation is not None:
+                budget_guard.commit_estimate(reservation)
             stage_status.update({"status": "uncertain", "finished_at": now(), "error": str(exc)})
             status["status"] = "uncertain"
             status["updated_at"] = now()
             atomic_json(status_path, status)
             return {"record_id": task["record_id"], "chunk_id": chunk_id, "status": "uncertain"}
         except RuntimeError as exc:
+            if reservation is not None:
+                budget_guard.commit_estimate(reservation)
             stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
             status["status"] = "failed"
             status["updated_at"] = now()
             atomic_json(status_path, status)
             raise
+        except Exception as exc:
+            if reservation is not None:
+                budget_guard.commit_estimate(reservation)
+            stage_status.update({"status": "failed", "finished_at": now(), "error": repr(exc)})
+            status["status"] = "failed"
+            status["updated_at"] = now()
+            atomic_json(status_path, status)
+            raise
+
+        if reservation is not None:
+            budget_guard.settle(reservation, coarse_response_usage(response))
 
         stage_status["raw_response"] = response_metadata(response)
         stage_status["response_id"] = str(response.get("id", "")) if isinstance(response, dict) else ""
@@ -740,11 +876,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--article", default="")
     parser.add_argument("--rights-manifest", type=Path, default=RIGHTS_MANIFEST)
     parser.add_argument("--glossary", type=Path)
+    parser.add_argument("--max-cost-rmb", type=float, default=0.0)
     args = parser.parse_args(argv)
     if args.concurrency < 1 or args.concurrency > 64:
         parser.error("--concurrency must be between 1 and 64")
+    if not math.isfinite(args.max_cost_rmb) or args.max_cost_rmb < 0:
+        parser.error("--max-cost-rmb must be finite and non-negative")
     glossary_path = resolve_glossary_path(args.root, args.glossary)
-    terms = load_glossary(glossary_path)
+    global_terms = load_glossary(glossary_path)
     allowed_record_ids = load_allowed_record_ids(args.rights_manifest)
     tasks = collect_tasks(
         args.root,
@@ -757,6 +896,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("No chunk tasks found")
     api_key = load_api_key()
     client = DeepSeekClient(api_key)
+    budget_guard = BudgetGuard(args.max_cost_rmb)
     run_id = uuid.uuid4().hex
     print(
         f"START chunks={len(tasks)} eligible_records={len(allowed_record_ids)} "
@@ -766,9 +906,25 @@ def main(argv: list[str] | None = None) -> int:
     completed: list[dict[str, Any]] = []
     uncertain: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    article_dirs = {Path(task["article_dir"]) for task in tasks}
+    article_terms = {
+        article_dir: merge_glossary_terms(
+            global_terms,
+            load_article_glossary(article_dir),
+        )
+        for article_dir in article_dirs
+    }
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as executor:
         future_map = {
-            executor.submit(process_chunk, task, client, terms, run_id): task for task in tasks
+            executor.submit(
+                process_chunk,
+                task,
+                client,
+                article_terms[Path(task["article_dir"])],
+                run_id,
+                budget_guard,
+            ): task
+            for task in tasks
         }
         for index, future in enumerate(concurrent.futures.as_completed(future_map), 1):
             task = future_map[future]
@@ -807,8 +963,9 @@ def main(argv: list[str] | None = None) -> int:
         "glossary": str(glossary_path),
         "run_id": run_id,
         "usage": collect_run_usage(tasks, run_id),
+        "budget": budget_guard.snapshot(),
     }
-    atomic_json(args.root / "translation_summary.json", summary)
+    write_run_summary(args.root, summary)
     printable = {key: value for key, value in summary.items() if key not in {"failed", "uncertain"}}
     printable["uncertain"] = len(uncertain)
     printable["failed"] = len(failures)
