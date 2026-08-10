@@ -230,6 +230,20 @@ class UsageAccountingTests(unittest.TestCase):
             self.assertEqual(resumed_usage["api_calls"], 0)
             self.assertEqual(resumed_usage["estimated_cost_rmb"], 0)
 
+    def test_summary_result_drops_internal_path_objects(self) -> None:
+        result = {
+            "record_id": "arxiv:allowed",
+            "chunk_id": "chunk0001",
+            "status": "uncertain",
+            "article_dir": Path("papers/arxiv_allowed"),
+        }
+
+        public = RUNNER.summary_result(result)
+
+        self.assertNotIn("article_dir", public)
+        self.assertEqual(public["status"], "uncertain")
+        json.dumps(public)
+
 
 class ResponseValidationTests(unittest.TestCase):
     def test_validate_response_accepts_completed_response(self) -> None:

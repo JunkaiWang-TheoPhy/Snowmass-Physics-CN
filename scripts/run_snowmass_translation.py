@@ -181,6 +181,10 @@ def collect_run_usage(tasks: list[dict[str, Any]], run_id: str) -> dict[str, Any
     return totals
 
 
+def summary_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in result.items() if key != "article_dir"}
+
+
 def glossary_text(terms: list[dict[str, Any]]) -> str:
     lines = ["| Source term | Canonical Chinese | Note |", "|---|---|---|"]
     for term in terms:
@@ -770,21 +774,21 @@ def main(argv: list[str] | None = None) -> int:
             task = future_map[future]
             try:
                 result = future.result()
-                result["article_dir"] = task["article_dir"]
                 if result["status"] == "complete":
+                    result["article_dir"] = task["article_dir"]
                     completed.append(result)
                     print(
                         f"PROGRESS {index}/{len(tasks)} {result['record_id']} {result['chunk_id']} complete",
                         flush=True,
                     )
                 elif result["status"] == "uncertain":
-                    uncertain.append(result)
+                    uncertain.append(summary_result(result))
                     print(
                         f"UNCERTAIN {index}/{len(tasks)} {result['record_id']} {result['chunk_id']}",
                         flush=True,
                     )
                 else:
-                    failures.append(result)
+                    failures.append(summary_result(result))
             except Exception as exc:  # noqa: BLE001 - checkpointed retries happen on rerun
                 failure = {"record_id": task["record_id"], "chunk_id": task["chunk"]["id"], "error": repr(exc)}
                 failures.append(failure)
