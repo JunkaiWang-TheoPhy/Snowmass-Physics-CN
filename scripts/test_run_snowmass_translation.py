@@ -463,7 +463,19 @@ class ProcessChunkTests(unittest.TestCase):
         ):
             RUNNER.process_chunk(self.task, DroppingClient(), [])
 
+        status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
+        diagnostics = status["stages"]["translate"]["structure_diagnostics"]
+        self.assertEqual(len(diagnostics["expected_sentinels"]), 1)
+        self.assertEqual(diagnostics["observed_sentinels"], [])
+        self.assertEqual(diagnostics["missing_sentinels"], diagnostics["expected_sentinels"])
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
+
+    def test_stage_instructions_make_sentinel_contract_explicit(self) -> None:
+        instructions = RUNNER.stage_instructions("translate", "")
+
+        self.assertIn("exactly once", instructions)
+        self.assertIn("same order", instructions)
+        self.assertIn("[[SM_", instructions)
 
     def test_process_chunk_reprocesses_legacy_checkpoint_without_qc(self) -> None:
         class InitialClient:

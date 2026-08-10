@@ -490,12 +490,16 @@ def protected_literals(text: str) -> tuple[str, ...]:
     return tuple(protect_structures(text).mapping.values())
 
 
+def sentinel_sequence(text: str) -> tuple[str, ...]:
+    return tuple(_SENTINEL_PATTERN.findall(text))
+
+
 def validate_and_restore(text: str, mapping: dict[str, str]) -> str:
     for sentinel in mapping:
         count = text.count(sentinel)
         if count != 1:
             raise StructureMismatchError(f"Expected sentinel {sentinel} exactly once, found {count}")
-    observed_sentinels = _SENTINEL_PATTERN.findall(text)
+    observed_sentinels = list(sentinel_sequence(text))
     if any(sentinel not in mapping for sentinel in observed_sentinels):
         raise StructureMismatchError("Unexpected protected sentinel remained before restore")
     if observed_sentinels != list(mapping):

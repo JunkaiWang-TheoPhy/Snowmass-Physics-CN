@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,12 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from snowmass_translation_qc import stage_decision, validate_chunk
-from snowmass_pipeline import StructureMismatchError, protect_structures, validate_and_restore
+from snowmass_pipeline import (
+    StructureMismatchError,
+    protect_structures,
+    sentinel_sequence,
+    validate_and_restore,
+)
 
 
 TRANSLATION_ROOT = Path("output/snowmass2021_translation")
@@ -409,6 +415,7 @@ def stage_instructions(stage: str, glossary: str) -> str:
     common = """You are translating a high-energy physics or cosmology academic paper from English to Simplified Chinese.
 The result is for scholarly readers. Preserve meaning exactly. Never add facts, explanations, examples, claims, citations, links, names, numbers, units, equations, symbols, or section order.
 Preserve Markdown, LaTeX, inline math, citation markers, URLs, and line/block boundaries whenever possible.
+Tokens matching [[SM_0000_...]] are immutable structure placeholders. Copy every such token exactly once, character for character, and in the same order. Never translate, rename, omit, duplicate, or move one.
 Output only the complete revised Chinese text, with no preface, commentary, analysis, or quotation fences.
 """
     if stage == "translate":
@@ -540,6 +547,7 @@ def process_chunk(
             "response_id",
             "usage",
             "qc",
+            "structure_diagnostics",
             "max_output_tokens",
             "run_id",
         ):
@@ -613,7 +621,19 @@ def process_chunk(
         try:
             restored_text = validate_and_restore(parsed.text, mapping)
         except StructureMismatchError as exc:
+            expected_sentinels = list(mapping)
+            observed_sentinels = list(sentinel_sequence(parsed.text))
+            expected_counts = Counter(expected_sentinels)
+            observed_counts = Counter(observed_sentinels)
+            missing_sentinels = list((expected_counts - observed_counts).elements())
+            unexpected_sentinels = list((observed_counts - expected_counts).elements())
             stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
+            stage_status["structure_diagnostics"] = {
+                "expected_sentinels": expected_sentinels,
+                "observed_sentinels": observed_sentinels,
+                "missing_sentinels": missing_sentinels,
+                "unexpected_sentinels": unexpected_sentinels,
+            }
             status["status"] = "failed"
             status["updated_at"] = now()
             atomic_json(status_path, status)
