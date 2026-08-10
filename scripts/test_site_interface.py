@@ -52,6 +52,12 @@ class SiteInterfaceTest(unittest.TestCase):
             self.assertIn(f'href="?frontier={code}#catalog"', html)
             self.assertIn(f"<b>{code}</b><span>{label}</span>", html)
 
+    def test_paper_surfaces_render_chinese_frontier_labels(self):
+        script = (ROOT / "site/app.js").read_text()
+        self.assertIn("function formatFrontiers(frontiers, separator)", script)
+        self.assertIn('formatFrontiers(paper.frontiers, " · ")', script)
+        self.assertIn('formatFrontiers(paper.frontiers, " / ")', script)
+
 
 if __name__ == "__main__":
     unittest.main()

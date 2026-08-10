@@ -1,16 +1,16 @@
 const PAGE_SIZE = 24;
 
 const FRONTIER_LABELS = {
-  AF: "加速器科学与技术",
-  CEF: "社群参与",
+  AF: "加速器前沿",
+  CEF: "社群参与前沿",
   CompF: "计算前沿",
   CF: "宇宙前沿",
   EF: "能量前沿",
   IF: "仪器学前沿",
   NF: "中微子前沿",
-  RPF: "稀有过程与精密测量",
+  RPF: "稀有过程与精密测量前沿",
   TF: "理论前沿",
-  UF: "地下设施与基础设施",
+  UF: "地下设施与基础设施前沿",
 };
 
 const AUTHORIZATION_LABELS = {
@@ -95,6 +95,10 @@ function formatNumber(value, empty = "—") {
 
 function formatDecimal(value, empty = "—") {
   return Number.isFinite(value) ? decimalFormatter.format(value) : empty;
+}
+
+function formatFrontiers(frontiers, separator) {
+  return frontiers.map((frontier) => escapeHTML(FRONTIER_LABELS[frontier] || frontier)).join(separator);
 }
 
 function statusClass(status) {
@@ -206,7 +210,7 @@ function filteredPapers() {
 }
 
 function renderPaperCard(paper) {
-  const frontiers = paper.frontiers.map((frontier) => escapeHTML(frontier)).join(" · ");
+  const frontiers = formatFrontiers(paper.frontiers, " · ");
   const authLabel = AUTHORIZATION_LABELS[paper.authorization_status] || paper.authorization_status;
   const translationLabel = TRANSLATION_LABELS[paper.translation_status] || paper.translation_status;
   const publicationLabel = paper.publication_allowed ? "具备发布基础" : "暂不可公开全文";
@@ -311,7 +315,7 @@ function renderDetail(recordId, { push = false } = {}) {
     <button type="button" class="detail-back" id="detail-back">← 返回筛选结果</button>
     <div class="detail-header">
       <div>
-        <p class="eyebrow">${escapeHTML(paper.paper_id)} · ${escapeHTML(paper.frontiers.join(" / "))}</p>
+        <p class="eyebrow">${escapeHTML(paper.paper_id)} · ${formatFrontiers(paper.frontiers, " / ")}</p>
         <h1 id="detail-title">${escapeHTML(paper.title)}</h1>
         <p class="detail-authors">${escapeHTML(paper.authors_as_listed || "作者信息待核验")}</p>
       </div>
