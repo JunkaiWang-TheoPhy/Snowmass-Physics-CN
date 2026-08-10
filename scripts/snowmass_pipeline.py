@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -84,15 +85,26 @@ def _is_tar_payload(payload: bytes) -> bool:
         return False
 
 
-def detect_source_package(path: Path) -> Literal["tar", "single_tex"]:
-    payload = _gunzip_bytes(path)
+_TEX_MARKER = re.compile(
+    rb"\\(?:documentclass|documentstyle|begin\s*\{document\}|"
+    rb"(?:input|include)\s*\{|(?:newcommand|renewcommand|providecommand|def)\b)"
+)
+
+
+def _classify_source_payload(payload: bytes, path: Path) -> Literal["tar", "single_tex"]:
     if _is_tar_payload(payload):
         return "tar"
     try:
         payload.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(f"Unsupported gzip payload: {path}") from exc
+    if _TEX_MARKER.search(payload) is None:
+        raise ValueError(f"Unsupported gzip payload: {path}")
     return "single_tex"
+
+
+def detect_source_package(path: Path) -> Literal["tar", "single_tex"]:
+    return _classify_source_payload(_gunzip_bytes(path), path)
 
 
 def _validated_target(destination: Path, member_name: str) -> Path:
@@ -147,7 +159,7 @@ def _extract_single_tex(payload: bytes, path: Path, destination: Path) -> list[P
 
 def safe_extract_source(path: Path, destination: Path) -> list[Path]:
     payload = _gunzip_bytes(path)
-    package_type = detect_source_package(path)
+    package_type = _classify_source_payload(payload, path)
     if package_type == "tar":
         return _extract_tar_payload(payload, destination)
     return _extract_single_tex(payload, path, destination)

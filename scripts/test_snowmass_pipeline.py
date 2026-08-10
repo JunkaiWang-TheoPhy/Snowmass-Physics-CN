@@ -136,6 +136,13 @@ class SourcePackageTests(unittest.TestCase):
 
         self.assertEqual(pipeline.detect_source_package(archive), "single_tex")
 
+    def test_detect_source_package_rejects_non_tex_utf8_gzip(self) -> None:
+        pipeline = load_pipeline(self)
+        archive = self.gzip_path("notes.txt.gz", b"This is ordinary UTF-8 text, not a TeX source file.\n")
+
+        with self.assertRaisesRegex(ValueError, "Unsupported gzip payload"):
+            pipeline.detect_source_package(archive)
+
     def test_safe_extract_rejects_parent_traversal(self) -> None:
         pipeline = load_pipeline(self)
         archive = self.tar_gzip_path("escape.tar.gz", [("../escape.tex", b"bad\n", None)])
