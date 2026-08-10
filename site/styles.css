@@ -144,13 +144,16 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 .hero h1 {
   max-width: 850px;
-  margin: 22px 0 26px;
+  margin: 22px 0 18px;
   font-family: "Songti SC", "Noto Serif CJK SC", STSong, Georgia, serif;
   font-size: clamp(52px, 6.1vw, 94px);
   font-weight: 600;
   letter-spacing: -.075em;
   line-height: 1.03;
 }
+.hero-contact { margin: 0 0 24px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.hero-contact a { color: var(--glacier-dark); font-weight: 700; text-underline-offset: .22em; }
+.hero-contact a:hover { color: #173f4d; }
 .hero-lede { max-width: 700px; margin: 0; color: #385661; font-size: clamp(16px, 1.25vw, 20px); line-height: 1.8; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 11px; margin-top: 36px; }
 .button {

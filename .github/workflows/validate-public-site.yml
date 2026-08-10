@@ -56,4 +56,5 @@ jobs:
             sleep 1
           done
           grep -q "Snowmass 中文翻译计划" /tmp/snowmass-home.html
+          grep -q 'mailto:WangTheoPhys@outlook.com' /tmp/snowmass-home.html
           curl --fail --silent --show-error http://127.0.0.1:4173/data/papers.json | python3 -m json.tool >/dev/null

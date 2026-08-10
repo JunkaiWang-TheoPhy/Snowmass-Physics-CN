@@ -31,6 +31,8 @@ TEXT_PATTERNS = {
     "private key": re.compile(r"BEGIN (?:RSA|OPENSSH|EC|PGP) PRIVATE KEY"),
 }
 
+PUBLIC_EMAIL_ALLOWLIST = {"wangtheophys@outlook.com"}
+
 
 def tracked_files() -> list[Path]:
     result = subprocess.run(
@@ -57,8 +59,9 @@ def scan() -> list[str]:
         except (UnicodeDecodeError, OSError):
             continue
         for label, pattern in TEXT_PATTERNS.items():
-            match = pattern.search(text)
-            if match:
+            for match in pattern.finditer(text):
+                if label == "email address" and match.group(0).lower() in PUBLIC_EMAIL_ALLOWLIST:
+                    continue
                 errors.append(f"{label} found in {relative}:{text.count(chr(10), 0, match.start()) + 1}")
     return errors
 
@@ -70,7 +73,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Public-tree audit passed: no forbidden paths, contact emails, credentials, or oversized files.")
+    print("Public-tree audit passed: no forbidden paths, unapproved contact emails, credentials, or oversized files.")
     return 0
 
 
