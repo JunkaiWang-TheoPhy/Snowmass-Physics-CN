@@ -408,6 +408,17 @@ class StructureProtectionTests(unittest.TestCase):
         with self.assertRaises(self.pipeline.StructureMismatchError):
             self.pipeline.validate_and_restore(duplicated, protected.mapping)
 
+    def test_restore_rejects_swapped_distinct_sentinels(self) -> None:
+        text = "See \\cite{atlas} before $p_T$."
+        protected = self.pipeline.protect_structures(text)
+        sentinels = sorted(protected.mapping, key=protected.text.index)
+        swapped = protected.text.replace(sentinels[0], "<<SWAP>>", 1)
+        swapped = swapped.replace(sentinels[1], sentinels[0], 1).replace("<<SWAP>>", sentinels[1], 1)
+
+        self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
+        with self.assertRaises(self.pipeline.StructureMismatchError):
+            self.pipeline.validate_and_restore(swapped, protected.mapping)
+
     def test_semantic_chunks_keep_paragraphs_and_lists_whole(self) -> None:
         first_paragraph = "alpha beta gamma delta epsilon zeta"
         list_block = "- bullet one two\n- bullet three four"
@@ -468,7 +479,9 @@ class PrepareSnowmassChunksTests(unittest.TestCase):
                     "source_manifest_sha256": "deadbeef",
                     "created_at": "2026-08-10T00:00:00+00:00",
                     "eligible_count": len(record_ids),
-                    "records": [{"record_id": record_id} for record_id in record_ids],
+                    "records": [
+                        {"record_id": record_id, "publication_allowed": True} for record_id in record_ids
+                    ],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -477,6 +490,28 @@ class PrepareSnowmassChunksTests(unittest.TestCase):
             encoding="utf-8",
         )
         return snapshot_path
+
+    def test_rights_snapshot_requires_literal_publication_allowed_true(self) -> None:
+        snapshot_path = Path(self.temporary.name) / "mixed_rights_snapshot.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    "records": [
+                        {"record_id": "arxiv:allowed", "publication_allowed": True},
+                        {"record_id": "arxiv:false", "publication_allowed": False},
+                        {"record_id": "arxiv:null", "publication_allowed": None},
+                        {"record_id": "arxiv:missing"},
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(
+            self.preparer.load_rights_snapshot_record_ids(snapshot_path),
+            {"arxiv:allowed"},
+        )
 
     def write_archive(self, directory: str, members: list[tuple[str, bytes]]) -> None:
         item_dir = self.root / directory

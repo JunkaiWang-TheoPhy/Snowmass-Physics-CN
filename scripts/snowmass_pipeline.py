@@ -415,15 +415,23 @@ def protect_structures(text: str) -> ProtectedText:
 
         protected = pattern.sub(replace, protected)
 
-    return ProtectedText(text=protected, mapping=mapping)
+    ordered_mapping = dict(sorted(mapping.items(), key=lambda item: protected.index(item[0])))
+    return ProtectedText(text=protected, mapping=ordered_mapping)
 
 
 def validate_and_restore(text: str, mapping: dict[str, str]) -> str:
-    restored = text
-    for sentinel, value in mapping.items():
-        count = restored.count(sentinel)
+    for sentinel in mapping:
+        count = text.count(sentinel)
         if count != 1:
             raise StructureMismatchError(f"Expected sentinel {sentinel} exactly once, found {count}")
+    observed_sentinels = _SENTINEL_PATTERN.findall(text)
+    if any(sentinel not in mapping for sentinel in observed_sentinels):
+        raise StructureMismatchError("Unexpected protected sentinel remained before restore")
+    if observed_sentinels != list(mapping):
+        raise StructureMismatchError("Protected sentinel sequence changed before restore")
+
+    restored = text
+    for sentinel, value in mapping.items():
         restored = restored.replace(sentinel, value)
     if _SENTINEL_PATTERN.search(restored):
         raise StructureMismatchError("Unexpected protected sentinel remained after restore")

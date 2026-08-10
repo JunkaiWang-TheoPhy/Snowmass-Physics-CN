@@ -85,6 +85,8 @@ def load_rights_snapshot_record_ids(path: Path) -> set[str]:
     for index, record in enumerate(records):
         if not isinstance(record, dict):
             raise RuntimeError(f"Rights snapshot record {index} is not an object")
+        if record.get("publication_allowed") is not True:
+            continue
         record_id = record.get("record_id")
         if not isinstance(record_id, str) or not record_id.strip():
             raise RuntimeError(f"Rights snapshot record {index} has no record_id")
