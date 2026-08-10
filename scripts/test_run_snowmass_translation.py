@@ -243,7 +243,7 @@ class RequestKeyAndCheckpointTests(unittest.TestCase):
 
             self.assertFalse(RUNNER.checkpoint_is_valid(status, output, "expected-key"))
 
-    def test_matching_request_key_and_hash_form_a_valid_checkpoint(self) -> None:
+    def test_matching_request_key_hash_and_passing_qc_form_a_valid_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "stage1_chunk0001.md"
             output.write_text("当前结果\n", encoding="utf-8")
@@ -251,9 +251,22 @@ class RequestKeyAndCheckpointTests(unittest.TestCase):
                 "status": "complete",
                 "request_key": "expected-key",
                 "output_hash": hashlib.sha256("当前结果\n".encode("utf-8")).hexdigest(),
+                "qc": {"ok": True, "failures": []},
             }
 
             self.assertTrue(RUNNER.checkpoint_is_valid(status, output, "expected-key"))
+
+    def test_matching_legacy_checkpoint_without_qc_is_not_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "stage1_chunk0001.md"
+            output.write_text("旧版本结果\n", encoding="utf-8")
+            status = {
+                "status": "complete",
+                "request_key": "expected-key",
+                "output_hash": hashlib.sha256("旧版本结果\n".encode("utf-8")).hexdigest(),
+            }
+
+            self.assertFalse(RUNNER.checkpoint_is_valid(status, output, "expected-key"))
 
 
 class ProcessChunkTests(unittest.TestCase):
@@ -291,6 +304,51 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertTrue(translate["request_key"])
         self.assertEqual(translate["output_hash"], hashlib.sha256("阶段产物\n".encode("utf-8")).hexdigest())
         self.assertEqual(translate["raw_response"]["status"], "completed")
+
+    def test_process_chunk_reprocesses_legacy_checkpoint_without_qc(self) -> None:
+        class InitialClient:
+            calls = 0
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                self.calls += 1
+                return completed_response("阶段产物"), 0.1
+
+        initial_client = InitialClient()
+        RUNNER.process_chunk(self.task, initial_client, [])
+        status_path = self.article_dir / "chunk_status" / "chunk0001.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        status["stages"]["translate"].pop("qc")
+        status_path.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+
+        class RepairClient:
+            calls = 0
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                self.calls += 1
+                return completed_response("阶段产物"), 0.1
+
+        repair_client = RepairClient()
+        result = RUNNER.process_chunk(self.task, repair_client, [])
+        repaired_status = json.loads(status_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(repair_client.calls, 1)
+        self.assertEqual(repaired_status["stages"]["translate"]["qc"], {"ok": True, "failures": []})
+
+    def test_process_chunk_reuses_modern_checkpoints_without_paid_calls(self) -> None:
+        class InitialClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                return completed_response("阶段产物"), 0.1
+
+        RUNNER.process_chunk(self.task, InitialClient(), [])
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                raise AssertionError("modern checkpoints must resume without a paid API call")
+
+        result = RUNNER.process_chunk(self.task, NoCallClient(), [])
+
+        self.assertEqual(result["status"], "complete")
 
     def test_process_chunk_marks_ambiguous_transport_failure_uncertain_without_output(self) -> None:
         class FakeClient:

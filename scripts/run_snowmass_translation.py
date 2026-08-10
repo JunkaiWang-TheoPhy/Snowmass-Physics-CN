@@ -277,6 +277,9 @@ def checkpoint_is_valid(status: dict[str, Any], output_path: Path, expected_key:
         return False
     if status.get("request_key") != expected_key:
         return False
+    qc = status.get("qc")
+    if not isinstance(qc, dict) or qc.get("ok") is not True:
+        return False
     output_hash = status.get("output_hash")
     if not isinstance(output_hash, str) or not output_hash:
         return False
