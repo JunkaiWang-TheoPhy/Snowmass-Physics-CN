@@ -185,12 +185,21 @@ class RightsGateTests(unittest.TestCase):
 
 
 class UsageAccountingTests(unittest.TestCase):
-    def test_cost_uses_uncached_cached_and_output_v4_flash_rates(self) -> None:
-        cost = RUNNER.estimate_cost_rmb(
-            {"input_tokens": 1_000_000, "cached_tokens": 250_000, "output_tokens": 500_000}
-        )
+    def test_cost_uses_official_usd_v4_flash_rates_and_pinned_exchange_rate(self) -> None:
+        usage = {"input_tokens": 1_000_000, "cached_tokens": 250_000, "output_tokens": 500_000}
 
-        self.assertAlmostEqual(cost, 1.755)
+        cost_usd = RUNNER.estimate_cost_usd(usage)
+        cost_rmb = RUNNER.estimate_cost_rmb(usage, usd_cny_rate=7.2)
+
+        self.assertAlmostEqual(cost_usd, 0.2457)
+        self.assertAlmostEqual(cost_rmb, 1.76904)
+
+    def test_cost_rejects_invalid_exchange_rate(self) -> None:
+        with self.assertRaises(ValueError):
+            RUNNER.estimate_cost_rmb(
+                {"input_tokens": 1_000_000, "cached_tokens": 250_000, "output_tokens": 500_000},
+                usd_cny_rate=0,
+            )
 
     def test_collect_run_usage_aggregates_completed_stage_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -294,7 +303,7 @@ class GlossaryMergeTests(unittest.TestCase):
 
 class BudgetGuardTests(unittest.TestCase):
     def test_reservation_settles_to_reported_v4_flash_cost(self) -> None:
-        guard = RUNNER.BudgetGuard(1.0)
+        guard = RUNNER.BudgetGuard(1.0, usd_cny_rate=7.2)
 
         reservation = guard.reserve("source text", 4096)
         guard.settle(
@@ -304,10 +313,12 @@ class BudgetGuardTests(unittest.TestCase):
 
         snapshot = guard.snapshot()
         self.assertEqual(snapshot["active_reservations"], 0)
+        self.assertEqual(snapshot["usd_cny_rate"], 7.2)
         self.assertAlmostEqual(
             snapshot["spent_rmb"],
             RUNNER.estimate_cost_rmb(
-                {"input_tokens": 1000, "cached_tokens": 200, "output_tokens": 500}
+                {"input_tokens": 1000, "cached_tokens": 200, "output_tokens": 500},
+                usd_cny_rate=7.2,
             ),
         )
 

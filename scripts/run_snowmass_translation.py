@@ -42,11 +42,16 @@ API_URL = "https://api.deepseek.com/responses"
 MODEL = "deepseek-v4-flash"
 STAGES = ("translate", "terminology", "anti_ai", "academic")
 RETRYABLE_HTTP_CODES = {408, 409, 429, 500, 502, 503, 504}
-# Official DeepSeek V4 Flash rates, RMB per million tokens:
-# https://api-docs.deepseek.com/zh-cn/quick_start/pricing
-INPUT_CACHE_HIT_RMB_PER_MILLION = 0.02
-INPUT_CACHE_MISS_RMB_PER_MILLION = 1.0
-OUTPUT_RMB_PER_MILLION = 2.0
+# Official DeepSeek V4 Flash rates, USD per million tokens:
+# https://api-docs.deepseek.com/quick_start/pricing/
+INPUT_CACHE_HIT_USD_PER_MILLION = 0.0028
+INPUT_CACHE_MISS_USD_PER_MILLION = 0.14
+OUTPUT_USD_PER_MILLION = 0.28
+# Conservative operator-pinned conversion for RMB budget enforcement. Each run
+# records the actual value, and callers may override it without changing code.
+DEFAULT_USD_CNY_RATE = 7.20
+PRICING_SOURCE = "https://api-docs.deepseek.com/quick_start/pricing/"
+PRICING_VERIFIED_AT = "2026-08-10"
 
 
 class ResponseValidationError(RuntimeError):
@@ -172,40 +177,56 @@ def _token_count(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def estimate_cost_rmb(usage: dict[str, Any]) -> float:
+def estimate_cost_usd(usage: dict[str, Any]) -> float:
     input_tokens = _token_count(usage.get("input_tokens"))
     cached_tokens = min(_token_count(usage.get("cached_tokens")), input_tokens)
     uncached_tokens = input_tokens - cached_tokens
     output_tokens = _token_count(usage.get("output_tokens"))
     return (
-        uncached_tokens * INPUT_CACHE_MISS_RMB_PER_MILLION
-        + cached_tokens * INPUT_CACHE_HIT_RMB_PER_MILLION
-        + output_tokens * OUTPUT_RMB_PER_MILLION
+        uncached_tokens * INPUT_CACHE_MISS_USD_PER_MILLION
+        + cached_tokens * INPUT_CACHE_HIT_USD_PER_MILLION
+        + output_tokens * OUTPUT_USD_PER_MILLION
     ) / 1_000_000
+
+
+def estimate_cost_rmb(
+    usage: dict[str, Any],
+    usd_cny_rate: float = DEFAULT_USD_CNY_RATE,
+) -> float:
+    if not math.isfinite(usd_cny_rate) or usd_cny_rate <= 0:
+        raise ValueError("usd_cny_rate must be finite and positive")
+    return estimate_cost_usd(usage) * usd_cny_rate
 
 
 class BudgetGuard:
     """Thread-safe reservation accounting for paid DeepSeek requests."""
 
-    def __init__(self, max_cost_rmb: float) -> None:
+    def __init__(
+        self,
+        max_cost_rmb: float,
+        usd_cny_rate: float = DEFAULT_USD_CNY_RATE,
+    ) -> None:
         if not math.isfinite(max_cost_rmb) or max_cost_rmb < 0:
             raise ValueError("max_cost_rmb must be finite and non-negative")
+        if not math.isfinite(usd_cny_rate) or usd_cny_rate <= 0:
+            raise ValueError("usd_cny_rate must be finite and positive")
         self.max_cost_rmb = float(max_cost_rmb)
+        self.usd_cny_rate = float(usd_cny_rate)
         self._spent_rmb = 0.0
         self._reservations: dict[str, float] = {}
         self._lock = threading.Lock()
 
-    @staticmethod
-    def _conservative_request_cost(input_text: str, max_output_tokens: int) -> float:
+    def _conservative_request_cost(self, input_text: str, max_output_tokens: int) -> float:
         # A UTF-8 byte count is a conservative token ceiling for the submitted
         # text. The fixed allowance covers request framing and tokenizer edge
         # cases; output is reserved at the full configured maximum.
         input_token_ceiling = len(input_text.encode("utf-8")) + 4096
         output_token_ceiling = max(0, int(max_output_tokens))
-        return (
-            input_token_ceiling * INPUT_CACHE_MISS_RMB_PER_MILLION
-            + output_token_ceiling * OUTPUT_RMB_PER_MILLION
+        cost_usd = (
+            input_token_ceiling * INPUT_CACHE_MISS_USD_PER_MILLION
+            + output_token_ceiling * OUTPUT_USD_PER_MILLION
         ) / 1_000_000
+        return cost_usd * self.usd_cny_rate
 
     def reserve(self, input_text: str, max_output_tokens: int) -> str:
         estimate = self._conservative_request_cost(input_text, max_output_tokens)
@@ -222,7 +243,7 @@ class BudgetGuard:
             return reservation
 
     def settle(self, reservation: str, usage: dict[str, Any]) -> None:
-        actual = estimate_cost_rmb(usage)
+        actual = estimate_cost_rmb(usage, self.usd_cny_rate)
         with self._lock:
             estimate = self._reservations.pop(reservation)
             self._spent_rmb += actual if actual > 0 else estimate
@@ -241,6 +262,7 @@ class BudgetGuard:
             )
             return {
                 "max_cost_rmb": self.max_cost_rmb,
+                "usd_cny_rate": self.usd_cny_rate,
                 "spent_rmb": self._spent_rmb,
                 "reserved_rmb": reserved,
                 "remaining_rmb": remaining,
@@ -248,7 +270,11 @@ class BudgetGuard:
             }
 
 
-def collect_run_usage(tasks: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
+def collect_run_usage(
+    tasks: list[dict[str, Any]],
+    run_id: str,
+    usd_cny_rate: float = DEFAULT_USD_CNY_RATE,
+) -> dict[str, Any]:
     totals = {
         "api_calls": 0,
         "input_tokens": 0,
@@ -284,7 +310,8 @@ def collect_run_usage(tasks: list[dict[str, Any]], run_id: str) -> dict[str, Any
             totals["api_calls"] += 1
             for key in ("input_tokens", "cached_tokens", "output_tokens", "total_tokens"):
                 totals[key] += _token_count(usage.get(key))
-    totals["estimated_cost_rmb"] = estimate_cost_rmb(totals)
+    totals["estimated_cost_usd"] = estimate_cost_usd(totals)
+    totals["estimated_cost_rmb"] = estimate_cost_rmb(totals, usd_cny_rate)
     return totals
 
 
@@ -998,11 +1025,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rights-manifest", type=Path, default=RIGHTS_MANIFEST)
     parser.add_argument("--glossary", type=Path)
     parser.add_argument("--max-cost-rmb", type=float, default=0.0)
+    parser.add_argument("--usd-cny-rate", type=float, default=DEFAULT_USD_CNY_RATE)
     args = parser.parse_args(argv)
     if args.concurrency < 1 or args.concurrency > 64:
         parser.error("--concurrency must be between 1 and 64")
     if not math.isfinite(args.max_cost_rmb) or args.max_cost_rmb < 0:
         parser.error("--max-cost-rmb must be finite and non-negative")
+    if not math.isfinite(args.usd_cny_rate) or args.usd_cny_rate <= 0:
+        parser.error("--usd-cny-rate must be finite and positive")
     glossary_path = resolve_glossary_path(args.root, args.glossary)
     global_terms = load_glossary(glossary_path)
     allowed_record_ids = load_allowed_record_ids(args.rights_manifest)
@@ -1017,7 +1047,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("No chunk tasks found")
     api_key = load_api_key()
     client = DeepSeekClient(api_key)
-    budget_guard = BudgetGuard(args.max_cost_rmb)
+    budget_guard = BudgetGuard(args.max_cost_rmb, args.usd_cny_rate)
     run_id = uuid.uuid4().hex
     print(
         f"START chunks={len(tasks)} eligible_records={len(allowed_record_ids)} "
@@ -1083,8 +1113,20 @@ def main(argv: list[str] | None = None) -> int:
         "rights_manifest": str(args.rights_manifest),
         "glossary": str(glossary_path),
         "run_id": run_id,
-        "usage": collect_run_usage(tasks, run_id),
+        "usage": collect_run_usage(tasks, run_id, args.usd_cny_rate),
         "budget": budget_guard.snapshot(),
+        "pricing": {
+            "currency": "USD",
+            "per_million_tokens": {
+                "input_cache_hit": INPUT_CACHE_HIT_USD_PER_MILLION,
+                "input_cache_miss": INPUT_CACHE_MISS_USD_PER_MILLION,
+                "output": OUTPUT_USD_PER_MILLION,
+            },
+            "source": PRICING_SOURCE,
+            "verified_at": PRICING_VERIFIED_AT,
+            "usd_cny_rate": args.usd_cny_rate,
+            "usd_cny_rate_policy": "operator-pinned conservative conversion",
+        },
     }
     write_run_summary(args.root, summary)
     printable = {key: value for key, value in summary.items() if key not in {"failed", "uncertain"}}
