@@ -405,6 +405,28 @@ class StructureProtectionTests(unittest.TestCase):
             self.assertNotIn(literal, protected.text)
         self.assertEqual(len(protected.mapping), 7)
 
+    def test_protect_structures_keeps_url_separate_from_immediately_following_math(self) -> None:
+        text = "See https://example.org/model$^{#3}$ next."
+
+        protected = self.pipeline.protect_structures(text)
+
+        self.assertEqual(
+            list(protected.mapping.values()),
+            ["https://example.org/model", "$^{#3}$"],
+        )
+        self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
+
+    def test_protect_structures_keeps_math_separate_from_immediately_following_url(self) -> None:
+        text = "See $^{#3}$https://example.org/model next."
+
+        protected = self.pipeline.protect_structures(text)
+
+        self.assertEqual(
+            list(protected.mapping.values()),
+            ["$^{#3}$", "https://example.org/model"],
+        )
+        self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
+
     def test_restore_rejects_missing_sentinel(self) -> None:
         protected = self.pipeline.protect_structures("See \\cite{atlas} and $p_T$.")
         damaged = protected.text.replace(next(iter(protected.mapping)), "")

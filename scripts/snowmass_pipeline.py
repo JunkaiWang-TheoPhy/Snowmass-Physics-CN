@@ -401,23 +401,35 @@ def _sentinel_for(index: int, value: str) -> str:
 
 
 def protect_structures(text: str) -> ProtectedText:
-    protected = text
     mapping: dict[str, str] = {}
+    selected: list[tuple[int, int, str]] = []
     index = 1
 
     for pattern in _STRUCTURE_PATTERNS:
-        def replace(match: re.Match[str]) -> str:
-            nonlocal index
-            value = match.group(0)
-            sentinel = _sentinel_for(index, value)
-            while sentinel in protected or sentinel in mapping:
-                index += 1
-                sentinel = _sentinel_for(index, value)
-            mapping[sentinel] = value
-            index += 1
-            return sentinel
+        occupied = sorted((start, end) for start, end, _sentinel in selected)
+        gaps: list[tuple[int, int]] = []
+        cursor = 0
+        for start, end in occupied:
+            if cursor < start:
+                gaps.append((cursor, start))
+            cursor = max(cursor, end)
+        if cursor < len(text):
+            gaps.append((cursor, len(text)))
 
-        protected = pattern.sub(replace, protected)
+        for gap_start, gap_end in gaps:
+            for match in pattern.finditer(text, gap_start, gap_end):
+                value = match.group(0)
+                sentinel = _sentinel_for(index, value)
+                while sentinel in text or sentinel in mapping:
+                    index += 1
+                    sentinel = _sentinel_for(index, value)
+                mapping[sentinel] = value
+                selected.append((match.start(), match.end(), sentinel))
+                index += 1
+
+    protected = text
+    for start, end, sentinel in sorted(selected, reverse=True):
+        protected = protected[:start] + sentinel + protected[end:]
 
     ordered_mapping = dict(sorted(mapping.items(), key=lambda item: protected.index(item[0])))
     return ProtectedText(text=protected, mapping=ordered_mapping)
