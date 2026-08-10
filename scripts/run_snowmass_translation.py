@@ -11,12 +11,19 @@ import json
 import os
 import random
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from snowmass_translation_qc import stage_decision, validate_chunk
 
 
 TRANSLATION_ROOT = Path("output/snowmass2021_translation")
@@ -278,6 +285,16 @@ def checkpoint_is_valid(status: dict[str, Any], output_path: Path, expected_key:
     return text_hash(output_path.read_text(encoding="utf-8")) == output_hash
 
 
+def stage_output_path(article_dir: Path, chunk_id: str, final_output_file: str, stage: str) -> Path:
+    if stage == "translate":
+        return article_dir / f"stage1_{chunk_id}.md"
+    if stage == "terminology":
+        return article_dir / f"stage2_{chunk_id}.md"
+    if stage == "anti_ai":
+        return article_dir / f"stage3_{chunk_id}.md"
+    return article_dir / final_output_file
+
+
 class DeepSeekClient:
     def __init__(self, api_key: str, max_retries: int = 5) -> None:
         self.api_key = api_key
@@ -384,6 +401,7 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
     chunk_id = chunk["id"]
     source_path = article_dir / chunk["source_file"]
     source = source_path.read_text(encoding="utf-8")
+    mapping = chunk.get("mapping") or {}
     glossary = glossary_text(terms)
     status_path = article_dir / "chunk_status" / f"{chunk_id}.json"
     try:
@@ -400,15 +418,7 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
 
     current = source
     for stage in STAGES:
-        if stage == "translate":
-            output_path = article_dir / f"stage1_{chunk_id}.md"
-        elif stage == "terminology":
-            output_path = article_dir / f"stage2_{chunk_id}.md"
-        elif stage == "anti_ai":
-            output_path = article_dir / f"stage3_{chunk_id}.md"
-        else:
-            output_path = article_dir / chunk["output_file"]
-
+        output_path = stage_output_path(article_dir, chunk_id, chunk["output_file"], stage)
         instructions = stage_instructions(stage, glossary)
         input_text = stage_input(stage, source, current, glossary)
         # Keep long non-streaming responses below the local proxy's practical
@@ -426,18 +436,53 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
             current = output_path.read_text(encoding="utf-8")
             continue
 
+        decision = stage_decision(stage, current, terms)
+        qc_terms = [] if stage == "translate" else terms
         started = now()
         stage_status.update(
             {
-                "status": "running",
                 "started_at": started,
                 "request_key": expected_key,
                 "output_file": output_path.name,
+                "decision": decision.to_dict(),
+            }
+        )
+        for stale_field in ("finished_at", "error", "output_hash", "raw_response", "response_id", "usage", "qc", "max_output_tokens"):
+            stage_status.pop(stale_field, None)
+
+        if not decision.should_call_model:
+            qc_report = validate_chunk(source, current, mapping, qc_terms)
+            stage_status["qc"] = qc_report.to_dict()
+            if not qc_report.ok:
+                stage_status.update(
+                    {
+                        "status": "failed",
+                        "finished_at": now(),
+                        "error": f"QC failed: {', '.join(qc_report.failures)}",
+                    }
+                )
+                status["status"] = "failed"
+                status["updated_at"] = now()
+                atomic_json(status_path, status)
+                raise RuntimeError(stage_status["error"])
+
+            atomic_text(output_path, current)
+            stage_status.update(
+                {
+                    "status": "complete",
+                    "finished_at": now(),
+                    "output_hash": text_hash(current),
+                }
+            )
+            atomic_json(status_path, status)
+            continue
+
+        stage_status.update(
+            {
+                "status": "running",
                 "max_output_tokens": max_output,
             }
         )
-        for stale_field in ("finished_at", "error", "output_hash", "raw_response", "response_id", "usage"):
-            stage_status.pop(stale_field, None)
         atomic_json(status_path, status)
         try:
             response, latency_seconds = client.complete(instructions, input_text, max_output)
@@ -466,6 +511,21 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
             status["updated_at"] = now()
             atomic_json(status_path, status)
             raise
+
+        qc_report = validate_chunk(source, parsed.text, mapping, qc_terms)
+        stage_status["qc"] = qc_report.to_dict()
+        if not qc_report.ok:
+            stage_status.update(
+                {
+                    "status": "failed",
+                    "finished_at": now(),
+                    "error": f"QC failed: {', '.join(qc_report.failures)}",
+                }
+            )
+            status["status"] = "failed"
+            status["updated_at"] = now()
+            atomic_json(status_path, status)
+            raise RuntimeError(stage_status["error"])
 
         atomic_text(output_path, parsed.text)
         usage = dict(parsed.usage)
