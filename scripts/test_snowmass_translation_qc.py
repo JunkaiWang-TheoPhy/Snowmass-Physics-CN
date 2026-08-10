@@ -82,6 +82,17 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("numbers_mismatch", report.failures)
 
+    def test_validate_chunk_treats_thousands_separator_as_format_not_value_loss(self) -> None:
+        report = QC.validate_chunk(
+            source="The samples are 2800 and 34000.\n",
+            translated="样本数为 2,800 和 34,000。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("numbers_mismatch", report.failures)
+
     def test_validate_chunk_rejects_changed_unit(self) -> None:
         report = QC.validate_chunk(
             source="The detector reached 14 TeV.\n",
@@ -123,6 +134,17 @@ class ValidateChunkTests(unittest.TestCase):
 
         self.assertFalse(report.ok)
         self.assertIn("urls_mismatch", report.failures)
+
+    def test_validate_chunk_parses_tex_url_before_outer_brace_and_chinese_text(self) -> None:
+        report = QC.validate_chunk(
+            source=r"See \footnote{\url{https://example.org/a_b}}, while computing.",
+            translated=r"计算时见 \footnote{\url{https://example.org/a_b}}。",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("protected_literals_mismatch", report.failures)
 
     def test_validate_chunk_rejects_changed_citation(self) -> None:
         report = QC.validate_chunk(
@@ -223,11 +245,11 @@ class StageDecisionTests(unittest.TestCase):
 
         self.assertFalse(decision.should_call_model)
 
-    def test_stage_decision_skips_anti_ai_when_no_formulaic_phrase_is_present(self) -> None:
+    def test_stage_decision_runs_anti_ai_as_an_independent_refined_pass(self) -> None:
         decision = QC.stage_decision("anti_ai", "探测器达到 14 TeV，见 [12]。\n", [])
 
-        self.assertFalse(decision.should_call_model)
-        self.assertEqual(decision.reason, "anti_ai_noop_no_markers")
+        self.assertTrue(decision.should_call_model)
+        self.assertEqual(decision.reason, "anti_ai_refined_review_required")
 
     def test_stage_decision_runs_anti_ai_when_formulaic_phrase_is_present(self) -> None:
         decision = QC.stage_decision("anti_ai", "总而言之，这项研究表明探测器达到 14 TeV。\n", [])
@@ -235,11 +257,11 @@ class StageDecisionTests(unittest.TestCase):
         self.assertTrue(decision.should_call_model)
         self.assertEqual(decision.reason, "anti_ai_marker_detected")
 
-    def test_stage_decision_skips_academic_rewrite_without_deterministic_trigger(self) -> None:
+    def test_stage_decision_always_runs_academic_naturalization(self) -> None:
         decision = QC.stage_decision("academic", "这是准确、自然的学术中文。\n", [])
 
-        self.assertFalse(decision.should_call_model)
-        self.assertEqual(decision.reason, "academic_noop_no_deterministic_trigger")
+        self.assertTrue(decision.should_call_model)
+        self.assertEqual(decision.reason, "academic_naturalization_required")
 
 
 class ProcessChunkQCIntegrationTests(unittest.TestCase):
@@ -262,7 +284,7 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_process_chunk_skips_noop_conditional_stages_and_copies_prior_text_atomically(self) -> None:
+    def test_process_chunk_runs_refined_anti_ai_and_academic_passes(self) -> None:
         (self.article_dir / "chunk0001.md").write_text(
             "The detector reached 14 TeV in [12] at https://example.org.\n",
             encoding="utf-8",
@@ -274,28 +296,29 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
 
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
                 self.calls += 1
-                sentinels = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)
+                sentinels = re.findall(r"\[\[(?:SM|SMU)_[^\]]+\]\]", input_text)
                 protected_unit = sentinels[0]
+                protected_reference = sentinels[1]
                 protected_url = sentinels[-1]
                 if self.calls == 1:
-                    return completed_response(f"探测器达到 {protected_unit}，见 [12] 和 {protected_url}。\n"), 0.1
-                return completed_response(f"该探测器达到 {protected_unit}，见 [12] 和 {protected_url}。\n"), 0.2
+                    return completed_response(f"探测器达到 {protected_unit}，见 [{protected_reference}] 和 {protected_url}。\n"), 0.1
+                return completed_response(f"该探测器达到 {protected_unit}，见 [{protected_reference}] 和 {protected_url}。\n"), 0.2
 
         client = FakeClient()
         result = RUNNER.process_chunk(self.task, client, [{"source": "Energy Frontier", "target": "能量前沿"}])
         status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
 
         self.assertEqual(result["status"], "complete")
-        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.calls, 3)
         self.assertEqual((self.article_dir / "stage2_chunk0001.md").read_text(encoding="utf-8"), "探测器达到 14 TeV，见 [12] 和 https://example.org。\n")
-        self.assertEqual((self.article_dir / "stage3_chunk0001.md").read_text(encoding="utf-8"), "探测器达到 14 TeV，见 [12] 和 https://example.org。\n")
+        self.assertEqual((self.article_dir / "stage3_chunk0001.md").read_text(encoding="utf-8"), "该探测器达到 14 TeV，见 [12] 和 https://example.org。\n")
         self.assertEqual(
             status["stages"]["terminology"]["decision"],
             {"action": "copy_prior_text", "reason": "terminology_noop_no_locked_term_conflicts"},
         )
         self.assertEqual(
             status["stages"]["anti_ai"]["decision"],
-            {"action": "copy_prior_text", "reason": "anti_ai_noop_no_markers"},
+            {"action": "call_model", "reason": "anti_ai_refined_review_required"},
         )
 
     def test_process_chunk_blocks_promotion_when_qc_fails(self) -> None:
@@ -309,7 +332,7 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
                 protected_url = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)[-1]
                 return completed_response(f"探测器记录了 15 个事件，见 [12] 和 {protected_url}。\n"), 0.1
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RUNNER.StructureMismatchError):
             RUNNER.process_chunk(self.task, FakeClient(), [])
 
         status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
@@ -317,12 +340,11 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
         rejected = self.article_dir / translate["rejected_candidate_file"]
 
         self.assertEqual(translate["status"], "failed")
-        self.assertIn("numbers_mismatch", translate["qc"]["failures"])
-        self.assertEqual(
-            rejected.read_text(encoding="utf-8"),
-            "探测器记录了 15 个事件，见 [12] 和 https://example.org。\n",
-        )
-        self.assertFalse(translate["rejected_candidate_protected"])
+        self.assertIn("Expected protected node", translate["error"])
+        rejected_text = rejected.read_text(encoding="utf-8")
+        self.assertIn("探测器记录了 15 个事件", rejected_text)
+        self.assertRegex(rejected_text, r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]")
+        self.assertTrue(translate["rejected_candidate_protected"])
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
 
     def test_terminology_stage_rejects_extra_raw_reference_copied_from_source(self) -> None:

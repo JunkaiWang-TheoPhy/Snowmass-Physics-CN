@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import re
+import ssl
 import tempfile
 import unittest
 from unittest import mock
@@ -182,6 +183,26 @@ class RightsGateTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(observed_terms, [expected_terms])
             self.assertEqual(summary["glossary"], str(glossary))
+
+
+class NeighborContextTests(unittest.TestCase):
+    def test_reuses_translate_book_neighbor_context_for_middle_unit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "chunk0001.md").write_text("Previous evidence.\n", encoding="utf-8")
+            (article / "chunk0002.md").write_text("Current claim.\n", encoding="utf-8")
+            (article / "chunk0003.md").write_text("Next qualification.\n", encoding="utf-8")
+
+            self.assertTrue(
+                hasattr(RUNNER, "load_neighbor_context"),
+                "translate-book neighbor context is not integrated",
+            )
+            context = RUNNER.load_neighbor_context(article, "chunk0002.md")
+
+            self.assertIn("Previous chunk excerpt (chunk0001.md, read-only)", context)
+            self.assertIn("Previous evidence.", context)
+            self.assertIn("Next chunk excerpt (chunk0003.md, read-only)", context)
+            self.assertIn("Next qualification.", context)
 
 
 class UsageAccountingTests(unittest.TestCase):
@@ -592,6 +613,26 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertIn("https://example.org/paper", output)
         self.assertNotIn("[[SM_", output)
 
+    def test_process_chunk_protects_ordinary_integers_and_balanced_tex_urls(self) -> None:
+        source = r"The sample has 2800 events; source {\url{https://example.org/a}}中文。" + "\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+
+        class ProtectingClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                if "2800" in input_text or r"\url{https://example.org/a}" in input_text:
+                    raise AssertionError("numbers and balanced TeX URLs must be protected")
+                tokens = re.findall(r"\[\[(?:SM|SMU)_[^\]]+\]\]", input_text)
+                return completed_response("样本包含 " + " ".join(tokens) + " 个事件。"), 0.1
+
+        with mock.patch.object(RUNNER, "STAGES", ("translate",)):
+            result = RUNNER.process_chunk(self.task, ProtectingClient(), [])
+
+        output = (self.article_dir / "stage1_chunk0001.md").read_text(encoding="utf-8")
+        self.assertEqual(result["status"], "complete")
+        self.assertIn("2800", output)
+        self.assertIn(r"\url{https://example.org/a}", output)
+        self.assertNotIn("[[SM", output)
+
     def test_process_chunk_rejects_model_output_that_drops_protected_structure(self) -> None:
         (self.article_dir / "chunk0001.md").write_text("Equation $E=mc^2$.\n", encoding="utf-8")
 
@@ -619,6 +660,8 @@ class ProcessChunkTests(unittest.TestCase):
         instructions = RUNNER.stage_instructions("translate", "")
 
         self.assertIn("exactly once", instructions)
+        self.assertIn("[[SM_0000_...]]", instructions)
+        self.assertIn("[[SMU_0000_TYPE_...]]", instructions)
         self.assertIn("same order", instructions)
         self.assertIn("[[SM_", instructions)
         self.assertIn("pronoun", instructions)
@@ -675,7 +718,8 @@ class ProcessChunkTests(unittest.TestCase):
 
         class InitialClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
-                return completed_response("数值 14。"), 0.1
+                number = re.search(r"\[\[SMU_[^\]]+\]\]", input_text).group(0)
+                return completed_response(f"数值 {number}。"), 0.1
 
         rejected_qc = mock.Mock()
         rejected_qc.ok = False
@@ -788,6 +832,30 @@ class ProcessChunkTests(unittest.TestCase):
 
 
 class DeepSeekClientRetryTests(unittest.TestCase):
+    def test_client_retries_tls_handshake_eof_before_request(self) -> None:
+        client = RUNNER.DeepSeekClient("test-key", max_retries=2)
+        tls_eof = RUNNER.urllib.error.URLError(
+            ssl.SSLEOFError(8, "UNEXPECTED_EOF_WHILE_READING")
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            completed_response("ok")
+        ).encode()
+        with (
+            mock.patch.object(
+                RUNNER.urllib.request,
+                "urlopen",
+                side_effect=[tls_eof, response],
+            ) as urlopen,
+            mock.patch.object(RUNNER.time, "sleep") as sleep,
+            mock.patch.object(RUNNER.random, "random", return_value=0.0),
+        ):
+            result, _latency = client.complete("instructions", "input", 2048)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once()
+
     def test_client_does_not_retry_ambiguous_transport_failures(self) -> None:
         client = RUNNER.DeepSeekClient("test-key", max_retries=3)
 

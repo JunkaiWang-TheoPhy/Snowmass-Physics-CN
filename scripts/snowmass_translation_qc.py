@@ -8,6 +8,7 @@ from collections import Counter
 import re
 from typing import Any
 
+from snowmass_document_units import compare_numeric_literals
 from snowmass_pipeline import protected_literals
 
 
@@ -127,7 +128,7 @@ def _same_multiset(left: tuple[str, ...] | list[str], right: tuple[str, ...] | l
 def validate_chunk(source: str, translated: str, mapping: dict[str, str], glossary: list[dict[str, Any]]) -> QCReport:
     failures: list[str] = []
 
-    if not _same_multiset(tuple(_NUMBER_RE.findall(source)), tuple(_NUMBER_RE.findall(translated))):
+    if not compare_numeric_literals(source, translated).values_equal:
         failures.append("numbers_mismatch")
     if not _same_multiset(_extract_unit_values(source), _extract_unit_values(translated)):
         failures.append("units_mismatch")
@@ -156,9 +157,9 @@ def stage_decision(stage: str, text: str, glossary: list[dict[str, Any]]) -> Sta
     if stage == "anti_ai":
         if any(marker in text for marker in _ANTI_AI_MARKERS):
             return StageDecision(True, "anti_ai_marker_detected")
-        return StageDecision(False, "anti_ai_noop_no_markers")
+        return StageDecision(True, "anti_ai_refined_review_required")
 
     if stage == "academic":
-        return StageDecision(False, "academic_noop_no_deterministic_trigger")
+        return StageDecision(True, "academic_naturalization_required")
 
     return StageDecision(True, "stage_requires_model")

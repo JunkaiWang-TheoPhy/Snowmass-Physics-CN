@@ -154,7 +154,11 @@ _STRUCTURE_PATTERNS = (
     re.compile(r"\\\(.+?\\\)", re.DOTALL),
     re.compile(r"(?<!\$)\$(?!\$)(?:\\.|[^$\\\n])+\$(?!\$)"),
     re.compile(r"\\(?:cite|citet|citep|ref|eqref|autoref|label)\{[^{}]+\}"),
-    re.compile(r"https?://[^\s<>()，。；：！？]*[^\s<>().,;:!?，。；：！？]"),
+    re.compile(r"\\url\{[^{}\n]*\}"),
+    re.compile(
+        r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*"
+        r"[A-Za-z0-9_~/#\]@!$&'(*+=%-]"
+    ),
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"\\%"),
     re.compile(r"(?<![A-Za-z0-9_])\d+D(?![A-Za-z0-9_])"),

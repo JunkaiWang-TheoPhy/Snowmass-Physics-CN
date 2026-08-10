@@ -11,6 +11,7 @@ import json
 import math
 import os
 import random
+import ssl
 import subprocess
 import sys
 import threading
@@ -28,6 +29,11 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from snowmass_translation_qc import stage_decision, validate_chunk
+from snowmass_document_units import (
+    StructureMismatchError as TypedStructureMismatchError,
+    protect_translation_unit,
+    restore_translation_unit,
+)
 from snowmass_pipeline import (
     StructureMismatchError,
     protect_structures,
@@ -52,6 +58,9 @@ OUTPUT_USD_PER_MILLION = 0.28
 DEFAULT_USD_CNY_RATE = 7.20
 PRICING_SOURCE = "https://api-docs.deepseek.com/quick_start/pricing/"
 PRICING_VERIFIED_AT = "2026-08-10"
+TRANSLATE_BOOK_CONTEXT = Path(
+    "/Users/Zhuanz/.agents/skills/translate-book/scripts/chunk_context.py"
+)
 
 
 class ResponseValidationError(RuntimeError):
@@ -627,7 +636,12 @@ class DeepSeekClient:
                 last_error = f"HTTP {error.code}: {' '.join(error_body.split())[:500]}"
                 if error.code not in RETRYABLE_HTTP_CODES or attempt >= self.max_retries:
                     raise RuntimeError(last_error) from error
-            except (http.client.IncompleteRead, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
+            except urllib.error.URLError as error:
+                if isinstance(error.reason, ssl.SSLError) and attempt < self.max_retries:
+                    last_error = f"TLS handshake failed before response: {error.reason}"
+                else:
+                    raise AmbiguousTransportError(f"{type(error).__name__}: {error}") from error
+            except (http.client.IncompleteRead, TimeoutError, OSError, json.JSONDecodeError) as error:
                 raise AmbiguousTransportError(f"{type(error).__name__}: {error}") from error
             time.sleep(min(60, (2**attempt) + random.random() * 2))
         raise RuntimeError(last_error)
@@ -637,7 +651,7 @@ def stage_instructions(stage: str, glossary: str) -> str:
     common = """You are translating a high-energy physics or cosmology academic paper from English to Simplified Chinese.
 The result is for scholarly readers. Preserve meaning exactly. Never add facts, explanations, examples, claims, citations, links, names, numbers, units, equations, symbols, or section order.
 Preserve Markdown, LaTeX, inline math, citation markers, URLs, and line/block boundaries whenever possible.
-Tokens matching [[SM_0000_...]] are immutable structure placeholders. Copy every such token exactly once, character for character, and in the same order. Never translate, rename, omit, duplicate, or move one.
+Tokens matching [[SM_0000_...]] or [[SMU_0000_TYPE_...]] are immutable structure or typed-literal placeholders. Copy every such token exactly once, character for character, and in the same order. Never translate, rename, omit, duplicate, or move one.
 Never replace a placeholder with a pronoun such as "it", "its", "其", or "该值", even when the referenced expression was just mentioned.
 Copy every Arabic numeral exactly as written. Never spell a form such as 2D with Chinese numerals, introduce an Arabic numeral for a word such as "unity", or remove TeX escaping such as \\%.
 Output only the complete revised Chinese text, with no preface, commentary, analysis, or quotation fences.
@@ -673,8 +687,49 @@ def stage_input(stage: str, source: str, current: str, glossary: str) -> str:
     return f"ORIGINAL SOURCE:\n---\n{source}\n---\n\n{label}:\n---\n{current}\n---\n\nLOCKED TERMINOLOGY:\n{glossary}\n"
 
 
+def load_neighbor_context(article_dir: Path, source_file: str, chars: int = 300) -> str:
+    """Reuse translate-book's read-only adjacent-unit context renderer."""
+
+    if not TRANSLATE_BOOK_CONTEXT.is_file():
+        raise RuntimeError(f"translate-book chunk_context.py is unavailable: {TRANSLATE_BOOK_CONTEXT}")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(TRANSLATE_BOOK_CONTEXT),
+            str(article_dir),
+            source_file,
+            "--chars",
+            str(chars),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"translate-book neighbor context failed for {source_file}: {result.stderr.strip()}"
+        )
+    return result.stdout.strip()
+
+
 def nonempty(path: Path) -> bool:
     return path.exists() and path.stat().st_size > 0 and bool(path.read_text(encoding="utf-8").strip())
+
+
+def protect_stage_text(text: str):
+    """Compose legacy TeX protection with typed paragraph literal protection."""
+
+    structural = protect_structures(text)
+    typed = protect_translation_unit(structural.text, max_nodes=40)
+    return typed.text, structural.mapping, typed.nodes
+
+
+def restore_stage_text(text: str, mapping: dict[str, str], nodes) -> str:
+    try:
+        typed_restored = restore_translation_unit(text, nodes)
+    except TypedStructureMismatchError as error:
+        raise StructureMismatchError(str(error)) from error
+    return validate_and_restore(typed_restored, mapping)
 
 
 def load_allowed_record_ids(path: Path) -> set[str]:
@@ -711,6 +766,7 @@ def process_chunk(
     chunk_id = chunk["id"]
     source_path = article_dir / chunk["source_file"]
     source = source_path.read_text(encoding="utf-8")
+    neighbor_context = load_neighbor_context(article_dir, chunk["source_file"])
     selected_terms = select_glossary_terms(source, terms)
     glossary = glossary_text(selected_terms)
     status_path = article_dir / "chunk_status" / f"{chunk_id}.json"
@@ -730,14 +786,18 @@ def process_chunk(
     for stage in STAGES:
         output_path = stage_output_path(article_dir, chunk_id, chunk["output_file"], stage)
         instructions = stage_instructions(stage, glossary)
-        protected = protect_structures(current)
-        protected_current = protected.text
-        mapping = protected.mapping
+        protected_current, mapping, typed_nodes = protect_stage_text(current)
         input_text = (
             protected_current
             if stage == "translate"
             else stage_input(stage, source, protected_current, glossary)
         )
+        if neighbor_context:
+            input_text += (
+                "\n\nREAD-ONLY NEIGHBOR CONTEXT — use only for disambiguation; "
+                "do not translate or reproduce it:\n"
+                + neighbor_context
+            )
         # Keep long non-streaming responses below the local proxy's practical
         # response size while leaving enough headroom for Chinese output.
         max_output = max(4096, min(20000, int(max(len(current), 4000) * 0.8)))
@@ -887,7 +947,7 @@ def process_chunk(
             raise
 
         try:
-            restored_text = validate_and_restore(parsed.text, mapping)
+            restored_text = restore_stage_text(parsed.text, mapping, typed_nodes)
         except StructureMismatchError as exc:
             stage_status.update(
                 persist_rejected_candidate(
@@ -899,8 +959,10 @@ def process_chunk(
                     protected=True,
                 )
             )
-            expected_sentinels = list(mapping)
-            observed_sentinels = list(sentinel_sequence(parsed.text))
+            expected_sentinels = list(mapping) + [node.token for node in typed_nodes]
+            observed_sentinels = list(sentinel_sequence(parsed.text)) + [
+                node.token for node in typed_nodes if node.token in parsed.text
+            ]
             expected_counts = Counter(expected_sentinels)
             observed_counts = Counter(observed_sentinels)
             missing_sentinels = list((expected_counts - observed_counts).elements())
