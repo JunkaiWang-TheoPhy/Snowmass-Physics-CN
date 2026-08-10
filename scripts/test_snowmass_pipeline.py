@@ -604,6 +604,15 @@ class StructureProtectionTests(unittest.TestCase):
         self.assertIn(next(iter(protected.mapping)) + ".", protected.text)
         self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
 
+    def test_protect_structures_round_trips_tex_escaped_percent_outside_math(self) -> None:
+        text = "The forecast reaches 1\\% precision.\n"
+
+        protected = self.pipeline.protect_structures(text)
+
+        self.assertEqual(list(protected.mapping.values()), [r"\%"])
+        self.assertNotIn(r"\%", protected.text)
+        self.assertEqual(self.pipeline.validate_and_restore(protected.text, protected.mapping), text)
+
     def test_restore_rejects_missing_sentinel(self) -> None:
         protected = self.pipeline.protect_structures("See \\cite{atlas} and $p_T$.")
         damaged = protected.text.replace(next(iter(protected.mapping)), "")

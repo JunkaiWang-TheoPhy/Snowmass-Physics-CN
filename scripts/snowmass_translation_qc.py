@@ -103,6 +103,15 @@ def _extract_urls(text: str) -> tuple[str, ...]:
     return tuple(match.rstrip(".,;:!?。；：！？") for match in _URL_RE.findall(text))
 
 
+def _extract_unit_values(text: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for match in _UNIT_VALUE_RE.findall(text):
+        if re.fullmatch(r"[12]\d{3}s", match):
+            continue
+        values.append(re.sub(r"\s+", "", match))
+    return tuple(values)
+
+
 def _same_multiset(left: tuple[str, ...] | list[str], right: tuple[str, ...] | list[str]) -> bool:
     return Counter(left) == Counter(right)
 
@@ -112,7 +121,7 @@ def validate_chunk(source: str, translated: str, mapping: dict[str, str], glossa
 
     if not _same_multiset(tuple(_NUMBER_RE.findall(source)), tuple(_NUMBER_RE.findall(translated))):
         failures.append("numbers_mismatch")
-    if not _same_multiset(tuple(_UNIT_VALUE_RE.findall(source)), tuple(_UNIT_VALUE_RE.findall(translated))):
+    if not _same_multiset(_extract_unit_values(source), _extract_unit_values(translated)):
         failures.append("units_mismatch")
     if not _same_multiset(_extract_urls(source), _extract_urls(translated)):
         failures.append("urls_mismatch")

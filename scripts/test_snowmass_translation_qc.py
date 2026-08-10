@@ -93,6 +93,26 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("units_mismatch", report.failures)
 
+    def test_validate_chunk_allows_spacing_only_change_between_number_and_unit(self) -> None:
+        report = QC.validate_chunk(
+            source="The line is at 21cm.\n",
+            translated="该谱线位于 21 cm。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+
+    def test_validate_chunk_does_not_treat_decade_suffix_as_seconds(self) -> None:
+        report = QC.validate_chunk(
+            source="The metric was retired in the 2020s.\n",
+            translated="该指标在 2020 年代已不再使用。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+
     def test_validate_chunk_rejects_changed_url(self) -> None:
         report = QC.validate_chunk(
             source="See https://example.org/results.\n",

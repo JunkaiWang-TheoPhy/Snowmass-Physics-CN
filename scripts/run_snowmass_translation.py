@@ -557,6 +557,8 @@ def stage_instructions(stage: str, glossary: str) -> str:
 The result is for scholarly readers. Preserve meaning exactly. Never add facts, explanations, examples, claims, citations, links, names, numbers, units, equations, symbols, or section order.
 Preserve Markdown, LaTeX, inline math, citation markers, URLs, and line/block boundaries whenever possible.
 Tokens matching [[SM_0000_...]] are immutable structure placeholders. Copy every such token exactly once, character for character, and in the same order. Never translate, rename, omit, duplicate, or move one.
+Never replace a placeholder with a pronoun such as "it", "its", "其", or "该值", even when the referenced expression was just mentioned.
+Copy every Arabic numeral exactly as written. Never spell a form such as 2D with Chinese numerals, introduce an Arabic numeral for a word such as "unity", or remove TeX escaping such as \\%.
 Output only the complete revised Chinese text, with no preface, commentary, analysis, or quotation fences.
 """
     if stage == "translate":
