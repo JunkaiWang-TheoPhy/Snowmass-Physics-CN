@@ -163,6 +163,34 @@ class ResponseValidationTests(unittest.TestCase):
                 RUNNER.MODEL,
             )
 
+    def test_completed_response_with_malformed_output_is_not_accepted(self) -> None:
+        response = completed_response()
+        response["output"] = {"type": "message"}
+
+        with self.assertRaises(RUNNER.ResponseValidationError):
+            RUNNER.validate_response(response, RUNNER.MODEL)
+
+    def test_completed_response_with_malformed_content_is_not_accepted(self) -> None:
+        response = completed_response()
+        response["output"] = [{"type": "message", "content": ["not-an-object"]}]
+
+        with self.assertRaises(RUNNER.ResponseValidationError):
+            RUNNER.validate_response(response, RUNNER.MODEL)
+
+    def test_malformed_input_token_details_are_not_accepted(self) -> None:
+        response = completed_response()
+        response["usage"]["input_tokens_details"] = ["not-an-object"]
+
+        with self.assertRaises(RUNNER.ResponseValidationError):
+            RUNNER.validate_response(response, RUNNER.MODEL)
+
+    def test_malformed_output_token_details_are_not_accepted(self) -> None:
+        response = completed_response()
+        response["usage"]["output_tokens_details"] = "not-an-object"
+
+        with self.assertRaises(RUNNER.ResponseValidationError):
+            RUNNER.validate_response(response, RUNNER.MODEL)
+
 
 class RequestKeyAndCheckpointTests(unittest.TestCase):
     def test_request_key_is_deterministic_for_same_payload(self) -> None:
@@ -301,6 +329,28 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(translate["status"], "failed")
         self.assertEqual(translate["raw_response"]["status"], "incomplete")
         self.assertEqual(translate["response_id"], "resp_bad")
+
+    def test_process_chunk_persists_coarse_metadata_for_malformed_usage_details(self) -> None:
+        malformed = completed_response()
+        malformed["id"] = "resp_malformed_usage"
+        malformed["usage"]["input_tokens_details"] = ["not-an-object"]
+
+        class FakeClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                return malformed, 0.2
+
+        with self.assertRaises(RUNNER.ResponseValidationError):
+            RUNNER.process_chunk(self.task, FakeClient(), [])
+
+        status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
+        translate = status["stages"]["translate"]
+
+        self.assertEqual(translate["status"], "failed")
+        self.assertEqual(translate["raw_response"]["id"], "resp_malformed_usage")
+        self.assertEqual(translate["raw_response"]["status"], "completed")
+        self.assertEqual(translate["raw_response"]["usage"]["input_tokens"], 10)
+        self.assertIsNone(translate["raw_response"]["usage"]["cached_tokens"])
+        self.assertIn("input_tokens_details", translate["error"])
 
 
 class DeepSeekClientRetryTests(unittest.TestCase):

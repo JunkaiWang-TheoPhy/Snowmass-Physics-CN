@@ -146,24 +146,48 @@ def request_key(
 
 def response_usage(response: dict[str, Any]) -> dict[str, Any]:
     usage = response.get("usage", {})
-    usage = usage if isinstance(usage, dict) else {}
+    if not isinstance(usage, dict):
+        raise ResponseValidationError("DeepSeek response usage must be an object")
+    input_details = usage.get("input_tokens_details")
+    if input_details is not None and not isinstance(input_details, dict):
+        raise ResponseValidationError("DeepSeek response usage.input_tokens_details must be an object")
+    output_details = usage.get("output_tokens_details")
+    if output_details is not None and not isinstance(output_details, dict):
+        raise ResponseValidationError("DeepSeek response usage.output_tokens_details must be an object")
     return {
         "input_tokens": usage.get("input_tokens"),
-        "cached_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),
+        "cached_tokens": (input_details or {}).get("cached_tokens"),
         "output_tokens": usage.get("output_tokens"),
-        "reasoning_tokens": (usage.get("output_tokens_details") or {}).get("reasoning_tokens"),
+        "reasoning_tokens": (output_details or {}).get("reasoning_tokens"),
         "total_tokens": usage.get("total_tokens"),
     }
 
 
-def response_metadata(response: dict[str, Any]) -> dict[str, Any]:
+def coarse_response_usage(response: dict[str, Any]) -> dict[str, Any]:
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    input_details = usage.get("input_tokens_details")
+    output_details = usage.get("output_tokens_details")
+    return {
+        "input_tokens": usage.get("input_tokens"),
+        "cached_tokens": input_details.get("cached_tokens") if isinstance(input_details, dict) else None,
+        "output_tokens": usage.get("output_tokens"),
+        "reasoning_tokens": output_details.get("reasoning_tokens") if isinstance(output_details, dict) else None,
+        "total_tokens": usage.get("total_tokens"),
+    }
+
+
+def response_metadata(response: Any) -> dict[str, Any]:
+    if not isinstance(response, dict):
+        return {"response_type": type(response).__name__}
     metadata: dict[str, Any] = {
         "id": str(response.get("id", "")),
         "status": response.get("status"),
         "model": response.get("model"),
         "incomplete_details": response.get("incomplete_details"),
         "error": response.get("error"),
-        "usage": response_usage(response),
+        "usage": coarse_response_usage(response),
     }
     output = response.get("output")
     if isinstance(output, list):
@@ -176,10 +200,24 @@ def response_metadata(response: dict[str, Any]) -> dict[str, Any]:
 
 def extract_output(response: dict[str, Any]) -> str:
     texts: list[str] = []
-    for item in response.get("output", []) or []:
+    output = response.get("output", [])
+    if output is None:
+        output = []
+    if not isinstance(output, list):
+        raise ResponseValidationError("DeepSeek response output must be an array")
+    for item in output:
+        if not isinstance(item, dict):
+            raise ResponseValidationError("DeepSeek response output items must be objects")
         if item.get("type") != "message":
             continue
-        for content in item.get("content", []) or []:
+        contents = item.get("content", [])
+        if contents is None:
+            contents = []
+        if not isinstance(contents, list):
+            raise ResponseValidationError("DeepSeek response message content must be an array")
+        for content in contents:
+            if not isinstance(content, dict):
+                raise ResponseValidationError("DeepSeek response content items must be objects")
             if content.get("type") == "output_text" and isinstance(content.get("text"), str):
                 texts.append(content["text"])
     if not texts and isinstance(response.get("output_text"), str):
@@ -190,11 +228,13 @@ def extract_output(response: dict[str, Any]) -> str:
         if len(lines) >= 2:
             text = "\n".join(lines[1:-1]).strip()
     if not text:
-        raise RuntimeError("DeepSeek response contained no output_text")
+        raise ResponseValidationError("DeepSeek response contained no output_text")
     return text + "\n"
 
 
-def validate_response(response: dict[str, Any], expected_model: str) -> ParsedResponse:
+def validate_response(response: Any, expected_model: str) -> ParsedResponse:
+    if not isinstance(response, dict):
+        raise ResponseValidationError("DeepSeek response must be an object")
     status = response.get("status")
     model = str(response.get("model", ""))
     response_id = str(response.get("id", ""))
@@ -203,7 +243,7 @@ def validate_response(response: dict[str, Any], expected_model: str) -> ParsedRe
         raise ResponseValidationError(f"DeepSeek response used unexpected model: {model or '<missing>'}")
     if status == "incomplete":
         details = response.get("incomplete_details") or {}
-        reason = details.get("reason", "unknown")
+        reason = details.get("reason", "unknown") if isinstance(details, dict) else "unknown"
         raise IncompleteResponseError(f"DeepSeek response incomplete: {reason}")
     if status == "failed":
         error = response.get("error")
@@ -214,10 +254,7 @@ def validate_response(response: dict[str, Any], expected_model: str) -> ParsedRe
         raise FailedResponseError(f"DeepSeek response failed: {message}")
     if status != "completed":
         raise ResponseValidationError(f"DeepSeek response had unexpected status: {status!r}")
-    try:
-        text = extract_output(response)
-    except RuntimeError as exc:
-        raise ResponseValidationError(str(exc)) from exc
+    text = extract_output(response)
     return ParsedResponse(
         text=text,
         response_id=response_id,
@@ -418,7 +455,7 @@ def process_chunk(task: dict[str, Any], client: DeepSeekClient, terms: list[dict
             raise
 
         stage_status["raw_response"] = response_metadata(response)
-        stage_status["response_id"] = str(response.get("id", ""))
+        stage_status["response_id"] = str(response.get("id", "")) if isinstance(response, dict) else ""
         atomic_json(status_path, status)
 
         try:
