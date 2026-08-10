@@ -33,6 +33,25 @@ class SiteInterfaceTest(unittest.TestCase):
         self.assertIn("prefers-reduced-motion", css)
         self.assertIn("@media (max-width: 720px)", css)
 
+    def test_top_frontier_navigation_lists_all_official_frontiers(self):
+        html = (ROOT / "site/index.html").read_text()
+        expected = {
+            "AF": "加速器前沿",
+            "CEF": "社群参与前沿",
+            "CompF": "计算前沿",
+            "CF": "宇宙前沿",
+            "EF": "能量前沿",
+            "IF": "仪器学前沿",
+            "NF": "中微子前沿",
+            "RPF": "稀有过程与精密测量前沿",
+            "TF": "理论前沿",
+            "UF": "地下设施与基础设施前沿",
+        }
+        self.assertIn('class="frontier-nav"', html)
+        for code, label in expected.items():
+            self.assertIn(f'href="?frontier={code}#catalog"', html)
+            self.assertIn(f"<b>{code}</b><span>{label}</span>", html)
+
 
 if __name__ == "__main__":
     unittest.main()
