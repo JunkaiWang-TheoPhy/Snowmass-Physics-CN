@@ -134,10 +134,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 .hero-landscape {
   background-image:
-    linear-gradient(90deg, rgba(220, 230, 234, .98) 0%, rgba(220, 230, 234, .88) 42%, rgba(220, 230, 234, .18) 72%),
-    linear-gradient(0deg, rgba(207, 222, 227, .95) 0%, transparent 42%),
-    url("assets/snowmass-mountain.svg");
-  background-position: center;
+    linear-gradient(90deg, rgba(220, 230, 234, .97) 0%, rgba(220, 230, 234, .78) 40%, rgba(220, 230, 234, .08) 74%),
+    linear-gradient(0deg, rgba(207, 222, 227, .84) 0%, transparent 46%),
+    url("assets/snowmass-hero-mountains.webp");
+  background-position: 56% center;
   background-size: cover;
 }
 .hero::after {
@@ -399,9 +399,9 @@ footer p { margin: 8px 0 0; }
 :root[data-theme="dark"] .hero { border-color: #3e5964; }
 :root[data-theme="dark"] .hero-landscape {
   background-image:
-    linear-gradient(90deg, rgba(23, 36, 44, .98) 0%, rgba(23, 36, 44, .9) 43%, rgba(23, 36, 44, .42) 73%),
-    linear-gradient(0deg, rgba(27, 49, 58, .98) 0%, rgba(23, 36, 44, .2) 55%),
-    url("assets/snowmass-mountain.svg");
+    linear-gradient(90deg, rgba(23, 36, 44, .97) 0%, rgba(23, 36, 44, .78) 42%, rgba(23, 36, 44, .28) 76%),
+    linear-gradient(0deg, rgba(27, 49, 58, .9) 0%, rgba(23, 36, 44, .14) 58%),
+    url("assets/snowmass-hero-mountains.webp");
 }
 :root[data-theme="dark"] .hero::after { background: repeating-radial-gradient(ellipse at 84% 22%, transparent 0 38px, rgba(142, 181, 195, .11) 39px 40px, transparent 41px 59px); mix-blend-mode: screen; }
 :root[data-theme="dark"] .hero-lede { color: #b0c1c7; }
@@ -437,8 +437,8 @@ footer p { margin: 8px 0 0; }
   .brand strong { font-size: 13px; }
   .brand small { display: none; }
   .hero { grid-template-columns: 1fr; gap: 44px; min-height: 720px; padding: 68px 28px 34px; }
-  .hero-landscape { background-image: linear-gradient(180deg, rgba(220, 230, 234, .97) 0%, rgba(220, 230, 234, .76) 50%, rgba(207, 222, 227, .8) 100%), url("assets/snowmass-mountain.svg"); }
-  :root[data-theme="dark"] .hero-landscape { background-image: linear-gradient(180deg, rgba(23, 36, 44, .98) 0%, rgba(23, 36, 44, .82) 50%, rgba(27, 49, 58, .88) 100%), url("assets/snowmass-mountain.svg"); }
+  .hero-landscape { background-image: linear-gradient(180deg, rgba(220, 230, 234, .94) 0%, rgba(220, 230, 234, .68) 45%, rgba(207, 222, 227, .82) 100%), url("assets/snowmass-hero-mountains.webp"); background-position: 64% center; }
+  :root[data-theme="dark"] .hero-landscape { background-image: linear-gradient(180deg, rgba(23, 36, 44, .96) 0%, rgba(23, 36, 44, .72) 48%, rgba(27, 49, 58, .9) 100%), url("assets/snowmass-hero-mountains.webp"); }
   .hero h1 { letter-spacing: -.06em; }
   .rights-principle { max-width: 500px; }
   .metrics { grid-template-columns: repeat(2, 1fr); }

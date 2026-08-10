@@ -46,6 +46,12 @@ class SiteContractTests(unittest.TestCase):
         self.assertIn(':root[data-theme="dark"]', CSS)
         self.assertIn("--snow: #17242c", CSS)
 
+    def test_hero_uses_the_generated_mountain_panorama(self) -> None:
+        asset = ROOT / "site/assets/snowmass-hero-mountains.webp"
+        self.assertTrue(asset.is_file())
+        self.assertGreater(asset.stat().st_size, 50_000)
+        self.assertIn('url("assets/snowmass-hero-mountains.webp")', CSS)
+
 
 if __name__ == "__main__":
     unittest.main()
