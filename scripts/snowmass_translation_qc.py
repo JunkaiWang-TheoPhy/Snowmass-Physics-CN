@@ -19,7 +19,7 @@ _UNIT_VALUE_RE = re.compile(
     r"(?<![A-Za-z0-9_])"
     r"[-+]?\d+(?:\.\d+)?"
     r"(?:\s*[×x]\s*[-+]?\d+(?:\.\d+)?)?"
-    r"\s*(?:%|eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|m|km|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)\b"
+    r"\s*(?:%|eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|m|km|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?![A-Za-z0-9_])"
 )
 _ACRONYM_RE = re.compile(r"[A-Z][A-Z0-9/+.\-]{1,}")
 _ANTI_AI_MARKERS = (

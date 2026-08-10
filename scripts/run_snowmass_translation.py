@@ -522,6 +522,50 @@ def persist_rejected_candidate(
     }
 
 
+def recover_rejected_candidate(
+    article_dir: Path,
+    source: str,
+    output_path: Path,
+    stage_status: dict[str, Any],
+    expected_key: str,
+    qc_terms: list[dict[str, Any]],
+) -> str | None:
+    if stage_status.get("request_key") != expected_key:
+        return None
+    if stage_status.get("rejected_candidate_protected") is not False:
+        return None
+    relative_value = stage_status.get("rejected_candidate_file")
+    if not isinstance(relative_value, str) or not relative_value:
+        return None
+    relative = Path(relative_value)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    candidate_path = article_dir / relative
+    try:
+        candidate = candidate_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if text_hash(candidate) != stage_status.get("rejected_candidate_hash"):
+        return None
+    qc_report = validate_chunk(source, candidate, {}, qc_terms)
+    if not qc_report.ok:
+        return None
+    prior_error = stage_status.pop("error", None)
+    atomic_text(output_path, candidate)
+    stage_status.update(
+        {
+            "status": "complete",
+            "finished_at": now(),
+            "output_hash": text_hash(candidate),
+            "qc": qc_report.to_dict(),
+            "recovered_from_rejected_candidate": True,
+        }
+    )
+    if prior_error:
+        stage_status["recovery_previous_error"] = prior_error
+    return candidate
+
+
 class DeepSeekClient:
     def __init__(self, api_key: str, max_retries: int = 5) -> None:
         self.api_key = api_key
@@ -682,8 +726,21 @@ def process_chunk(
             current = output_path.read_text(encoding="utf-8")
             continue
 
-        decision = stage_decision(stage, current, selected_terms)
         qc_terms = [] if stage == "translate" else selected_terms
+        recovered = recover_rejected_candidate(
+            article_dir,
+            source,
+            output_path,
+            stage_status,
+            expected_key,
+            qc_terms,
+        )
+        if recovered is not None:
+            current = recovered
+            atomic_json(status_path, status)
+            continue
+
+        decision = stage_decision(stage, current, selected_terms)
         started = now()
         stage_status.update(
             {
@@ -708,6 +765,8 @@ def process_chunk(
             "rejected_candidate_file",
             "rejected_candidate_hash",
             "rejected_candidate_protected",
+            "recovered_from_rejected_candidate",
+            "recovery_previous_error",
         ):
             stage_status.pop(stale_field, None)
 

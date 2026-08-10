@@ -659,6 +659,37 @@ class ProcessChunkTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "complete")
 
+    def test_process_chunk_revalidates_rejected_candidate_without_paid_call(self) -> None:
+        (self.article_dir / "chunk0001.md").write_text("Value 14.\n", encoding="utf-8")
+
+        class InitialClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                return completed_response("数值 14。"), 0.1
+
+        rejected_qc = mock.Mock()
+        rejected_qc.ok = False
+        rejected_qc.failures = ("numbers_mismatch",)
+        rejected_qc.to_dict.return_value = {"ok": False, "failures": ["numbers_mismatch"]}
+        with (
+            mock.patch.object(RUNNER, "STAGES", ("translate",)),
+            mock.patch.object(RUNNER, "validate_chunk", return_value=rejected_qc),
+            self.assertRaises(RuntimeError),
+        ):
+            RUNNER.process_chunk(self.task, InitialClient(), [])
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                raise AssertionError("a now-valid quarantined candidate must be recovered without an API call")
+
+        with mock.patch.object(RUNNER, "STAGES", ("translate",)):
+            result = RUNNER.process_chunk(self.task, NoCallClient(), [])
+
+        status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
+        translate = status["stages"]["translate"]
+        self.assertEqual(result["status"], "complete")
+        self.assertTrue(translate["recovered_from_rejected_candidate"])
+        self.assertEqual((self.article_dir / "stage1_chunk0001.md").read_text(encoding="utf-8"), "数值 14。\n")
+
     def test_process_chunk_marks_ambiguous_transport_failure_uncertain_without_output(self) -> None:
         class FakeClient:
             calls = 0

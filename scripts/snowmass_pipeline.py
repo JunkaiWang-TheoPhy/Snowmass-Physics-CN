@@ -136,6 +136,17 @@ _DISPLAY_ENV_PATTERN = re.compile(
     r"\\begin\{(?P<env>equation\*?|align\*?|gather\*?|multline\*?)\}.*?\\end\{(?P=env)\}",
     re.DOTALL,
 )
+_UNIT_LITERAL_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"(?!(?:1\d{3}|2\d{3})s(?![A-Za-z0-9_]))"
+    r"[-+]?\d+(?:\.\d+)?"
+    r"(?:\s*[×x]\s*[-+]?\d+(?:\.\d+)?)?"
+    r"\s*(?:%|eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|m|km|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)"
+    r"(?![A-Za-z0-9_])"
+)
+_DECIMAL_LITERAL_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])[-+]?\d+\.\d+(?:[eE][-+]?\d+)?(?![A-Za-z0-9_])"
+)
 _STRUCTURE_PATTERNS = (
     re.compile(r"\$\$.*?\$\$", re.DOTALL),
     re.compile(r"\\\[.*?\\\]", re.DOTALL),
@@ -146,7 +157,9 @@ _STRUCTURE_PATTERNS = (
     re.compile(r"https?://[^\s<>()，。；：！？]*[^\s<>().,;:!?，。；：！？]"),
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"\\%"),
-    re.compile(r"\b\d+D\b"),
+    re.compile(r"(?<![A-Za-z0-9_])\d+D(?![A-Za-z0-9_])"),
+    _UNIT_LITERAL_PATTERN,
+    _DECIMAL_LITERAL_PATTERN,
 )
 _SENTINEL_PATTERN = re.compile(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]")
 _WORD_PATTERN = re.compile(r"\S+")

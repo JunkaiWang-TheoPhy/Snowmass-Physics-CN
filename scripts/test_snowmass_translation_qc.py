@@ -93,10 +93,10 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("units_mismatch", report.failures)
 
-    def test_validate_chunk_allows_spacing_only_change_between_number_and_unit(self) -> None:
+    def test_validate_chunk_allows_ascii_unit_literal_next_to_chinese_text(self) -> None:
         report = QC.validate_chunk(
             source="The line is at 21cm.\n",
-            translated="该谱线位于 21 cm。\n",
+            translated="该谱线位于 21cm处。\n",
             mapping={},
             glossary=[],
         )
@@ -250,10 +250,11 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
                 self.calls += 1
                 sentinels = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)
+                protected_unit = sentinels[0]
                 protected_url = sentinels[-1]
                 if self.calls == 1:
-                    return completed_response(f"探测器达到 14 TeV，见 [12] 和 {protected_url}。\n"), 0.1
-                return completed_response(f"该探测器达到 14 TeV，见 [12] 和 {protected_url}。\n"), 0.2
+                    return completed_response(f"探测器达到 {protected_unit}，见 [12] 和 {protected_url}。\n"), 0.1
+                return completed_response(f"该探测器达到 {protected_unit}，见 [12] 和 {protected_url}。\n"), 0.2
 
         client = FakeClient()
         result = RUNNER.process_chunk(self.task, client, [{"source": "Energy Frontier", "target": "能量前沿"}])
@@ -274,14 +275,14 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
 
     def test_process_chunk_blocks_promotion_when_qc_fails(self) -> None:
         (self.article_dir / "chunk0001.md").write_text(
-            "The detector reached 14 TeV in [12] at https://example.org.\n",
+            "The detector recorded 14 events in [12] at https://example.org.\n",
             encoding="utf-8",
         )
 
         class FakeClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
                 protected_url = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)[-1]
-                return completed_response(f"探测器达到 15 TeV，见 [12] 和 {protected_url}。\n"), 0.1
+                return completed_response(f"探测器记录了 15 个事件，见 [12] 和 {protected_url}。\n"), 0.1
 
         with self.assertRaises(RuntimeError):
             RUNNER.process_chunk(self.task, FakeClient(), [])
@@ -294,7 +295,7 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
         self.assertIn("numbers_mismatch", translate["qc"]["failures"])
         self.assertEqual(
             rejected.read_text(encoding="utf-8"),
-            "探测器达到 15 TeV，见 [12] 和 https://example.org。\n",
+            "探测器记录了 15 个事件，见 [12] 和 https://example.org。\n",
         )
         self.assertFalse(translate["rejected_candidate_protected"])
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
