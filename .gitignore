@@ -2,6 +2,7 @@
 .omx/
 .netlify/
 .baoyu-skills/
+.superpowers/
 AGENTS.md
 
 # Local credentials and service state. Keep the empty template tracked.
