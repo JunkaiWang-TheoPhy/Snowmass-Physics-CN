@@ -211,6 +211,10 @@ def _strip_tex_comment(line: str) -> str:
     return line
 
 
+def _strip_tex_comments(text: str) -> str:
+    return "".join(_strip_tex_comment(line) for line in text.splitlines(keepends=True))
+
+
 def _iter_include_specs(text: str) -> list[tuple[int, int, str]]:
     matches: list[tuple[int, int, str]] = []
     offset = 0
@@ -274,10 +278,11 @@ def rank_main_tex(root: Path) -> list[MainCandidate]:
     for path in tex_files:
         resolved_path = path.resolve()
         text = contents[resolved_path]
+        visible_text = _strip_tex_comments(text)
         lower_stem = path.stem.lower()
-        has_document_marker = _DOCUMENT_MARKER_PATTERN.search(text) is not None
-        has_title = _TITLE_PATTERN.search(text) is not None
-        has_abstract = _ABSTRACT_PATTERN.search(text) is not None
+        has_document_marker = _DOCUMENT_MARKER_PATTERN.search(visible_text) is not None
+        has_title = _TITLE_PATTERN.search(visible_text) is not None
+        has_abstract = _ABSTRACT_PATTERN.search(visible_text) is not None
 
         score = 0
         if has_document_marker:
@@ -316,12 +321,15 @@ def expand_tex(main_path: Path, root: Path) -> ExpandedTex:
     missing_seen: set[Path] = set()
     cycles: list[Path] = []
     cycle_seen: set[Path] = set()
+    main_key = main_path.resolve(strict=False)
+    display_paths = {main_key: main_path}
 
     def visit(path: Path, stack: tuple[Path, ...]) -> str:
         if len(stack) > max_depth:
-            if path not in cycle_seen:
-                cycle_seen.add(path)
-                cycles.append(path)
+            path_key = path.resolve(strict=False)
+            if path_key not in cycle_seen:
+                cycle_seen.add(path_key)
+                cycles.append(display_paths.setdefault(path_key, path))
             return ""
 
         text = path.read_text(encoding="utf-8")
@@ -330,24 +338,26 @@ def expand_tex(main_path: Path, root: Path) -> ExpandedTex:
         for start, end, spec in _iter_include_specs(text):
             expanded_parts.append(text[cursor:start])
             target = _resolve_include_target(spec, path.parent, root)
+            target_key = target.resolve(strict=False)
+            display_target = display_paths.setdefault(target_key, target)
             if not target.exists():
-                if target not in missing_seen:
-                    missing_seen.add(target)
-                    missing_includes.append(target)
-            elif target in stack:
-                if target not in cycle_seen:
-                    cycle_seen.add(target)
-                    cycles.append(target)
+                if target_key not in missing_seen:
+                    missing_seen.add(target_key)
+                    missing_includes.append(display_target)
+            elif target_key in stack:
+                if target_key not in cycle_seen:
+                    cycle_seen.add(target_key)
+                    cycles.append(display_target)
             else:
-                if target not in include_seen:
-                    include_seen.add(target)
-                    includes.append(target)
-                expanded_parts.append(visit(target, stack + (target,)))
+                if target_key not in include_seen:
+                    include_seen.add(target_key)
+                    includes.append(display_target)
+                expanded_parts.append(visit(target, stack + (target_key,)))
             cursor = end
         expanded_parts.append(text[cursor:])
         return "".join(expanded_parts)
 
-    text = visit(main_path, (main_path,))
+    text = visit(main_path, (main_key,))
     return ExpandedTex(
         text=text,
         includes=tuple(includes),

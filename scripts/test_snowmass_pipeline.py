@@ -264,6 +264,30 @@ class MainTexSelectionTests(unittest.TestCase):
 
         self.assertEqual([candidate.path.name for candidate in candidates], ["main.tex"])
 
+    def test_rank_main_tex_ignores_commented_document_markers(self) -> None:
+        active_path = self.write_tex(
+            "active.tex",
+            "\\documentclass{article}\n"
+            "\\title{Active paper}\n"
+            "\\begin{document}\n"
+            "\\begin{abstract}Summary\\end{abstract}\n",
+        )
+        commented_path = self.write_tex(
+            "commented.tex",
+            "% \\documentclass{article}\n"
+            "% \\title{Commented paper}\n"
+            "% \\begin{document}\n"
+            "% \\begin{abstract}Commented summary\\end{abstract}\n",
+        )
+
+        candidates = self.pipeline.rank_main_tex(self.root)
+        by_path = {candidate.path: candidate for candidate in candidates}
+
+        self.assertEqual(candidates[0].path, active_path)
+        self.assertFalse(by_path[commented_path].has_document_marker)
+        self.assertFalse(by_path[commented_path].has_title)
+        self.assertFalse(by_path[commented_path].has_abstract)
+
 
 class ExpandTexTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -297,6 +321,16 @@ class ExpandTexTests(unittest.TestCase):
 
         self.assertEqual(result.cycles, (main_path,))
         self.assertEqual(result.text.count("loop body"), 1)
+
+    def test_expand_tex_detects_cycle_through_parent_alias(self) -> None:
+        main_path = self.write_tex("main.tex", "main body\n\\input{sub/../main}\n")
+        (self.root / "sub").mkdir()
+
+        result = self.pipeline.expand_tex(main_path, self.root)
+
+        self.assertEqual(result.cycles, (main_path,))
+        self.assertEqual(result.includes, ())
+        self.assertEqual(result.text.count("main body"), 1)
 
     def test_expand_tex_reports_missing_includes(self) -> None:
         main_path = self.write_tex("main.tex", "start\n\\input{missing}\nend\n")
