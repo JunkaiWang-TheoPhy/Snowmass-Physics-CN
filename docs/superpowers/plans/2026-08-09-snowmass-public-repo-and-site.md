@@ -207,11 +207,11 @@
 
   Run `python3 -m unittest scripts.test_public_manifest -v`, JSON validation, `git diff --check`, and the static HTTP smoke test. Record the 541-record count and the redaction result.
 
-- [ ] **Step 3: Check GitHub authentication and repository state**
+- [x] **Step 3: Check GitHub authentication and repository state**
 
   Run `gh auth status` and `gh repo view`; if authentication is valid, create or update the public repository without overwriting unrelated history, push the verified default branch, and verify the public URL. If authentication remains invalid, leave the exact local remote and required re-authentication command in the handoff without exposing credentials.
 
-  Current result: GitHub CLI reports the stored token for `JunkaiWang-TheoPhy` is invalid. No repository creation or push has been attempted with an unauthenticated client. Netlify production deployment succeeded independently at `https://snowmass-zh.netlify.app/`.
+  Completed: GitHub CLI authentication for `JunkaiWang-TheoPhy` is valid. The verified `main` branch is public at `https://github.com/JunkaiWang-TheoPhy/snowmass-zh`, GitHub Actions validation passes, and Netlify continuous deployment is connected to the repository. Production remains available at `https://snowmass-zh.netlify.app/`.
 
 - [x] **Step 4: Commit the final verification metadata**
 
