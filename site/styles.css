@@ -140,15 +140,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
   background-position: 56% center;
   background-size: cover;
 }
-.hero::after {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: repeating-radial-gradient(ellipse at 84% 22%, transparent 0 38px, rgba(37, 86, 101, .13) 39px 40px, transparent 41px 59px);
-  content: "";
-  mix-blend-mode: multiply;
-  pointer-events: none;
-}
 .hero-copy, .rights-principle { min-width: 0; }
 .eyebrow, .principle-index, .metric-label {
   margin: 0;
@@ -403,7 +394,6 @@ footer p { margin: 8px 0 0; }
     linear-gradient(0deg, rgba(27, 49, 58, .9) 0%, rgba(23, 36, 44, .14) 58%),
     url("assets/snowmass-hero-mountains.webp");
 }
-:root[data-theme="dark"] .hero::after { background: repeating-radial-gradient(ellipse at 84% 22%, transparent 0 38px, rgba(142, 181, 195, .11) 39px 40px, transparent 41px 59px); mix-blend-mode: screen; }
 :root[data-theme="dark"] .hero-lede { color: #b0c1c7; }
 :root[data-theme="dark"] .button-primary { color: #15242b; }
 :root[data-theme="dark"] .paper-card { box-shadow: 0 10px 28px rgba(0, 0, 0, .18); }

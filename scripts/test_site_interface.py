@@ -24,8 +24,8 @@ class SiteInterfaceTest(unittest.TestCase):
     def test_hero_uses_local_image_and_light_color_scheme(self):
         html = (ROOT / "site/index.html").read_text()
         css = (ROOT / "site/styles.css").read_text()
-        self.assertIn('content="light"', html)
-        self.assertIn("assets/snowmass-mountain", css)
+        self.assertIn('content="light dark"', html)
+        self.assertIn("assets/snowmass-hero-mountains.webp", css)
         self.assertNotIn("images.unsplash.com", css)
 
     def test_reduced_motion_and_responsive_rules_exist(self):
