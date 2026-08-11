@@ -38,6 +38,7 @@ Create `scripts/test_community_pages.py` with these assertions:
 
 ```python
 import json
+import re
 import subprocess
 from pathlib import Path
 import unittest
@@ -76,7 +77,7 @@ class CommunityPagesTest(unittest.TestCase):
         html = self.read("contributors/index.html")
         self.assertIn("JunkaiWang-TheoPhy", html)
         self.assertIn("项目发起人 / 维护者", html)
-        self.assertNotIn("1181100960@qq.com", html)
+        self.assertIsNone(re.search(r"\b\d+@qq\.com\b", html))
         self.assertIn("开放申请", html)
 
     def test_guide_has_four_participation_paths(self):
