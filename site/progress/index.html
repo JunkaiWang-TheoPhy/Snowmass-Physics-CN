@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="从公开论文清单实时派生 Snowmass 中文翻译计划的翻译、授权与 Frontier 进展。" data-zh-content="从公开论文清单实时派生 Snowmass 中文翻译计划的翻译、授权与 Frontier 进展。" data-en-content="Live translation, rights, and Frontier progress for the Snowmass Chinese Translation project, derived from its public paper manifest.">
+    <meta name="color-scheme" content="light dark">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="项目进展 | Snowmass 中文翻译计划" data-zh-content="项目进展 | Snowmass 中文翻译计划" data-en-content="Progress | Snowmass Chinese Translation">
+    <meta property="og:description" content="可核查的翻译阶段、公开权限与 Frontier 工作体量。" data-zh-content="可核查的翻译阶段、公开权限与 Frontier 工作体量。" data-en-content="Auditable translation stages, publication rights, and workload by Frontier.">
+    <meta property="og:url" content="https://snowmass-physics-cn.netlify.app/progress/">
+    <title data-zh="项目进展 | Snowmass 中文翻译计划" data-en="Progress | Snowmass Chinese Translation">项目进展 | Snowmass 中文翻译计划</title>
+    <link rel="icon" href="../assets/snowmass-mountain.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+    <script src="../theme-init.js"></script>
+  </head>
+  <body data-page="progress" data-papers-url="../data/papers.json">
+    <a class="skip-link" href="#main-content" data-zh="跳到主要内容" data-en="Skip to main content">跳到主要内容</a>
+    <header class="site-header subpage-header">
+      <a class="brand" href="../"><span class="brand-mark" aria-hidden="true">△</span><span><strong data-zh="Snowmass 中文翻译计划" data-en="Snowmass Chinese Translation">Snowmass 中文翻译计划</strong><small>Open Translation Atlas</small></span></a>
+      <nav aria-label="主要导航" data-zh-aria="主要导航" data-en-aria="Primary navigation">
+        <a href="../?lang=zh" data-zh="论文目录" data-en="Catalog">论文目录</a>
+        <a href="../progress/" aria-current="page" data-zh="项目进展" data-en="Progress">项目进展</a>
+        <a href="../contributors/" data-zh="同行者" data-en="Contributors">同行者</a>
+        <a href="../guide/" data-zh="参与指南" data-en="Guide">参与指南</a>
+        <div class="view-controls">
+          <button type="button" class="view-toggle" id="language-toggle" aria-pressed="false">EN</button>
+          <button type="button" class="view-toggle" id="theme-toggle" aria-pressed="false"><span aria-hidden="true">◐</span><span id="theme-label">深色</span></button>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main-content" class="subpage-main">
+      <section class="subpage-hero" aria-labelledby="page-title">
+        <p class="eyebrow">PROGRESS · OPEN DATA</p>
+        <h1 id="page-title" data-zh="项目进展" data-en="Project progress">项目进展</h1>
+        <p data-zh="所有数字均从公开论文清单实时派生。权利状态按最保守口径统计：只有 publication_allowed 严格为 true 的记录进入可公开改编侧。" data-en="Every figure is derived live from the public paper manifest. Rights are counted conservatively: only records whose publication_allowed value is strictly true enter the adaptation-cleared group.">所有数字均从公开论文清单实时派生。权利状态按最保守口径统计：只有 publication_allowed 严格为 true 的记录进入可公开改编侧。</p>
+        <p class="progress-updated-line"><span data-zh="数据日期：" data-en="Data date: ">数据日期：</span><time id="progress-updated">—</time></p>
+      </section>
+
+      <section id="progress-metrics" class="progress-metrics" aria-label="项目核心指标" data-zh-aria="项目核心指标" data-en-aria="Core project metrics"></section>
+      <section class="progress-visuals" aria-label="项目进展图表" data-zh-aria="项目进展图表" data-en-aria="Project progress charts">
+        <article id="translation-chart" class="progress-chart"></article>
+        <article id="rights-chart" class="progress-chart"></article>
+      </section>
+      <article id="frontier-chart" class="frontier-chart-panel"></article>
+
+      <section class="progress-detail" aria-labelledby="frontier-table-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">10 OFFICIAL FRONTIERS</p>
+            <h2 id="frontier-table-title" data-zh="Frontier 明细" data-en="Frontier detail">Frontier 明细</h2>
+          </div>
+        </div>
+        <p class="cross-listing-note" data-zh="跨 Frontier 论文会在所属的每个学科行中各计一次；页面顶部的全局总数仍按论文记录去重。" data-en="Cross-listed papers are counted once in every relevant Frontier row; the global totals above remain deduplicated by paper record.">跨 Frontier 论文会在所属的每个学科行中各计一次；页面顶部的全局总数仍按论文记录去重。</p>
+        <div class="progress-table-wrap" tabindex="0">
+          <table class="progress-table">
+            <thead><tr>
+              <th data-zh="研究前沿" data-en="Frontier">研究前沿</th>
+              <th data-zh="论文" data-en="Papers">论文</th>
+              <th data-zh="可改编" data-en="Adaptation allowed">可改编</th>
+              <th data-zh="待授权" data-en="Permission needed">待授权</th>
+              <th data-zh="机器初译" data-en="Machine draft">机器初译</th>
+              <th data-zh="人工审校" data-en="Human review">人工审校</th>
+              <th data-zh="已公开" data-en="Published">已公开</th>
+            </tr></thead>
+            <tbody id="frontier-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="rights-note">
+        <h2 data-zh="如何阅读这些数字" data-en="How to read these figures">如何阅读这些数字</h2>
+        <p data-zh="缺失、false 或 null 的 publication_allowed 都计入待授权侧；未知翻译状态归入“其他 / 待核验”。图表不表示论文作者或机构已经认可译文。" data-en="Missing, false, or null publication_allowed values all count as permission needed; unknown translation states appear as ‘Other / to verify.’ These charts do not imply that paper authors or institutions have endorsed a translation.">缺失、false 或 null 的 publication_allowed 都计入待授权侧；未知翻译状态归入“其他 / 待核验”。图表不表示论文作者或机构已经认可译文。</p>
+      </aside>
+      <div id="progress-error" class="error-state" role="alert" hidden></div>
+    </main>
+
+    <footer>
+      <div>
+        <strong data-zh="Snowmass 中文翻译计划" data-en="Snowmass Chinese Translation">Snowmass 中文翻译计划</strong>
+        <p data-zh="非官方社区项目，不代表 Snowmass、SLAC、arXiv、HAL、作者或出版机构。" data-en="An unofficial community project; it does not represent Snowmass, SLAC, arXiv, HAL, authors, or publishers.">非官方社区项目，不代表 Snowmass、SLAC、arXiv、HAL、作者或出版机构。</p>
+      </div>
+      <div class="footer-links"><a href="../" data-zh="返回论文目录" data-en="Back to catalog">返回论文目录</a><a href="../guide/" data-zh="参与项目" data-en="Take part">参与项目</a></div>
+    </footer>
+    <script type="module" src="../community.js"></script>
+  </body>
+</html>
