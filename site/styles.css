@@ -353,6 +353,108 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .condition-list li, .topic-list li { margin: 8px 0; }
 .detail-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
 
+/* Shared community pages */
+.subpage-main { padding: 22px 0 120px; }
+.subpage-header nav a[aria-current="page"] { color: var(--glacier-dark); font-weight: 750; }
+.subpage-hero {
+  min-height: 390px;
+  margin-bottom: 54px;
+  padding: clamp(54px, 8vw, 108px) clamp(24px, 6vw, 84px) 48px;
+  border: 1px solid var(--line);
+  border-radius: 16px 16px 0 0;
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, var(--snow) 96%, transparent) 0%, color-mix(in srgb, var(--snow) 77%, transparent) 58%, color-mix(in srgb, var(--snow) 38%, transparent) 100%),
+    linear-gradient(0deg, var(--ice) 0%, transparent 58%),
+    url("assets/snowmass-hero-mountains.webp");
+  background-position: center;
+  background-size: cover;
+}
+.subpage-kicker { margin: 0; color: var(--glacier-dark); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
+.subpage-hero h1 {
+  max-width: 900px;
+  margin: 18px 0 20px;
+  font-family: "Songti SC", "Noto Serif CJK SC", STSong, Georgia, serif;
+  font-size: clamp(48px, 7vw, 88px);
+  font-weight: 600;
+  letter-spacing: -.065em;
+  line-height: 1.04;
+}
+.subpage-intro, .subpage-hero > p:not(.eyebrow):not(.progress-updated-line) { max-width: 760px; margin: 0; color: var(--muted); font-size: clamp(15px, 1.35vw, 19px); line-height: 1.8; }
+.progress-updated-line { margin: 24px 0 0; color: var(--faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+
+.progress-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-bottom: 18px; border: 1px solid var(--line); background: var(--line); }
+.progress-metric { min-width: 0; min-height: 145px; padding: 25px; background: var(--surface); }
+.progress-metric strong { display: block; margin-top: 25px; font-family: Georgia, serif; font-size: clamp(38px, 4vw, 58px); font-weight: 500; letter-spacing: -.05em; line-height: 1; }
+.progress-visuals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.progress-chart, .frontier-chart-panel, .progress-detail, .contributor-card, .open-call-card, .guide-step, .participation-card, .rights-note, .community-invitation {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+}
+.progress-chart, .frontier-chart-panel { padding: clamp(24px, 3vw, 38px); }
+.progress-chart h2, .frontier-chart-panel h2, .rights-note h2, .community-invitation h2 { margin: 0 0 28px; font-family: "Songti SC", STSong, Georgia, serif; font-size: clamp(23px, 2.5vw, 34px); font-weight: 600; letter-spacing: -.035em; }
+.progress-bars, .chart-legend { margin: 0; padding: 0; list-style: none; }
+.progress-bar-row + .progress-bar-row { margin-top: 19px; }
+.progress-bar-label { display: flex; gap: 16px; justify-content: space-between; margin-bottom: 7px; color: var(--muted); font-size: 12px; }
+.progress-bar-label strong { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.progress-bar-track { height: 10px; overflow: hidden; border-radius: 999px; background: var(--ice); }
+.progress-bar-fill, .translation-stage-bar { display: block; width: var(--bar-size); height: 100%; border-radius: inherit; background: var(--glacier); }
+.translation-machine-draft { background: var(--amber); }
+.translation-human-review { background: var(--glacier); }
+.translation-published { background: var(--pine); }
+.translation-not-started, .translation-other { background: var(--faint); }
+.rights-donut {
+  display: grid;
+  width: min(210px, 62vw);
+  aspect-ratio: 1;
+  margin: 8px auto 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--pine) 0 var(--allowed-angle),
+    var(--amber) var(--allowed-angle) 360deg
+  );
+}
+.rights-donut strong { display: grid; width: 58%; aspect-ratio: 1; place-items: center; border-radius: 50%; background: var(--surface-strong); font-family: Georgia, serif; font-size: 30px; font-weight: 500; }
+.chart-legend { display: grid; gap: 10px; }
+.chart-legend li { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; }
+.legend-swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); }
+.legend-allowed .legend-swatch { background: var(--pine); }
+.chart-legend strong { color: var(--ink); }
+.frontier-chart-panel { margin-top: 18px; }
+.frontier-bars { display: grid; gap: 15px; }
+.frontier-bar-row { display: grid; grid-template-columns: minmax(150px, .65fr) minmax(160px, 2fr) 36px; gap: 18px; align-items: center; }
+.frontier-bar-label { display: grid; grid-template-columns: 48px 1fr; gap: 10px; align-items: baseline; color: var(--muted); font-size: 11px; }
+.frontier-bar-label strong, .frontier-total { color: var(--glacier-dark); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.frontier-bar-fill { background: var(--glacier-dark); }
+.frontier-total { text-align: right; }
+
+.progress-detail { margin-top: 18px; padding: clamp(24px, 4vw, 44px); }
+.progress-detail .section-heading { margin-bottom: 18px; }
+.cross-listing-note { max-width: 850px; margin: 0 0 24px; color: var(--muted); font-size: 12px; }
+.progress-table-wrap { max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius); }
+.progress-table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 12px; }
+.progress-table th, .progress-table td { padding: 14px 16px; border-bottom: 1px solid var(--line); text-align: right; vertical-align: top; }
+.progress-table th:first-child { text-align: left; }
+.progress-table thead th { color: var(--faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
+.progress-table tbody tr:last-child > * { border-bottom: 0; }
+.frontier-name strong, .frontier-name span { display: block; }
+.frontier-name strong { color: var(--glacier-dark); }
+.frontier-name span { margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 400; }
+
+.community-grid, .guide-grid, .participation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 58px; }
+.contributor-card, .open-call-card, .guide-step, .participation-card { display: flex; min-height: 300px; flex-direction: column; align-items: flex-start; padding: clamp(24px, 4vw, 42px); }
+.contributor-card h3, .open-call-card h3, .guide-step h2, .participation-card h2 { margin: 20px 0 14px; font-family: "Songti SC", STSong, Georgia, serif; font-size: clamp(25px, 3vw, 38px); font-weight: 600; letter-spacing: -.035em; line-height: 1.25; }
+.contributor-card > p:not(.eyebrow), .open-call-card > p:not(.eyebrow) { margin: 0 0 28px; color: var(--muted); }
+.contributor-card .button, .open-call-card .button { margin-top: auto; }
+.participation-number { color: var(--glacier-dark); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 750; letter-spacing: .12em; }
+.guide-step ul, .participation-card ul { margin: 0 0 30px; padding-left: 20px; color: var(--muted); font-size: 13px; }
+.guide-step li + li, .participation-card li + li { margin-top: 9px; }
+.guide-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: auto; }
+.rights-note, .community-invitation { margin-top: 18px; padding: clamp(24px, 4vw, 42px); border-left: 4px solid var(--glacier); }
+.rights-note p, .community-invitation p { max-width: 900px; margin: 0; color: var(--muted); }
+
 footer { display: grid; grid-template-columns: 1fr auto; gap: 36px 60px; padding: 50px 0 70px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 footer strong { color: var(--ink); }
 footer p { margin: 8px 0 0; }
@@ -412,7 +514,6 @@ footer p { margin: 8px 0 0; }
 }
 
 @media (max-width: 1180px) {
-  .site-header nav a:nth-child(2) { display: none; }
   .filters { grid-template-columns: repeat(4, 1fr); }
   .search-field { grid-column: span 2; }
   .paper-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -423,7 +524,7 @@ footer p { margin: 8px 0 0; }
 @media (max-width: 860px) {
   .site-header, main, footer { width: min(calc(100% - 28px), var(--max)); }
   .site-header { min-height: 72px; }
-  .site-header nav a:not(.nav-cta) { display: none; }
+  .site-header nav a:not([aria-current="page"]) { display: none; }
   .brand strong { font-size: 13px; }
   .brand small { display: none; }
   .hero { grid-template-columns: 1fr; gap: 44px; min-height: 720px; padding: 68px 28px 34px; }
@@ -443,6 +544,7 @@ footer p { margin: 8px 0 0; }
   .filters { grid-template-columns: repeat(2, 1fr); }
   .search-field { grid-column: 1 / -1; }
   .detail-header, .detail-grid { grid-template-columns: 1fr; }
+  .frontier-bar-row { grid-template-columns: minmax(120px, .8fr) minmax(120px, 1.5fr) 32px; gap: 12px; }
 }
 
 @media (max-width: 720px) {
@@ -451,6 +553,16 @@ footer p { margin: 8px 0 0; }
   .view-toggle { min-height: 36px; padding: 0 9px; }
   #theme-label { display: none; }
   .brand-mark { width: 36px; height: 36px; }
+  .subpage-main { padding-top: 12px; padding-bottom: 80px; }
+  .subpage-hero { min-height: auto; margin-bottom: 38px; padding: 52px 22px 30px; border-radius: 12px 12px 0 0; }
+  .subpage-hero h1 { font-size: clamp(42px, 14vw, 60px); }
+  .progress-metrics, .progress-visuals, .community-grid, .guide-grid, .participation-grid { grid-template-columns: 1fr; }
+  .progress-metric { min-height: 120px; }
+  .frontier-bar-row { grid-template-columns: 1fr 34px; }
+  .frontier-bar-label { grid-column: 1 / -1; }
+  .progress-table-wrap { overflow-x: auto; overscroll-behavior-inline: contain; }
+  .progress-table { min-width: 760px; }
+  .contributor-card, .open-call-card, .guide-step, .participation-card { min-height: 0; }
   .hero { min-height: auto; margin-top: 12px; padding: 56px 21px 22px; border-radius: 12px 12px 0 0; }
   .hero h1 { font-size: clamp(43px, 13vw, 61px); }
   .hero-lede { font-size: 15px; }
@@ -471,6 +583,11 @@ footer p { margin: 8px 0 0; }
   .definition-list dd { margin-bottom: 13px; }
   footer { grid-template-columns: 1fr; }
   .footer-fineprint { grid-column: 1; }
+}
+
+@media (max-width: 520px) {
+  .site-header .brand strong { display: none; }
+  .site-header nav { margin-left: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

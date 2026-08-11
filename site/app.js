@@ -5,7 +5,8 @@ const THEME_KEY = "snowmass-theme";
 const UI = {
   zh: {
     skipCatalog: "跳到论文目录", brandHome: "Snowmass 中文翻译计划首页", brandName: "Snowmass 中文翻译计划",
-    primaryNav: "主要导航", navCatalog: "论文目录", navWorkflow: "翻译流程", navRights: "授权档案 ↗", navContribute: "在 GitHub 参与",
+    primaryNav: "主要导航", navCatalog: "论文目录", navProgress: "项目进展", navContributors: "同行者", navGuide: "参与指南",
+    navWorkflow: "翻译流程", navRights: "授权档案 ↗", navContribute: "在 GitHub 参与",
     heroTitle: "翻越语言的雪线，<br>抵达开放知识。", contactLabel: "项目联系：",
     heroLede: "一个由机器翻译起步、由研究共同体持续审校的中文开放档案。每篇论文都独立记录来源许可证、授权进度、模型与人工修订；没有明确改编许可的全文不会公开。",
     heroExplore: "探索论文图谱", heroRights: "了解授权原则", gateAria: "发布闸门说明", gateLabel: "PUBLICATION GATE · 权利先行",
@@ -47,7 +48,8 @@ const UI = {
   },
   en: {
     skipCatalog: "Skip to paper catalog", brandHome: "Snowmass Open Translation Atlas home", brandName: "Snowmass Open Translation Atlas",
-    primaryNav: "Primary navigation", navCatalog: "Paper catalog", navWorkflow: "Workflow", navRights: "Rights protocol ↗", navContribute: "Contribute on GitHub",
+    primaryNav: "Primary navigation", navCatalog: "Paper catalog", navProgress: "Progress", navContributors: "Contributors", navGuide: "Guide",
+    navWorkflow: "Workflow", navRights: "Rights protocol ↗", navContribute: "Contribute on GitHub",
     heroTitle: "Cross the language snowline.<br>Reach open knowledge.", contactLabel: "Project contact: ",
     heroLede: "An open Chinese-language archive that starts with machine translation and improves through sustained community review. Every paper records its source license, permission status, model, and human revisions; full translations are never published without clear adaptation rights.",
     heroExplore: "Explore the paper atlas", heroRights: "Read the rights protocol", gateAria: "Publication gate", gateLabel: "PUBLICATION GATE · RIGHTS FIRST",

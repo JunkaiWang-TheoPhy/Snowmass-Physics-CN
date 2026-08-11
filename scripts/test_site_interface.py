@@ -23,6 +23,73 @@ class SiteInterfaceTest(unittest.TestCase):
             self.assertIn(f'href="{href}"', html)
         self.assertIn("没有明确改编许可的全文不会公开", html)
 
+    def test_home_navigation_exposes_bilingual_community_routes(self):
+        html = (ROOT / "site/index.html").read_text()
+        script = (ROOT / "site/app.js").read_text()
+        expected_links = (
+            '<a href="#catalog" aria-current="page" data-i18n="navCatalog">论文目录</a>',
+            '<a href="progress/" data-i18n="navProgress">项目进展</a>',
+            '<a href="contributors/" data-i18n="navContributors">同行者</a>',
+            '<a href="guide/" data-i18n="navGuide">参与指南</a>',
+        )
+        for link in expected_links:
+            self.assertIn(link, html)
+        for copy in (
+            'navProgress: "项目进展"',
+            'navContributors: "同行者"',
+            'navGuide: "参与指南"',
+            'navProgress: "Progress"',
+            'navContributors: "Contributors"',
+            'navGuide: "Guide"',
+        ):
+            self.assertIn(copy, script)
+
+        header_navigation = html.split("<nav data-i18n-aria=", 1)[1].split("</nav>", 1)[0]
+        self.assertNotIn("RIGHTS_PROTOCOL.md", header_navigation)
+        self.assertIn("RIGHTS_PROTOCOL.md", html.split('<div class="footer-links">', 1)[1])
+
+    def test_community_layout_styles_cover_dynamic_and_semantic_hooks(self):
+        css = (ROOT / "site/styles.css").read_text()
+        for selector in (
+            ".subpage-main",
+            ".subpage-hero",
+            ".subpage-kicker",
+            ".subpage-intro",
+            ".progress-metrics",
+            ".progress-visuals",
+            ".progress-chart",
+            ".translation-stage-bar",
+            ".rights-donut",
+            ".frontier-bars",
+            ".progress-table-wrap",
+            ".progress-table",
+            ".community-grid",
+            ".contributor-card",
+            ".open-call-card",
+            ".guide-grid",
+            ".guide-step",
+            ".guide-actions",
+        ):
+            self.assertIn(selector, css)
+        self.assertIn(
+            "background: conic-gradient(\n"
+            "    var(--pine) 0 var(--allowed-angle),\n"
+            "    var(--amber) var(--allowed-angle) 360deg\n"
+            "  );",
+            css,
+        )
+        self.assertNotIn("animation:", css)
+
+    def test_community_layout_contains_wide_tables_on_narrow_screens(self):
+        css = (ROOT / "site/styles.css").read_text()
+        self.assertIn("overflow-x: hidden;", css.split("body {", 1)[1].split("}", 1)[0])
+        compact = css.split("@media (max-width: 860px)", 1)[1].split("@media (max-width: 720px)", 1)[0]
+        self.assertIn('.site-header nav a:not([aria-current="page"])', compact)
+        narrow = css.split("@media (max-width: 720px)", 1)[1].split("@media (prefers-reduced-motion", 1)[0]
+        self.assertIn(".progress-metrics, .progress-visuals", narrow)
+        self.assertIn(".progress-table-wrap { overflow-x: auto;", narrow)
+        self.assertIn(".progress-table { min-width: 760px;", narrow)
+
     def test_hero_uses_local_image_and_light_color_scheme(self):
         html = (ROOT / "site/index.html").read_text()
         css = (ROOT / "site/styles.css").read_text()
