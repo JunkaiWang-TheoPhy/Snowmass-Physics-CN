@@ -81,8 +81,8 @@ class CommunityPagesTest(unittest.TestCase):
 
     def test_guide_has_four_participation_paths(self):
         html = self.read("guide/index.html")
-        for key in ("guideTranslate", "guideReview", "guideRights", "guideShare"):
-            self.assertIn(f'data-i18n="{key}"', html)
+        for text in ("参与翻译并署名", "核对、修改并提出建议", "协助申请翻译权限", "分发和宣传"):
+            self.assertIn(f'data-zh="{text}"', html)
 
     def test_stats_module_fixture_and_fail_closed_gate(self):
         script = r'''import { summarizePapers } from "./site/community-stats.mjs";
