@@ -19,6 +19,8 @@ class SiteInterfaceTest(unittest.TestCase):
             "detail-panel",
         ):
             self.assertIn(f'id="{hook}"', html)
+        for href in ("progress/", "contributors/", "guide/"):
+            self.assertIn(f'href="{href}"', html)
         self.assertIn("没有明确改编许可的全文不会公开", html)
 
     def test_hero_uses_local_image_and_light_color_scheme(self):
