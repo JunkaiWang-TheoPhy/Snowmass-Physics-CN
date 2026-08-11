@@ -12,6 +12,8 @@ const progressCopy = {
       published: "已公开", other: "其他 / 待核验",
     },
     allowedLegend: "可公开改编", blockedLegend: "当前不可公开全文", papers: "篇",
+    noRightsData: "暂无权利数据",
+    firstWave: "目前尚无记录进入“尚未开始”之后的阶段；项目正进入首批生产翻译阶段。",
     languageAria: "切换为英文", themeDark: "深色", themeLight: "浅色",
     themeDarkAria: "切换为深色主题", themeLightAria: "切换为浅色主题",
   },
@@ -24,6 +26,8 @@ const progressCopy = {
       published: "Published", other: "Other / to verify",
     },
     allowedLegend: "Adaptation cleared", blockedLegend: "Full text currently blocked", papers: "papers",
+    noRightsData: "No rights data",
+    firstWave: "No record has advanced beyond not started; the project is entering its first production translation wave.",
     languageAria: "Switch to Chinese", themeDark: "Dark", themeLight: "Light",
     themeDarkAria: "Switch to dark theme", themeLightAria: "Switch to light theme",
   },
@@ -34,6 +38,7 @@ const state = {
   summary: null,
   updatedAt: null,
   progressError: false,
+  frontierSort: null,
 };
 
 function currentLanguage() {
@@ -139,7 +144,12 @@ function renderTranslationChart(translation, lang) {
     item.append(heading, track);
     list.append(item);
   });
-  target.replaceChildren(title, list);
+  const content = [title, list];
+  const advanced = (translation["machine-draft"] || 0) + (translation["human-review"] || 0) + (translation.published || 0);
+  if (total > 0 && advanced === 0) {
+    content.push(element("p", "translation-zero-note", copy.firstWave));
+  }
+  target.replaceChildren(...content);
 }
 
 function renderRightsChart(publication, lang) {
@@ -147,11 +157,16 @@ function renderRightsChart(publication, lang) {
   const copy = progressCopy[lang];
   const total = publication.allowed + publication.blocked;
   const donut = element("div", "rights-donut");
-  const allowedAngle = total ? publication.allowed / total * 360 : 0;
-  donut.style.setProperty("--allowed-angle", `${allowedAngle}deg`);
   donut.setAttribute("role", "img");
-  donut.setAttribute("aria-label", `${copy.allowedLegend}: ${publication.allowed}; ${copy.blockedLegend}: ${publication.blocked}`);
-  donut.append(element("strong", "", `${percentage(publication.allowed, total)}%`));
+  if (total === 0) {
+    donut.className = "rights-donut rights-donut-empty";
+    donut.setAttribute("aria-label", `${copy.noRightsData}; ${copy.allowedLegend}: 0; ${copy.blockedLegend}: 0`);
+    donut.append(element("strong", "", "—"));
+  } else {
+    donut.style.setProperty("--allowed-angle", `${publication.allowed / total * 360}deg`);
+    donut.setAttribute("aria-label", `${copy.allowedLegend}: ${publication.allowed}; ${copy.blockedLegend}: ${publication.blocked}`);
+    donut.append(element("strong", "", `${percentage(publication.allowed, total)}%`));
+  }
 
   const legend = element("ul", "chart-legend");
   [["allowed", copy.allowedLegend, publication.allowed], ["blocked", copy.blockedLegend, publication.blocked]].forEach(([kind, label, count]) => {
@@ -166,13 +181,58 @@ function frontierName(frontier, lang) {
   return lang === "zh" ? frontier[1] : frontier[2];
 }
 
+function sortedFrontiers(frontiers, lang) {
+  const rows = FRONTIERS.map((frontier, officialIndex) => ({
+    frontier,
+    counts: frontiers[frontier[0]],
+    officialIndex,
+  }));
+  if (!state.frontierSort) return rows;
+
+  const { key, direction } = state.frontierSort;
+  rows.sort((left, right) => {
+    const comparison = key === "name"
+      ? frontierName(left.frontier, lang).localeCompare(frontierName(right.frontier, lang), lang === "zh" ? "zh-CN" : "en")
+      : left.counts[key] - right.counts[key];
+    if (comparison === 0) return left.officialIndex - right.officialIndex;
+    return direction === "ascending" ? comparison : -comparison;
+  });
+  return rows;
+}
+
+function updateFrontierSortControls() {
+  document.querySelectorAll(".frontier-sort-button").forEach((button) => {
+    button.parentElement.removeAttribute("aria-sort");
+  });
+  const reset = document.querySelector("#frontier-sort-reset");
+  if (reset) reset.disabled = state.frontierSort === null;
+  if (!state.frontierSort) return;
+  const active = [...document.querySelectorAll(".frontier-sort-button")]
+    .find((button) => button.dataset.sortKey === state.frontierSort.key);
+  active?.parentElement.setAttribute("aria-sort", state.frontierSort.direction);
+}
+
+function setFrontierSort(key) {
+  const direction = state.frontierSort?.key === key && state.frontierSort.direction === "ascending"
+    ? "descending"
+    : "ascending";
+  state.frontierSort = { key, direction };
+  if (state.summary) renderFrontierChartsAndTable(state.summary.frontiers, state.lang);
+  else updateFrontierSortControls();
+}
+
+function restoreOfficialFrontierOrder() {
+  state.frontierSort = null;
+  if (state.summary) renderFrontierChartsAndTable(state.summary.frontiers, state.lang);
+  else updateFrontierSortControls();
+}
+
 function renderFrontierChartsAndTable(frontiers, lang) {
   const copy = progressCopy[lang];
   const chart = document.querySelector("#frontier-chart");
   const tableBody = document.querySelector("#frontier-table-body");
   const maximum = Math.max(0, ...FRONTIERS.map(([code]) => frontiers[code].total));
   const chartRows = element("div", "frontier-bars");
-  const tableRows = [];
 
   FRONTIERS.forEach((frontier) => {
     const [code] = frontier;
@@ -186,7 +246,10 @@ function renderFrontierChartsAndTable(frontiers, lang) {
     track.append(fill);
     row.append(label, track, element("strong", "frontier-total", String(counts.total)));
     chartRows.append(row);
+  });
 
+  const tableRows = sortedFrontiers(frontiers, lang).map(({ frontier, counts }) => {
+    const [code] = frontier;
     const tableRow = document.createElement("tr");
     const rowHeading = element("th", "frontier-name");
     rowHeading.setAttribute("scope", "row");
@@ -195,11 +258,12 @@ function renderFrontierChartsAndTable(frontiers, lang) {
     ["total", "allowed", "blocked", "machine-draft", "human-review", "published"].forEach((key) => {
       tableRow.append(element("td", "", String(counts[key])));
     });
-    tableRows.push(tableRow);
+    return tableRow;
   });
 
   chart.replaceChildren(element("h2", "", copy.frontier), chartRows);
   tableBody.replaceChildren(...tableRows);
+  updateFrontierSortControls();
 }
 
 function renderProgress(summary, lang) {
@@ -262,6 +326,10 @@ async function loadProgress() {
 
 document.querySelector("#language-toggle").addEventListener("click", () => applyLanguage(state.lang === "zh" ? "en" : "zh"));
 document.querySelector("#theme-toggle").addEventListener("click", toggleTheme);
+document.querySelectorAll(".frontier-sort-button").forEach((button) => {
+  button.addEventListener("click", () => setFrontierSort(button.dataset.sortKey));
+});
+document.querySelector("#frontier-sort-reset")?.addEventListener("click", restoreOfficialFrontierOrder);
 addEventListener("popstate", () => applyLanguage(currentLanguage()));
 
 applyLanguage(currentLanguage());

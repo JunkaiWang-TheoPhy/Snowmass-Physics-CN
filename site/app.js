@@ -26,7 +26,7 @@ const UI = {
     translationHumanReview: "人工审校", translationPublished: "已公开", publicationAllowed: "具备发布基础", publicationBlocked: "暂不可公开全文",
     footerDisclaimer: "非官方社区项目，不代表 Snowmass、SLAC、arXiv、HAL、作者或出版机构。", footerOfficial: "官方提交索引",
     footerArxiv: "arXiv 翻译政策", footerLicense: "项目代码与自有文档采用 AGPL-3.0；第三方论文和每篇译文分别遵循其记录的许可证与书面授权。",
-    noscript: "本目录需要 JavaScript 才能加载 541 篇论文的筛选与详情。", themeDark: "深色", themeLight: "浅色", languageAria: "切换为英文",
+    noscript: "本目录需要 JavaScript 才能加载论文筛选与详情。", themeDark: "深色", themeLight: "浅色", languageAria: "切换为英文",
     themeAriaDark: "切换为深色模式", themeAriaLight: "切换为浅色模式", yearUnknown: "年份未知", authorUnknown: "作者信息待核验",
     unclassified: "未分类", pages: "页", citations: "引用", source: "查看原文 ↗", details: "权利与进度详情 →",
     results: (count, page, total) => `${count} 篇符合条件 · 第 ${page}/${total} 页`, noResults: "没有找到符合条件的论文",
@@ -44,7 +44,7 @@ const UI = {
     allowedAction: "这篇论文可进入机器初译与社区审校流程。提交译文前，请核对译文许可证是否兼容，并保留完整署名。",
     blockedAction: "如果希望翻译这篇论文，请先由授权工作流联系通讯作者或权利人，并保存范围明确的书面回复。", github: "前往 GitHub",
     dataLoadFailed: "目录加载失败", cannotLoad: "无法读取公开目录", cannotLoadHint: "请刷新页面；如果问题持续存在，请到 GitHub 提交 issue。",
-    metaDescription: "Snowmass 2021 白皮书中文翻译、来源许可证与授权进度的开放目录。", ogDescription: "541 篇 Snowmass 2021 白皮书的非官方中文翻译、来源许可与授权进度目录。",
+    metaDescription: "Snowmass 2021 白皮书中文翻译、来源许可证与授权进度的开放目录。", ogDescription: "Snowmass 2021 白皮书的非官方中文翻译、来源许可与授权进度目录。",
   },
   en: {
     skipCatalog: "Skip to paper catalog", brandHome: "Snowmass Open Translation Atlas home", brandName: "Snowmass Open Translation Atlas",
@@ -69,7 +69,7 @@ const UI = {
     translationHumanReview: "Human review", translationPublished: "Published", publicationAllowed: "Publication basis present", publicationBlocked: "Full text not public",
     footerDisclaimer: "An unofficial community project. It does not represent Snowmass, SLAC, arXiv, HAL, authors, or publishers.", footerOfficial: "Official submission index",
     footerArxiv: "arXiv translation policy", footerLicense: "Project code and original documentation use AGPL-3.0. Third-party papers and each translation follow their own recorded licenses and written permissions.",
-    noscript: "JavaScript is required to filter and inspect the 541-paper catalog.", themeDark: "Dark", themeLight: "Light", languageAria: "Switch to Chinese",
+    noscript: "JavaScript is required to filter and inspect the paper catalog.", themeDark: "Dark", themeLight: "Light", languageAria: "Switch to Chinese",
     themeAriaDark: "Switch to dark mode", themeAriaLight: "Switch to light mode", yearUnknown: "Year unknown", authorUnknown: "Author information pending review",
     unclassified: "Unclassified", pages: "pages", citations: "citations", source: "View source ↗", details: "Rights and progress →",
     results: (count, page, total) => `${count} results · page ${page}/${total}`, noResults: "No papers match these filters",
@@ -87,7 +87,7 @@ const UI = {
     allowedAction: "This paper may enter machine translation and community review. Before contributing, verify license compatibility and preserve complete attribution.",
     blockedAction: "To translate this paper, the permission workflow must first contact the corresponding author or rightsholder and retain a clear written response.", github: "Open GitHub",
     dataLoadFailed: "Catalog failed to load", cannotLoad: "Unable to read the public catalog", cannotLoadHint: "Refresh the page. If the problem continues, open an issue on GitHub.",
-    metaDescription: "An open catalog of Snowmass 2021 paper translations, source licenses, and permission progress.", ogDescription: "An unofficial bilingual translation and rights-status catalog for 541 Snowmass 2021 white papers.",
+    metaDescription: "An open catalog of Snowmass 2021 paper translations, source licenses, and permission progress.", ogDescription: "An unofficial bilingual translation and rights-status catalog for Snowmass 2021 white papers.",
   },
 };
 

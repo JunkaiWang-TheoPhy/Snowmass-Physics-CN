@@ -17,12 +17,13 @@
   <body data-page="progress" data-papers-url="../data/papers.json">
     <a class="skip-link" href="#main-content" data-zh="跳到主要内容" data-en="Skip to main content">跳到主要内容</a>
     <header class="site-header subpage-header">
-      <a class="brand" href="../"><span class="brand-mark" aria-hidden="true">△</span><span><strong data-zh="Snowmass 中文翻译计划" data-en="Snowmass Chinese Translation">Snowmass 中文翻译计划</strong><small>Open Translation Atlas</small></span></a>
+      <a class="brand" href="../" aria-label="返回 Snowmass 中文翻译计划首页" data-zh-aria="返回 Snowmass 中文翻译计划首页" data-en-aria="Back to Snowmass Chinese Translation home"><span class="brand-mark" aria-hidden="true">△</span><span><strong data-zh="Snowmass 中文翻译计划" data-en="Snowmass Chinese Translation">Snowmass 中文翻译计划</strong><small>Open Translation Atlas</small></span></a>
       <nav aria-label="主要导航" data-zh-aria="主要导航" data-en-aria="Primary navigation">
         <a href="../?lang=zh" data-zh="论文目录" data-en="Catalog">论文目录</a>
         <a href="../progress/" aria-current="page" data-zh="项目进展" data-en="Progress">项目进展</a>
         <a href="../contributors/" data-zh="同行者" data-en="Contributors">同行者</a>
         <a href="../guide/" data-zh="参与指南" data-en="Guide">参与指南</a>
+        <a class="nav-cta" href="https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN" target="_blank" rel="noreferrer" data-zh="在 GitHub 参与" data-en="Join on GitHub">在 GitHub 参与</a>
         <div class="view-controls">
           <button type="button" class="view-toggle" id="language-toggle" aria-pressed="false">EN</button>
           <button type="button" class="view-toggle" id="theme-toggle" aria-pressed="false"><span aria-hidden="true">◐</span><span id="theme-label">深色</span></button>
@@ -35,6 +36,11 @@
         <p class="eyebrow">PROGRESS · OPEN DATA</p>
         <h1 id="page-title" data-zh="项目进展" data-en="Project progress">项目进展</h1>
         <p data-zh="所有数字均从公开论文清单实时派生。权利状态按最保守口径统计：只有 publication_allowed 严格为 true 的记录进入可公开改编侧。" data-en="Every figure is derived live from the public paper manifest. Rights are counted conservatively: only records whose publication_allowed value is strictly true enter the adaptation-cleared group.">所有数字均从公开论文清单实时派生。权利状态按最保守口径统计：只有 publication_allowed 严格为 true 的记录进入可公开改编侧。</p>
+        <nav class="subpage-route-links" aria-label="项目页面快速导航" data-zh-aria="项目页面快速导航" data-en-aria="Quick links to project pages">
+          <a href="../?lang=zh" data-zh="论文目录" data-en="Catalog">论文目录</a>
+          <a href="../contributors/" data-zh="同行者" data-en="Contributors">同行者</a>
+          <a href="../guide/" data-zh="参与指南" data-en="Guide">参与指南</a>
+        </nav>
         <p class="progress-updated-line"><span data-zh="数据日期：" data-en="Data date: ">数据日期：</span><time id="progress-updated">—</time></p>
       </section>
 
@@ -51,18 +57,19 @@
             <p class="eyebrow">OFFICIAL FRONTIERS</p>
             <h2 id="frontier-table-title" data-zh="Frontier 明细" data-en="Frontier detail">Frontier 明细</h2>
           </div>
+          <button type="button" class="table-sort-reset" id="frontier-sort-reset" disabled data-zh="恢复官方顺序" data-en="Restore official order">恢复官方顺序</button>
         </div>
-        <p class="cross-listing-note" data-zh="跨 Frontier 论文会在所属的每个学科行中各计一次；页面顶部的全局总数仍按论文记录去重。" data-en="Cross-listed papers are counted once in every relevant Frontier row; the global totals above remain deduplicated by paper record.">跨 Frontier 论文会在所属的每个学科行中各计一次；页面顶部的全局总数仍按论文记录去重。</p>
+        <p class="cross-listing-note" data-zh="选择列标题可排序，“恢复官方顺序”返回默认排列。跨 Frontier 论文会在所属的每个学科行中各计一次；页面顶部的全局总数仍按论文记录去重。" data-en="Use a column heading to sort; Restore official order returns to the default sequence. Cross-listed papers are counted once in every relevant Frontier row; the global totals above remain deduplicated by paper record.">选择列标题可排序，“恢复官方顺序”返回默认排列。跨 Frontier 论文会在所属的每个学科行中各计一次；页面顶部的全局总数仍按论文记录去重。</p>
         <div class="progress-table-wrap" tabindex="0">
           <table class="progress-table">
             <thead><tr>
-              <th data-zh="研究前沿" data-en="Frontier">研究前沿</th>
-              <th data-zh="论文" data-en="Papers">论文</th>
-              <th data-zh="可改编" data-en="Adaptation allowed">可改编</th>
-              <th data-zh="待授权" data-en="Permission needed">待授权</th>
-              <th data-zh="机器初译" data-en="Machine draft">机器初译</th>
-              <th data-zh="人工审校" data-en="Human review">人工审校</th>
-              <th data-zh="已公开" data-en="Published">已公开</th>
+              <th scope="col" data-sort-key="name"><button type="button" class="frontier-sort-button" data-sort-key="name" data-zh="研究前沿" data-en="Frontier">研究前沿</button></th>
+              <th scope="col" data-sort-key="total"><button type="button" class="frontier-sort-button" data-sort-key="total" data-zh="论文" data-en="Papers">论文</button></th>
+              <th scope="col" data-sort-key="allowed"><button type="button" class="frontier-sort-button" data-sort-key="allowed" data-zh="可改编" data-en="Adaptation allowed">可改编</button></th>
+              <th scope="col" data-sort-key="blocked"><button type="button" class="frontier-sort-button" data-sort-key="blocked" data-zh="待授权" data-en="Permission needed">待授权</button></th>
+              <th scope="col" data-sort-key="machine-draft"><button type="button" class="frontier-sort-button" data-sort-key="machine-draft" data-zh="机器初译" data-en="Machine draft">机器初译</button></th>
+              <th scope="col" data-sort-key="human-review"><button type="button" class="frontier-sort-button" data-sort-key="human-review" data-zh="人工审校" data-en="Human review">人工审校</button></th>
+              <th scope="col" data-sort-key="published"><button type="button" class="frontier-sort-button" data-sort-key="published" data-zh="已公开" data-en="Published">已公开</button></th>
             </tr></thead>
             <tbody id="frontier-table-body"></tbody>
           </table>

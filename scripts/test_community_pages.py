@@ -27,12 +27,21 @@ class StubElement {
     this.hidden = hidden;
     this.style = new StubStyle();
     this.listeners = new Map();
+    this.parentElement = null;
     this._textContent = "";
   }
   set textContent(value) { this._textContent = String(value); this.children = []; }
   get textContent() { return this._textContent || this.children.map((child) => child.textContent).join(""); }
-  append(...children) { this._textContent = ""; this.children.push(...children); }
-  replaceChildren(...children) { this._textContent = ""; this.children = [...children]; }
+  append(...children) {
+    this._textContent = "";
+    children.forEach((child) => { child.parentElement = this; });
+    this.children.push(...children);
+  }
+  replaceChildren(...children) {
+    this._textContent = "";
+    children.forEach((child) => { child.parentElement = this; });
+    this.children = [...children];
+  }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   removeAttribute(name) { this.attributes.delete(name); }
@@ -73,17 +82,32 @@ function installPage({ search = "", savedLanguage = null, navigatorLanguage = "z
   const themeToggle = add("button", { id: "theme-toggle" });
   const themeLabel = add("span", { id: "theme-label" });
   const localizedText = add("h1", { dataset: { zh: "项目进展", en: "Project progress" } });
+  const localizedBrand = add("a", {
+    className: "brand",
+    dataset: { zhAria: "返回 Snowmass 中文翻译计划首页", enAria: "Back to Snowmass Chinese Translation home" },
+    attributes: { "aria-label": "返回 Snowmass 中文翻译计划首页" },
+  });
   const localizedAria = add("nav", { dataset: { zhAria: "主要导航", enAria: "Primary navigation" }, attributes: { "aria-label": "主要导航" } });
   const localizedMeta = add("meta", { dataset: { zhContent: "中文说明", enContent: "English description" }, attributes: { content: "中文说明" } });
   const languageLink = add("a", { attributes: { href: "../guide/" } });
   const progressMetrics = add("section", { id: "progress-metrics" });
   add("section", { className: "progress-visuals" });
-  add("article", { id: "translation-chart" });
+  const translationChart = add("article", { id: "translation-chart" });
   const rightsChart = add("article", { id: "rights-chart" });
   add("article", { id: "frontier-chart" });
   add("section", { className: "progress-detail" });
   add("aside", { className: "rights-note" });
   const frontierTableBody = add("tbody", { id: "frontier-table-body" });
+  const sortHeaders = [];
+  const sortButtons = [];
+  ["name", "total", "allowed", "blocked", "machine-draft", "human-review", "published"].forEach((sortKey) => {
+    const header = add("th", { className: "frontier-sort-heading", dataset: { sortKey } });
+    const button = add("button", { className: "frontier-sort-button", dataset: { sortKey } });
+    header.append(button);
+    sortHeaders.push(header);
+    sortButtons.push(button);
+  });
+  const sortReset = add("button", { id: "frontier-sort-reset" });
   const progressUpdated = add("time", { id: "progress-updated" });
   const progressError = add("div", { id: "progress-error", hidden: true });
 
@@ -120,9 +144,9 @@ function installPage({ search = "", savedLanguage = null, navigatorLanguage = "z
   console.error = () => {};
 
   return {
-    documentElement, fetchCalls, frontierTableBody, languageLink, languageToggle, localizedAria,
+    documentElement, fetchCalls, frontierTableBody, languageLink, languageToggle, localizedAria, localizedBrand,
     localizedMeta, localizedText, progressError, progressMetrics, progressUpdated, rightsChart,
-    storage, themeLabel, themeToggle,
+    sortButtons, sortHeaders, sortReset, storage, themeLabel, themeToggle, translationChart,
   };
 }
 
@@ -171,14 +195,69 @@ class CommunityPagesTest(unittest.TestCase):
         for href in ("progress/", "contributors/", "guide/"):
             self.assertIn(f'href="{href}"', html)
 
-    def test_progress_uses_public_manifest_without_fixed_counts(self):
+    def test_progress_uses_public_manifest(self):
         html = self.read("progress/index.html")
         js = self.read("community.js")
         self.assertIn("../data/papers.json", html)
         self.assertIn("summarizePapers", js)
-        for fixed in ("541", "273", "268"):
-            self.assertNotIn(fixed, html)
-            self.assertNotIn(fixed, js)
+
+    def test_public_html_and_javascript_do_not_hardcode_live_counts(self):
+        fixed_count = re.compile(r"(?<!\d)(541|273|268)(?!\d)")
+        checked = []
+        for path in SITE.rglob("*"):
+            relative = path.relative_to(SITE)
+            if not path.is_file() or path.suffix not in {".html", ".js", ".mjs"}:
+                continue
+            if relative.parts and relative.parts[0] == "data":
+                continue
+            checked.append(str(relative))
+            self.assertIsNone(
+                fixed_count.search(path.read_text()),
+                f"fixed live count found in public file: {relative}",
+            )
+        self.assertTrue(checked)
+
+    def test_subpage_navigation_stays_named_and_available_when_header_links_collapse(self):
+        routes = {
+            "progress": ("../?lang=zh", "../contributors/", "../guide/"),
+            "contributors": ("../?lang=zh", "../progress/", "../guide/"),
+            "guide": ("../?lang=zh", "../progress/", "../contributors/"),
+        }
+        for route, compact_hrefs in routes.items():
+            html = self.read(f"{route}/index.html")
+            self.assertRegex(
+                html,
+                r'<a class="brand"[^>]+data-zh-aria="[^"]+"[^>]+data-en-aria="[^"]+"',
+            )
+            self.assertEqual(html.count('class="nav-cta"'), 1)
+            compact_nav = re.search(
+                r'<nav class="subpage-route-links".*?</nav>', html, flags=re.DOTALL,
+            )
+            self.assertIsNotNone(compact_nav)
+            for href in compact_hrefs:
+                self.assertIn(f'href="{href}"', compact_nav.group())
+            self.assertEqual(compact_nav.group().count("<a "), 3)
+
+        css = self.read("styles.css")
+        base, mobile = css.split("@media (max-width: 860px)", 1)
+        mobile_860 = mobile.split("@media (max-width: 720px)", 1)[0]
+        self.assertIn(".subpage-route-links { display: none;", base)
+        self.assertIn(".subpage-route-links { display: flex;", mobile_860)
+
+    def test_frontier_table_exposes_keyboard_sort_controls(self):
+        html = self.read("progress/index.html")
+        self.assertEqual(html.count('class="frontier-sort-button"'), 7)
+        for key in (
+            "name", "total", "allowed", "blocked", "machine-draft",
+            "human-review", "published",
+        ):
+            self.assertRegex(
+                html,
+                rf'<th[^>]+data-sort-key="{re.escape(key)}"[^>]*>\s*<button type="button" class="frontier-sort-button" data-sort-key="{re.escape(key)}"',
+            )
+        self.assertIn('id="frontier-sort-reset"', html)
+        self.assertNotIn('aria-sort="ascending"', html)
+        self.assertNotIn('aria-sort="descending"', html)
 
     def test_progress_exposes_semantic_dynamic_targets_and_cross_listing_note(self):
         html = self.read("progress/index.html")
@@ -257,6 +336,7 @@ const initialLanguage = {
   localizedText: page.localizedText.textContent,
   localizedMeta: page.localizedMeta.getAttribute("content"),
   localizedAria: page.localizedAria.getAttribute("aria-label"),
+  localizedBrand: page.localizedBrand.getAttribute("aria-label"),
   languageLink: page.languageLink.getAttribute("href"),
   storedLanguage: page.storage.get("snowmass-language"),
 };
@@ -266,6 +346,7 @@ const switchedLanguage = {
   localizedText: page.localizedText.textContent,
   localizedMeta: page.localizedMeta.getAttribute("content"),
   localizedAria: page.localizedAria.getAttribute("aria-label"),
+  localizedBrand: page.localizedBrand.getAttribute("aria-label"),
   languageLink: page.languageLink.getAttribute("href"),
   storedLanguage: page.storage.get("snowmass-language"),
 };
@@ -278,6 +359,7 @@ console.log(JSON.stringify({
   metricValues,
   donutAngle: donut.style.getPropertyValue("--allowed-angle"),
   rightsText: page.rightsChart.textContent,
+  translationNote: page.translationChart.children[2]?.textContent ?? null,
   frontierRowsMatchDefinitions: page.frontierTableBody.children.length === FRONTIERS.length,
   updatedDateTime: page.progressUpdated.dateTime,
   theme: page.documentElement.dataset.theme,
@@ -291,6 +373,7 @@ console.log(JSON.stringify({
             "localizedText": "Project progress",
             "localizedMeta": "English description",
             "localizedAria": "Primary navigation",
+            "localizedBrand": "Back to Snowmass Chinese Translation home",
             "languageLink": "../guide/?lang=en",
             "storedLanguage": "en",
         })
@@ -299,6 +382,7 @@ console.log(JSON.stringify({
             "localizedText": "项目进展",
             "localizedMeta": "中文说明",
             "localizedAria": "主要导航",
+            "localizedBrand": "返回 Snowmass 中文翻译计划首页",
             "languageLink": "../guide/?lang=zh",
             "storedLanguage": "zh",
         })
@@ -309,12 +393,108 @@ console.log(JSON.stringify({
         self.assertEqual(result["donutAngle"], "120deg")
         self.assertIn("Adaptation cleared1", result["rightsText"])
         self.assertIn("Full text currently blocked2", result["rightsText"])
+        self.assertIsNone(result["translationNote"])
         self.assertTrue(result["frontierRowsMatchDefinitions"])
         self.assertEqual(result["updatedDateTime"], "2026-08-10T12:00:00.000Z")
         self.assertEqual(result["theme"], "dark")
         self.assertEqual(result["storedTheme"], "dark")
         self.assertEqual(result["themeLabel"], "Light")
         self.assertEqual(result["themePressed"], "true")
+
+    def test_frontier_table_sorts_numeric_and_names_then_restores_official_order(self):
+        result = self.run_controller(r'''
+const papers = [
+  { frontiers: ["AF"], translation_status: "published", publication_allowed: true },
+  { frontiers: ["TF"], translation_status: "published", publication_allowed: true },
+  { frontiers: ["TF"], translation_status: "not-started", publication_allowed: false },
+  { frontiers: ["UF"], translation_status: "not-started", publication_allowed: false },
+  { frontiers: ["UF"], translation_status: "not-started", publication_allowed: false },
+  { frontiers: ["UF"], translation_status: "not-started", publication_allowed: false },
+];
+const page = installPage({ search: "?lang=en", responses: [{ papers }] });
+await import("./site/community.js?behavior-frontier-sort");
+await flushTasks();
+const rowCodes = () => page.frontierTableBody.children.map((row) => row.children[0].children[0].textContent);
+const button = (key) => page.sortButtons.find((node) => node.dataset.sortKey === key);
+const header = (key) => page.sortHeaders.find((node) => node.dataset.sortKey === key);
+const official = rowCodes();
+await button("total").click();
+const numericAscending = rowCodes();
+const numericAscendingAria = header("total").getAttribute("aria-sort");
+await button("total").click();
+const numericDescending = rowCodes();
+const numericDescendingAria = header("total").getAttribute("aria-sort");
+await button("name").click();
+await button("name").click();
+const nameDescending = rowCodes();
+const nameDescendingAria = header("name").getAttribute("aria-sort");
+const staleNumericAria = header("total").getAttribute("aria-sort");
+await page.sortReset.click();
+console.log(JSON.stringify({
+  official,
+  numericAscending,
+  numericAscendingAria,
+  numericDescending,
+  numericDescendingAria,
+  nameDescending,
+  nameDescendingAria,
+  staleNumericAria,
+  restored: rowCodes(),
+  restoredNameAria: header("name").getAttribute("aria-sort"),
+}));
+''')
+        official = ["AF", "CEF", "CompF", "CF", "EF", "IF", "NF", "RPF", "TF", "UF"]
+        self.assertEqual(result["official"], official)
+        self.assertEqual(result["numericAscending"][-3:], ["AF", "TF", "UF"])
+        self.assertEqual(result["numericAscendingAria"], "ascending")
+        self.assertEqual(result["numericDescending"][:3], ["UF", "TF", "AF"])
+        self.assertEqual(result["numericDescendingAria"], "descending")
+        self.assertEqual(result["nameDescending"][:3], ["UF", "TF", "RPF"])
+        self.assertEqual(result["nameDescendingAria"], "descending")
+        self.assertIsNone(result["staleNumericAria"])
+        self.assertEqual(result["restored"], official)
+        self.assertIsNone(result["restoredNameAria"])
+
+    def test_empty_manifest_uses_neutral_rights_state(self):
+        result = self.run_controller(r'''
+const page = installPage({ search: "?lang=en", responses: [{ papers: [] }] });
+await import("./site/community.js?behavior-empty-rights");
+await flushTasks();
+const donut = page.rightsChart.children[1];
+console.log(JSON.stringify({
+  className: donut.className,
+  angle: donut.style.getPropertyValue("--allowed-angle"),
+  accessibleName: donut.getAttribute("aria-label"),
+  center: donut.children[0].textContent,
+}));
+''')
+        self.assertEqual(result["className"], "rights-donut rights-donut-empty")
+        self.assertEqual(result["angle"], "")
+        self.assertIn("No rights data", result["accessibleName"])
+        self.assertEqual(result["center"], "—")
+
+    def test_all_not_started_manifest_gets_bilingual_first_wave_note(self):
+        result = self.run_controller(r'''
+const papers = [
+  { frontiers: ["AF"], translation_status: "not-started", publication_allowed: true },
+  { frontiers: ["TF"], translation_status: "not-started", publication_allowed: false },
+];
+const page = installPage({ search: "?lang=en", responses: [{ papers }] });
+await import("./site/community.js?behavior-first-wave-note");
+await flushTasks();
+const english = page.translationChart.children[2]?.textContent ?? null;
+await page.languageToggle.click();
+const chinese = page.translationChart.children[2]?.textContent ?? null;
+console.log(JSON.stringify({ english, chinese }));
+''')
+        self.assertEqual(
+            result["english"],
+            "No record has advanced beyond not started; the project is entering its first production translation wave.",
+        )
+        self.assertEqual(
+            result["chinese"],
+            "目前尚无记录进入“尚未开始”之后的阶段；项目正进入首批生产翻译阶段。",
+        )
 
     def test_controller_language_precedence_falls_back_to_storage_then_browser(self):
         result = self.run_controller(r'''
