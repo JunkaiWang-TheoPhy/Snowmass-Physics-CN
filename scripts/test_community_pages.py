@@ -50,7 +50,7 @@ class CommunityPagesTest(unittest.TestCase):
         script = r'''import { summarizePapers } from "./site/community-stats.mjs";
 const result = summarizePapers([
   {frontiers:["AF"], translation_status:"published", authorization_status:"license-cleared", publication_allowed:true},
-  {frontiers:["AF","TF"], translation_status:"machine-draft", authorization_status:"needs-permission", publication_allowed:false},
+  {frontiers:["AF","TF","AF"], translation_status:"machine-draft", authorization_status:"needs-permission", publication_allowed:false},
   {frontiers:["TF"], translation_status:"unknown", authorization_status:"contacted"}
 ]);
 console.log(JSON.stringify(result));'''
