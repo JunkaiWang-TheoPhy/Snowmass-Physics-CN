@@ -681,6 +681,20 @@ def normalize_source_month_names(source: str, translated: str) -> str:
     return normalized
 
 
+def localize_source_month_years(text: str) -> str:
+    """Replace unambiguous English month-year pairs before model submission."""
+
+    localized = text
+    for english, chinese in _MONTH_NAMES_ZH.items():
+        localized = re.sub(
+            rf"\b{english}\s+([12]\d{{3}})\b",
+            lambda match: f"{match.group(1)}年{chinese}",
+            localized,
+            flags=re.I,
+        )
+    return localized
+
+
 def build_request_payload(instructions: str, input_text: str, max_output_tokens: int) -> dict[str, Any]:
     output_format = (
         {"type": "json_object"}
@@ -1237,7 +1251,8 @@ def process_chunk(
         output_path = stage_output_path(article_dir, chunk_id, chunk["output_file"], stage)
         stage_status = status.setdefault("stages", {}).setdefault(stage, {})
         instructions = stage_instructions(stage, glossary)
-        protected_current, mapping, typed_nodes = protect_stage_text(current)
+        model_current = localize_source_month_years(current) if stage == "translate" else current
+        protected_current, mapping, typed_nodes = protect_stage_text(model_current)
         protected_segments = split_protected_model_input(
             protected_current,
             structure_segment_limit(stage_status),

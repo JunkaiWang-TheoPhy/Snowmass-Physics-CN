@@ -849,6 +849,17 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(normalized, "2020年一月，理事会召开会议。")
         self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
 
+    def test_source_month_years_are_localized_before_model_protection(self) -> None:
+        source = "In January 2020 and June 2021, the council met."
+
+        localized = RUNNER.localize_source_month_years(source)
+
+        self.assertEqual(localized, "In 2020年一月 and 2021年六月, the council met.")
+        protected, _mapping, nodes = RUNNER.protect_stage_text(localized)
+        self.assertNotIn("January", protected)
+        self.assertNotIn("June", protected)
+        self.assertEqual([node.value for node in nodes], ["2020", "2021"])
+
     def test_academic_polish_uses_anchor_protocol_for_chinese_word_order(self) -> None:
         source = "参数 $x$ 与 $y$。\n"
         (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
