@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import sys
@@ -70,6 +71,31 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         )
         self.assertFalse(
             bridge.placeholder_sequence_matches("A {v1} B {v2}", "甲 {v2} 乙 {v1}")
+        )
+
+    def test_materializes_lazy_passthrough_values_before_xml_serialization(self) -> None:
+        bridge = load_bridge()
+
+        class LazyPassthroughInstruction:
+            def materialize(self) -> str:
+                return "q 1 0 0 1 0 0 cm"
+
+        @dataclass
+        class GraphicState:
+            passthrough_instruction: object
+
+        @dataclass
+        class Document:
+            states: list[GraphicState]
+
+        document = Document([GraphicState(LazyPassthroughInstruction())])
+
+        returned = bridge.materialize_lazy_passthrough_instructions(document)
+
+        self.assertIs(returned, document)
+        self.assertEqual(
+            document.states[0].passthrough_instruction,
+            "q 1 0 0 1 0 0 cm",
         )
 
     def test_figure_text_gate_rejects_any_translation(self) -> None:

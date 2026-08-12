@@ -127,6 +127,51 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     os.replace(temporary, destination)
 
 
+def materialize_lazy_passthrough_instructions(value: Any) -> Any:
+    """Replace BabelDOC's lazy drawing wrappers before XML serialization.
+
+    BabelDOC 0.6.4 handles these wrappers in its JSON encoder but passes them
+    unchanged to xsdata's XML serializer.  Complex vector pages can therefore
+    fail with ``No converter registered for LazyPassthroughInstruction``.
+    Materializing the wrappers preserves the drawing instruction while making
+    both serialized IR formats use the same concrete string value.
+    """
+
+    seen: set[int] = set()
+
+    def visit(item: Any) -> Any:
+        if item is None or isinstance(item, (str, bytes, int, float, bool)):
+            return item
+        if (
+            type(item).__name__ == "LazyPassthroughInstruction"
+            and callable(getattr(item, "materialize", None))
+        ):
+            return str(item.materialize())
+        identity = id(item)
+        if identity in seen:
+            return item
+        seen.add(identity)
+        if isinstance(item, list):
+            for index, child in enumerate(item):
+                item[index] = visit(child)
+            return item
+        if isinstance(item, dict):
+            for key, child in list(item.items()):
+                item[key] = visit(child)
+            return item
+        if isinstance(item, tuple):
+            return tuple(visit(child) for child in item)
+        if is_dataclass(item) and not isinstance(item, type):
+            for field in fields(item):
+                child = getattr(item, field.name)
+                replacement = visit(child)
+                if replacement is not child:
+                    object.__setattr__(item, field.name, replacement)
+        return item
+
+    return visit(value)
+
+
 def resolve_figure_text_chunk_ids(
     article_dir: Path, manifest: dict[str, Any]
 ) -> set[str]:
@@ -1224,6 +1269,7 @@ def extract_document_units(
 
         ir_json_path = Path(config.get_working_file_path("styles_and_formulas.json"))
         ir_xml_path = Path(config.get_working_file_path("styles_and_formulas.xml"))
+        materialize_lazy_passthrough_instructions(docs)
         converter = XMLConverter()
         converter.write_json(docs, str(ir_json_path))
         converter.write_xml(docs, str(ir_xml_path))
