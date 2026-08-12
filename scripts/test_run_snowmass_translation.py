@@ -923,6 +923,27 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(normalized, "2020年一月，理事会召开会议。")
         self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
 
+    def test_hyphenated_source_range_does_not_become_a_negative_endpoint(self) -> None:
+        source = (
+            "The gain is 2-to-3 orders of magnitude, while the limit is "
+            "2-to-3 times lower."
+        )
+        candidate = "增益高出2到-3个数量级，而极限低2至-3倍。"
+
+        normalized = RUNNER.normalize_hyphenated_numeric_ranges(source, candidate)
+
+        self.assertEqual(normalized, "增益高出2到3个数量级，而极限低2至3倍。")
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
+    def test_numeric_range_normalization_preserves_a_real_negative_endpoint(self) -> None:
+        source = "The interval runs from 2 to -3."
+        candidate = "区间从2到-3。"
+
+        normalized = RUNNER.normalize_hyphenated_numeric_ranges(source, candidate)
+
+        self.assertEqual(normalized, candidate)
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
     def test_source_month_years_are_localized_before_model_protection(self) -> None:
         source = "In January 2020 and June 2021, the council met."
 
@@ -1770,6 +1791,40 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(status["request_key"], "new-request-key")
         self.assertEqual(status["previous_request_key"], "old-request-key")
         self.assertTrue(status["recovered_after_locked_term_contract_change"])
+
+    def test_rejected_numeric_range_candidate_is_repaired_without_an_api_call(self) -> None:
+        source = "The gain is 2-to-3 orders of magnitude.\n"
+        candidate = "增益高出2到-3个数量级。\n"
+        output = self.article_dir / "stage1_chunk0001.md"
+        metadata = RUNNER.persist_rejected_candidate(
+            self.article_dir,
+            "chunk0001",
+            "translate",
+            "same-request-key",
+            candidate,
+            protected=False,
+        )
+        status = {
+            "status": "failed",
+            "request_key": "same-request-key",
+            "error": "QC failed: numbers_mismatch",
+            "qc": {"ok": False, "failures": ["numbers_mismatch"]},
+            **metadata,
+        }
+
+        recovered = RUNNER.recover_rejected_candidate(
+            self.article_dir,
+            source,
+            output,
+            status,
+            "same-request-key",
+            [],
+        )
+
+        self.assertEqual(recovered, "增益高出2到3个数量级。\n")
+        self.assertEqual(output.read_text(encoding="utf-8"), recovered)
+        self.assertTrue(status["recovered_from_rejected_candidate"])
+        self.assertTrue(status["qc"]["ok"])
 
     def test_process_chunk_marks_ambiguous_transport_failure_uncertain_without_output(self) -> None:
         class FakeClient:

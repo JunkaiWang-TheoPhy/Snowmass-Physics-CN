@@ -733,6 +733,51 @@ def normalize_source_month_names(source: str, translated: str) -> str:
     return normalized
 
 
+_SOURCE_HYPHENATED_NUMERIC_RANGE_RE = re.compile(
+    r"(?<![\w.+-])(?P<left>\d+(?:,\d{3})*(?:\.\d+)?)-to-"
+    r"(?P<right>\d+(?:,\d{3})*(?:\.\d+)?)(?![\w.])",
+    flags=re.I,
+)
+
+
+def normalize_hyphenated_numeric_ranges(source: str, translated: str) -> str:
+    """Remove a spurious negative sign only for source-proven ``N-to-M`` ranges.
+
+    The model occasionally renders ``2-to-3`` as ``2到-3``.  A plain Chinese
+    pattern rewrite would corrupt legitimate ranges whose endpoint is negative,
+    so each bounded rewrite must be backed by the corresponding positive
+    hyphenated range in the source text.
+    """
+
+    normalized = translated
+    for source_match in _SOURCE_HYPHENATED_NUMERIC_RANGE_RE.finditer(source):
+        left = source_match.group("left")
+        right = source_match.group("right")
+        translated_range = re.compile(
+            rf"(?<![\d.+-])(?P<left>{re.escape(left)})"
+            rf"(?P<spacing_before>\s*)(?P<connector>[到至])"
+            rf"(?P<spacing_after>\s*)[-−]\s*"
+            rf"(?P<right>{re.escape(right)})(?![\d.])"
+        )
+        normalized, _count = translated_range.subn(
+            lambda match: (
+                f"{match.group('left')}{match.group('spacing_before')}"
+                f"{match.group('connector')}{match.group('spacing_after')}"
+                f"{match.group('right')}"
+            ),
+            normalized,
+            count=1,
+        )
+    return normalized
+
+
+def normalize_source_evidenced_candidate(source: str, translated: str) -> str:
+    """Apply deterministic candidate repairs that are justified by source text."""
+
+    normalized = normalize_source_month_names(source, translated)
+    return normalize_hyphenated_numeric_ranges(source, normalized)
+
+
 def localize_source_month_years(text: str) -> str:
     """Replace unambiguous English month-year pairs before model submission."""
 
@@ -1008,6 +1053,7 @@ def recover_rejected_candidate(
         return None
     if text_hash(candidate) != stage_status.get("rejected_candidate_hash"):
         return None
+    candidate = normalize_source_evidenced_candidate(source, candidate)
     qc_report = validate_chunk(source, candidate, {}, qc_terms)
     if not qc_report.ok:
         return None
@@ -2165,7 +2211,7 @@ def process_chunk(
             atomic_json(status_path, status)
             raise
 
-        restored_text = normalize_source_month_names(source, restored_text)
+        restored_text = normalize_source_evidenced_candidate(source, restored_text)
         qc_report = validate_chunk(source, restored_text, {}, qc_terms)
         stage_status["qc"] = qc_report.to_dict()
         if not qc_report.ok:
