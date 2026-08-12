@@ -746,15 +746,15 @@ def run_refined_article(
         raise RuntimeError(f"Unsupported paper checkpoint schema: {status_path}")
 
     source = _tagged_source(article_dir, chunks)
-    analysis_instructions = """Perform a paper-level content analysis for an English-to-Simplified-Chinese academic translation.
+    analysis_instructions = """Perform a compact paper-level content analysis for an English-to-Simplified-Chinese academic translation.
 Return exactly these Markdown sections: ## Content Summary, ## Terminology, ## Tone & Style, and ## Translation Challenges.
-Identify the paper's argument, domain-specific meanings, preferred terminology, register, and concrete translation risks. Do not translate the paper yet."""
+Identify the paper's argument, domain-specific meanings, preferred terminology, register, and concrete translation risks. Be selective: use at most 40 concise bullets total, do not inventory chunks, and do not reproduce source passages. Do not translate the paper yet."""
     analysis = _run_paper_model_phase(
         phase_name="analysis",
         output_path=article_dir / ANALYSIS_FILE,
         instructions=analysis_instructions,
         input_text=source,
-        max_output_tokens=8000,
+        max_output_tokens=4000,
         client=client,
         status=status,
         status_path=status_path,
@@ -812,7 +812,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         output_path=article_dir / CRITIQUE_FILE,
         instructions=critique_instructions,
         input_text=f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}",
-        max_output_tokens=20000,
+        max_output_tokens=8000,
         client=client,
         status=status,
         status_path=status_path,

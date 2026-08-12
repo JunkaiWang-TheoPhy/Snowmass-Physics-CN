@@ -369,16 +369,19 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         class FakeClient:
             calls = 0
+            paper_phase_limits: dict[str, int] = {}
 
             def complete(self, instructions: str, input_text: str, max_output_tokens: int):
                 self.calls += 1
                 if "paper-level content analysis" in instructions:
+                    self.paper_phase_limits["analysis"] = max_output_tokens
                     return completed_response(
                         "## Content Summary\n测试论文。\n\n## Terminology\nOriginal → 原文\n\n"
                         "## Tone & Style\n学术。\n\n## Translation Challenges\n- 无。\n",
                         "analysis",
                     ), 0.1
                 if "critical review" in instructions:
+                    self.paper_phase_limits["critique"] = max_output_tokens
                     if "chunk0001" not in input_text or "初稿段落" not in input_text:
                         raise AssertionError("critique did not receive tagged merged draft")
                     return completed_response(
@@ -410,6 +413,10 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "complete")
         self.assertEqual(client.calls, 6)
+        self.assertEqual(
+            client.paper_phase_limits,
+            {"analysis": 4000, "critique": 8000},
+        )
         for filename in (
             "01-analysis.md",
             "02-prompt.md",
