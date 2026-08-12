@@ -114,6 +114,22 @@ class TypedProtectionTests(unittest.TestCase):
             "DESI-2, PUMA-32K, and CMB-S4 span the first 1-2 years.",
         )
 
+    def test_pdf_glued_words_do_not_hide_or_extend_scientific_identifiers(self) -> None:
+        units = load_units()
+        source = "9 Rubin Observatory ImagingtoEnableaDESI-2Survey"
+
+        protected = units.protect_translation_unit(source)
+
+        self.assertEqual(
+            [(node.kind, node.value) for node in protected.nodes],
+            [("number", "9"), ("identifier", "DESI-2")],
+        )
+        comparison = units.compare_numeric_literals(
+            source,
+            "9 鲁宾观测台成像以支持DESI-2巡天",
+        )
+        self.assertTrue(comparison.values_equal)
+
     def test_number_unit_literals_are_one_immutable_node(self) -> None:
         units = load_units()
 

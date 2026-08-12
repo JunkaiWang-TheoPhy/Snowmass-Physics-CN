@@ -65,9 +65,8 @@ _BARE_URL_RE = re.compile(
 )
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _SCIENTIFIC_IDENTIFIER_RE = re.compile(
-    r"(?<![A-Za-z0-9_])"
-    r"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+"
-    r"(?![A-Za-z0-9_])"
+    r"[A-Z][A-Z0-9]{1,}"
+    r"(?:-(?:[A-Z]\d+|\d+(?:[A-Z](?![a-z]))?))+"
 )
 _TOKEN_RE = re.compile(r"\[\[SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10}\]\]")
 _EXISTING_PROTECTED_TOKEN_RE = re.compile(
