@@ -352,6 +352,28 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         self.assertFalse(self.output_pdf.with_name(f"{self.output_pdf.stem}.cover.pdf").exists())
         self.assertFalse(self.output_pdf.with_suffix(".json").exists())
 
+    def test_long_but_publishable_title_is_fitted_without_shortening(self) -> None:
+        packager = self.require_module()
+        title = "Snowmass2021 宇宙学前沿白皮书：充分发挥旗舰暗能量实验的全部潜力"
+
+        packager.package_translation_pdf(
+            record=self.base_record(),
+            chinese_title=title,
+            source_pdf_path=self.source_pdf,
+            output_pdf_path=self.output_pdf,
+            version="v4.3",
+            packaged_on=dt.date(2026, 8, 11),
+        )
+
+        cover = fitz.open(self.output_pdf.with_name(f"{self.output_pdf.stem}.cover.pdf"))
+        try:
+            self.assertIn(
+                "".join(title.split()),
+                "".join(cover[0].get_text().split()),
+            )
+        finally:
+            cover.close()
+
     def test_prepends_cover_with_visible_fields_links_qr_and_receipt_hashes(self) -> None:
         packager = self.require_module()
 

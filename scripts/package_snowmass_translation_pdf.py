@@ -181,8 +181,17 @@ def _render_cover_pdf(
 
     y = 192.0
     y = _write_textbox(page, (48, y, 547, y + 24), PROJECT_NAME, 14, text_color) + 12
-    y = _write_textbox(page, (48, y, 547, y + 56), chinese_title, 20, text_color) + 10
-    y = _write_textbox(page, (48, y, 547, y + 56), str(record.get("title", "")), 13, muted_color) + 10
+    y = _write_fitted_textbox(
+        page, (48, y, 547, y + 56), chinese_title, 20, 13, text_color
+    ) + 10
+    y = _write_fitted_textbox(
+        page,
+        (48, y, 547, y + 56),
+        str(record.get("title", "")),
+        13,
+        9,
+        muted_color,
+    ) + 10
     y = _write_textbox(page, (48, y, 547, y + 20), f"原作者：{record.get('authors_as_listed', '')}", 12, text_color) + 20
 
     source_url = str(record.get("source_url", ""))
@@ -293,6 +302,44 @@ def _write_textbox(
         preview = text if len(text) <= 80 else f"{text[:77]}..."
         raise ValueError(f"text overflow for rect {tuple(box)}: {preview}")
     return box.y1
+
+
+def _write_fitted_textbox(
+    page: fitz.Page,
+    rect: tuple[float, float, float, float],
+    text: str,
+    fontsize: float,
+    minimum_fontsize: float,
+    color: tuple[float, float, float],
+) -> float:
+    """Write complete title text at the largest deterministic fitting size."""
+
+    if minimum_fontsize <= 0 or minimum_fontsize > fontsize:
+        raise ValueError("minimum_fontsize must be positive and no larger than fontsize")
+    box = fitz.Rect(rect)
+    selected: float | None = None
+    candidate = float(fontsize)
+    while candidate >= minimum_fontsize - 1e-9:
+        measurement = fitz.open()
+        measurement_page = measurement.new_page(width=page.rect.width, height=page.rect.height)
+        spare_height = measurement_page.insert_textbox(
+            box,
+            text,
+            fontfile=str(SYSTEM_CJK_FONT),
+            fontname="snowmasscover",
+            fontsize=candidate,
+            lineheight=1.25,
+            color=color,
+        )
+        measurement.close()
+        if spare_height >= 0:
+            selected = candidate
+            break
+        candidate = round(candidate - 0.5, 2)
+    if selected is None:
+        preview = text if len(text) <= 80 else f"{text[:77]}..."
+        raise ValueError(f"text overflow for rect {tuple(box)}: {preview}")
+    return _write_textbox(page, rect, text, selected, color)
 
 
 def _write_link_line(
