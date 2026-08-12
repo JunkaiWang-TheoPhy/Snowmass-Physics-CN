@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
 DEFAULT_GLOSSARY = ROOT / "translations/snowmass-global-glossary.json"
 DEFAULT_HARD_CONSTRAINTS = ROOT / "translations/snowmass-hard-constraints.json"
-REFILL_SCHEMA_VERSION = 9
+REFILL_SCHEMA_VERSION = 10
 
 
 def _load_bridge():
@@ -138,6 +138,28 @@ def _forbidden_translation_error(
                     f"{forbidden}; use {replacement}"
                 )
     return None
+
+
+def _clean_title_text(text: str) -> str:
+    lines = [
+        re.sub(r"^\s{0,3}#{1,6}\s*", "", line).strip()
+        for line in text.splitlines()
+        if not re.fullmatch(r"\s*(?:-{3,}|_{3,}|\*{3,})\s*", line)
+    ]
+    return " ".join(line for line in lines if line).strip() + ("\n" if text.endswith("\n") else "")
+
+
+def _visible_parentheses_balanced(text: str) -> bool:
+    pairs = {"(": ")", "（": "）"}
+    closing = set(pairs.values())
+    stack: list[str] = []
+    for character in text:
+        if character in pairs:
+            stack.append(pairs[character])
+        elif character in closing:
+            if not stack or stack.pop() != character:
+                return False
+    return not stack
 
 
 def _merge_exact_translation_rules(
@@ -266,6 +288,21 @@ def prepare_publication_translations(
             raise RuntimeError(f"exact translation source was not found: {source}")
         exact_occurrences += matched
 
+    normalized_title_count = 0
+    for index, chunk in enumerate(chunks):
+        if str(chunk.get("layout_label", "")) != "title":
+            continue
+        cleaned = _clean_title_text(prepared_texts[index])
+        if not cleaned.strip():
+            raise RuntimeError(f"empty title after publication cleanup: {chunk['id']}")
+        if cleaned != prepared_texts[index]:
+            normalized_title_count += 1
+            prepared_texts[index] = cleaned
+
+    for chunk, text in zip(chunks, prepared_texts, strict=True):
+        if not _visible_parentheses_balanced(text):
+            raise RuntimeError(f"unbalanced parentheses in publication chunk: {chunk['id']}")
+
     eligible_first_use_indices: list[int] = []
     in_references = False
     for index, (chunk, translation) in enumerate(zip(chunks, translations, strict=True)):
@@ -320,6 +357,7 @@ def prepare_publication_translations(
         "first_use_terms": len(first_use),
         "figure_text_passthrough_units": len(figure_text_chunk_ids),
         "table_text_passthrough_units": len(table_text_chunk_ids),
+        "normalized_title_count": normalized_title_count,
         "publication_chunk_sha256": chunk_hashes,
     }
 

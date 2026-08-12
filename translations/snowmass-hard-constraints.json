@@ -37,6 +37,28 @@
           "reason": "Lock the official One Cyclotron Road affiliation and preserve all affiliation markers and postal data."
         }
       ]
+    },
+    "arxiv:2203.07564": {
+      "exact_translations": [
+        {
+          "source": "J. V. Bennett{v1}J. Guilliams{v2}M. Hern{v3}andez Villanueva{v4}D. E. Jaffe{v5}P. J. Laycock{v6}A. Panta{v7}C. Serfon{v8}and I. Ueda{v9}",
+          "target": "J. V. Bennett{v1} J. Guilliams{v2} M. Hern{v3}andez Villanueva{v4} D. E. Jaffe{v5} P. J. Laycock{v6} A. Panta{v7} C. Serfon{v8} 和 I. Ueda{v9}",
+          "scope": "all_occurrences",
+          "reason": "Preserve author names and BabelDOC accent/affiliation markers while restoring the separators visible in the source PDF."
+        },
+        {
+          "source": "{v1}University of Mississippi, University, Mississippi 38677{v2}Deutsches Elektronen–Synchrotron, 22607 Hamburg, Germany{v3}Brookhaven National Laboratory, Upton, New York 11973{v4}High Energy Accelerator Research Organization (KEK), Tsukuba 305-0801,Japan",
+          "target": "{v1}密西西比大学，美国密西西比州 University，邮编 38677；{v2}德国电子同步加速器，德国汉堡，邮编 22607；{v3}布鲁克海文国家实验室，美国纽约州厄普顿，邮编 11973；{v4}高能加速器研究机构（KEK），日本筑波，邮编 305-0801",
+          "scope": "all_occurrences",
+          "reason": "Restore affiliation separators that the source PDF encodes only through superscript formula nodes."
+        },
+        {
+          "source": "Submittedto the Proceedings of the US Community Study on the Future of Particle Physics (Snowmass 2021)",
+          "target": "提交至美国粒子物理未来社区研究（Snowmass 2021）会议论文集",
+          "scope": "all_occurrences",
+          "reason": "Correct source extraction spacing and keep the visible parenthetical phrase balanced."
+        }
+      ]
     }
   }
 }

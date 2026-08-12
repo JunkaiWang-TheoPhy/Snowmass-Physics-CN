@@ -536,6 +536,64 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
                 glossary=[],
             )
 
+    def test_publication_preflight_removes_markdown_from_title_blocks(self) -> None:
+        module = load_module()
+        translation = module.BRIDGE.RefillTranslation(
+            1,
+            0,
+            "ABSTRACT\n",
+            "## 摘要\n\n---\n",
+        )
+
+        prepared, report = module.prepare_publication_translations(
+            self.article,
+            {
+                "chunks": [
+                    {
+                        "id": "chunk0001",
+                        "order": 1,
+                        "page_number": 1,
+                        "paragraph_index": 0,
+                        "layout_label": "title",
+                    }
+                ]
+            },
+            [translation],
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[],
+        )
+
+        self.assertEqual(prepared[0].translated_text, "摘要\n")
+        self.assertEqual(report["normalized_title_count"], 1)
+
+    def test_publication_preflight_rejects_unbalanced_visible_parentheses(self) -> None:
+        module = load_module()
+        translation = module.BRIDGE.RefillTranslation(
+            1,
+            0,
+            "Submitted to the proceedings.\n",
+            "提交至会议论文集2021)\n",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "unbalanced parentheses.*chunk0001"):
+            module.prepare_publication_translations(
+                self.article,
+                {
+                    "chunks": [
+                        {
+                            "id": "chunk0001",
+                            "order": 1,
+                            "page_number": 1,
+                            "paragraph_index": 0,
+                            "layout_label": "plain text",
+                        }
+                    ]
+                },
+                [translation],
+                constraints={"schema_version": 1, "exact_translations": []},
+                glossary=[],
+            )
+
     def test_publication_preflight_blocks_known_mistranslation_before_writing_chunks(self) -> None:
         module = load_module()
         translation = module.BRIDGE.RefillTranslation(
