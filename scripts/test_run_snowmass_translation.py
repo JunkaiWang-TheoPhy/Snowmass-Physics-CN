@@ -784,15 +784,33 @@ class ProcessChunkTests(unittest.TestCase):
 
         self.assertTrue(
             RUNNER.should_use_structure_anchor_fallback(
+                "revision",
                 {"error": "Structure-slot response is suspiciously short"},
                 correction_retry,
             )
         )
         self.assertFalse(
             RUNNER.should_use_structure_anchor_fallback(
+                "revision",
                 {"error": "Anchor-template response changed anchor identity or count"},
                 correction_retry,
             )
+        )
+        self.assertFalse(
+            RUNNER.should_use_structure_anchor_fallback(
+                "translate",
+                {"error": "Structure-slot response is suspiciously short"},
+                correction_retry,
+            )
+        )
+
+    def test_structure_failure_retries_with_one_anchor_per_segment(self) -> None:
+        self.assertEqual(RUNNER.structure_segment_limit({}), 4)
+        self.assertEqual(
+            RUNNER.structure_segment_limit(
+                {"error": "Anchor-template response changed anchor identity or count"}
+            ),
+            1,
         )
 
     def test_academic_polish_uses_anchor_protocol_for_chinese_word_order(self) -> None:

@@ -623,15 +623,25 @@ def restore_structure_anchor_output(
 
 
 def should_use_structure_anchor_fallback(
+    stage: str,
     stage_status: dict[str, Any],
     paper_context: str,
 ) -> bool:
     """Use the flexible protocol once, then return to strict slots if it fails."""
 
     error = str(stage_status.get("error") or "")
+    if stage not in {"revision", *OPTIONAL_STYLE_STAGES}:
+        return False
     if "Anchor-template response" in error:
         return False
     return "suspiciously short" in error or "# QC-CORRECTION RETRY 2" in paper_context
+
+
+def structure_segment_limit(stage_status: dict[str, Any]) -> int:
+    error = str(stage_status.get("error") or "")
+    if "Structure-slot response" in error or "Anchor-template response" in error:
+        return 1
+    return MODEL_STRUCTURE_SEGMENT_LIMIT
 
 
 def build_request_payload(instructions: str, input_text: str, max_output_tokens: int) -> dict[str, Any]:
@@ -1191,7 +1201,10 @@ def process_chunk(
         stage_status = status.setdefault("stages", {}).setdefault(stage, {})
         instructions = stage_instructions(stage, glossary)
         protected_current, mapping, typed_nodes = protect_stage_text(current)
-        protected_segments = split_protected_model_input(protected_current)
+        protected_segments = split_protected_model_input(
+            protected_current,
+            structure_segment_limit(stage_status),
+        )
         input_texts: list[str] = []
         request_instructions: list[str] = []
         slot_protocols: list[tuple[tuple[str, ...], tuple[str, ...]] | None] = []
@@ -1199,6 +1212,7 @@ def process_chunk(
         segment_passthroughs: list[bool] = []
         max_outputs: list[int] = []
         use_anchor_fallback = should_use_structure_anchor_fallback(
+            stage,
             stage_status,
             paper_context,
         )
