@@ -415,7 +415,7 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertEqual(client.calls, 6)
         self.assertEqual(
             client.paper_phase_limits,
-            {"analysis": 4000, "critique": 8000},
+            {"analysis": 4000, "critique": 4000},
         )
         for filename in (
             "01-analysis.md",

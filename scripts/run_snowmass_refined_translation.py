@@ -806,13 +806,13 @@ Identify the paper's argument, domain-specific meanings, preferred terminology, 
 
     critique_instructions = """Perform a paper-level critical review of the tagged Chinese draft against the tagged English source.
 Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
-Every actionable finding must start with its chunk ID (for example, `chunk0001:`). Check omissions, additions, factual drift, modality, terminology, syntax, academic register, and translationese. Report only high-impact actionable defects, at most 100 concise findings total. Do not enumerate correct chunks, reproduce long passages, or rewrite the draft."""
+Every actionable finding must start with its chunk ID (for example, `chunk0001:`). Check omissions, additions, factual drift, modality, terminology, syntax, academic register, and translationese. Report only high-impact actionable defects, at most 30 one-line findings total. If more exist, select the 30 highest-risk defects. Do not enumerate correct chunks, reproduce passages, explain your method, or rewrite the draft."""
     critique = _run_paper_model_phase(
         phase_name="critique",
         output_path=article_dir / CRITIQUE_FILE,
         instructions=critique_instructions,
         input_text=f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}",
-        max_output_tokens=8000,
+        max_output_tokens=4000,
         client=client,
         status=status,
         status_path=status_path,
