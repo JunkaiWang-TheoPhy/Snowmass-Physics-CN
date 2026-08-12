@@ -1135,6 +1135,51 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertNotIn("Neighbor-only evidence", observed_inputs[0])
         self.assertNotIn("999", observed_inputs[0])
 
+    def test_successful_qc_retry_is_reused_under_its_stable_base_context(self) -> None:
+        initial = self.article_dir / "stage2_chunk0001.md"
+        initial.write_text("当前译文。\n", encoding="utf-8")
+        base_context = "# Actionable critique for this chunk only\nchunk0001: 修正语序。"
+
+        class RetryClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                return completed_response("修订后的译文。"), 0.1
+
+        RUNNER.process_chunk(
+            self.task,
+            RetryClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=initial,
+            paper_context="# QC-CORRECTION RETRY 1\n修正上一候选。",
+            paper_context_identity=base_context,
+        )
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("stable retry output must be reused without an API call")
+
+        result = RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=initial,
+            paper_context=base_context,
+            paper_context_identity=base_context,
+        )
+
+        self.assertEqual(result["status"], "complete")
+        status = json.loads(
+            (self.article_dir / "chunk_status" / "chunk0001.json").read_text(
+                encoding="utf-8"
+            )
+        )["stages"]["revision"]
+        self.assertTrue(status["reused_after_request_contract_change"])
+        self.assertEqual(
+            status["paper_context_hash"],
+            RUNNER.text_hash(base_context),
+        )
+
     def test_failed_segmented_refinement_retry_omits_whole_source_context(self) -> None:
         (self.article_dir / "chunk0001.md").write_text(
             "Whole original source contains trailing 999 evidence.\n", encoding="utf-8"

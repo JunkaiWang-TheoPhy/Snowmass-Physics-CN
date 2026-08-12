@@ -1322,6 +1322,7 @@ def process_chunk(
     budget_guard: BudgetGuard | None = None,
     stages: tuple[str, ...] | None = None,
     paper_context: str = "",
+    paper_context_identity: str | None = None,
     initial_text_path: Path | None = None,
 ) -> dict[str, Any]:
     article_dir = task["article_dir"]
@@ -1528,7 +1529,12 @@ def process_chunk(
         if checkpoint_is_valid(stage_status, output_path, expected_key):
             current = output_path.read_text(encoding="utf-8")
             continue
-        context_hash = text_hash(paper_context) if stage == "revision" else None
+        stable_paper_context = (
+            paper_context_identity
+            if paper_context_identity is not None
+            else paper_context
+        )
+        context_hash = text_hash(stable_paper_context) if stage == "revision" else None
         context_allows_reuse = (
             stage != "revision"
             or stage_status.get("paper_context_hash") == context_hash

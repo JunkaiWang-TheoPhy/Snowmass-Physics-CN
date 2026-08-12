@@ -1437,6 +1437,12 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
             f"{CRITIQUE_FILE} contains no body chunk tags"
         )
 
+    revision_contexts = {
+        str(chunk["id"]): _revision_context_preserving_completed_checkpoint(
+            article_dir, str(chunk["id"]), critique
+        )
+        for chunk in chunks
+    }
     _run_chunk_barrier(
         chunks,
         concurrency=concurrency,
@@ -1454,12 +1460,11 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
             paper_context=_qc_retry_context(
                 article_dir,
                 chunk,
-                _revision_context_preserving_completed_checkpoint(
-                    article_dir, str(chunk["id"]), critique
-                ),
+                revision_contexts[str(chunk["id"])],
                 attempt,
                 terms=terms,
             ),
+            paper_context_identity=revision_contexts[str(chunk["id"])],
             initial_text_path=runner.stage_output_path(
                 article_dir,
                 str(chunk["id"]),
