@@ -10,16 +10,32 @@
     <link rel="stylesheet" href="/styles.css?v=20260812-paper-pages-fix1">
     <script src="/theme-init.js"></script>
   </head>
-  <body class="paper-page-body" data-papers-url="/data/papers.json">
+  <body class="paper-page-body" data-page="paper" data-papers-url="/data/papers.json">
     <a class="skip-link" href="#paper-page">跳到论文信息</a>
     <header class="site-header subpage-header">
-      <a class="brand" href="/?lang=zh" aria-label="返回 Snowmass 中文翻译计划首页"><span class="brand-mark" aria-hidden="true">△</span><span><strong>Snowmass 中文翻译计划</strong><small>Open Translation Atlas</small></span></a>
-      <nav aria-label="主要导航"><a href="/?lang=zh">论文目录</a><a href="/progress/?lang=zh">项目进展</a><a href="/contributors/?lang=zh">同行者</a><a href="/guide/?lang=zh">参与指南</a><a class="nav-cta" href="https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN" target="_blank" rel="noreferrer">在 GitHub 参与</a></nav>
+      <a class="brand" href="/?lang=zh" aria-label="返回 Snowmass 中文翻译计划首页" data-zh-aria="返回 Snowmass 中文翻译计划首页" data-en-aria="Back to Snowmass Chinese Translation home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 42 42" focusable="false"><path d="M4 31 15 17l6 7 6-10 11 17H4Z"/><path d="m15 17 3 4 3-3 6-4 3 5"/></svg>
+        </span>
+        <span><strong data-zh="Snowmass 中文翻译计划" data-en="Snowmass Chinese Translation">Snowmass 中文翻译计划</strong><small>Open Translation Atlas</small></span>
+      </a>
+      <nav aria-label="主要导航" data-zh-aria="主要导航" data-en-aria="Primary navigation">
+        <a href="/?lang=zh" aria-current="page" data-zh="论文目录" data-en="Catalog">论文目录</a>
+        <a href="/progress/?lang=zh" data-zh="项目进展" data-en="Progress">项目进展</a>
+        <a href="/contributors/?lang=zh" data-zh="同行者" data-en="Contributors">同行者</a>
+        <a href="/guide/?lang=zh" data-zh="参与指南" data-en="Guide">参与指南</a>
+        <a class="nav-cta" href="https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN" target="_blank" rel="noreferrer" data-zh="在 GitHub 参与" data-en="Join on GitHub">在 GitHub 参与</a>
+        <div class="view-controls">
+          <button type="button" class="view-toggle" id="language-toggle" aria-pressed="false">EN</button>
+          <button type="button" class="view-toggle" id="theme-toggle" aria-pressed="false"><span aria-hidden="true">◐</span><span id="theme-label">深色</span></button>
+        </div>
+      </nav>
     </header>
     <main id="paper-page" class="paper-permalink-main" aria-live="polite">
       <section class="paper-page-loading"><p class="eyebrow">TRANSLATION PAGE · 本论文译文页</p><h1>正在读取论文记录</h1></section>
     </main>
     <footer><div><strong>Snowmass 中文翻译计划</strong><p>非官方社区项目；论文来源、许可和翻译进度以本页记录为准。</p></div><div class="footer-links"><a href="/?lang=zh#catalog">返回论文目录</a><a href="/guide/?lang=zh">参与翻译</a></div></footer>
+    <script type="module" src="/community.js"></script>
     <script type="module" src="/paper-page.js"></script>
   </body>
 </html>

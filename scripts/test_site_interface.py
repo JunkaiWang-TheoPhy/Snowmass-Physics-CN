@@ -54,6 +54,18 @@ class SiteInterfaceTest(unittest.TestCase):
         self.assertNotIn("/paper/paper-page.js", internal_paths)
         self.assertNotIn("/paper/data/papers.json", internal_paths)
 
+    def test_paper_header_reuses_site_brand_and_view_controls(self):
+        home_html = (ROOT / "site/index.html").read_text()
+        paper_html = (ROOT / "site/paper/index.html").read_text()
+
+        home_mark = home_html.split('<span class="brand-mark"', 1)[1].split("</span>", 1)[0]
+        paper_mark = paper_html.split('<span class="brand-mark"', 1)[1].split("</span>", 1)[0]
+        self.assertEqual(home_mark, paper_mark)
+        self.assertIn('id="language-toggle"', paper_html)
+        self.assertIn('id="theme-toggle"', paper_html)
+        self.assertIn('id="theme-label"', paper_html)
+        self.assertIn('src="/community.js"', paper_html)
+
     def test_catalog_cards_link_to_permanent_paper_pages(self):
         script = (ROOT / "site/app.js").read_text()
         self.assertIn('class="paper-detail-button"', script)
