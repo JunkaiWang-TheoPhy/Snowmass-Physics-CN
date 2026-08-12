@@ -813,6 +813,24 @@ class ProcessChunkTests(unittest.TestCase):
             1,
         )
 
+    def test_english_month_names_do_not_invent_arabic_month_numbers(self) -> None:
+        source = "For reference, the January 2021 capacity was 558 PB."
+        candidate = "作为参考，1月份2021时的容量为558 PB。"
+
+        normalized = RUNNER.normalize_source_month_names(source, candidate)
+
+        self.assertEqual(normalized, "作为参考，一月2021时的容量为558 PB。")
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
+    def test_month_normalization_preserves_a_numeric_day_from_source(self) -> None:
+        source = "On January 1, 2021, the run started."
+        candidate = "运行于1月1日2021开始。"
+
+        normalized = RUNNER.normalize_source_month_names(source, candidate)
+
+        self.assertEqual(normalized, "运行于一月1日2021开始。")
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
     def test_academic_polish_uses_anchor_protocol_for_chinese_word_order(self) -> None:
         source = "参数 $x$ 与 $y$。\n"
         (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")

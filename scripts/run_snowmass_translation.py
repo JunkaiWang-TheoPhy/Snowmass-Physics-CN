@@ -59,6 +59,20 @@ _SOURCE_LEXICAL_RE = re.compile(r"[A-Za-z]")
 _TARGET_LEXICAL_RE = re.compile(r"[A-Za-z\u3400-\u9fff]")
 _CONTEXT_ANCHOR_RE = re.compile(r"<ANCHOR_[0-9]{4}>")
 _ACADEMIC_PUNCTUATION_TABLE = str.maketrans({".": "。", ",": "，", ";": "；", ":": "："})
+_MONTH_NAMES_ZH = {
+    "january": "一月",
+    "february": "二月",
+    "march": "三月",
+    "april": "四月",
+    "may": "五月",
+    "june": "六月",
+    "july": "七月",
+    "august": "八月",
+    "september": "九月",
+    "october": "十月",
+    "november": "十一月",
+    "december": "十二月",
+}
 _MODEL_SENTINEL_RE = re.compile(
     r"\[\[(?:SM_[0-9]{4}_[0-9a-f]{5,10}|SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10})\]\]"
 )
@@ -642,6 +656,21 @@ def structure_segment_limit(stage_status: dict[str, Any]) -> int:
     if "Structure-slot response" in error or "Anchor-template response" in error:
         return 1
     return MODEL_STRUCTURE_SEGMENT_LIMIT
+
+
+def normalize_source_month_names(source: str, translated: str) -> str:
+    """Keep translated English month names from inventing Arabic numerals."""
+
+    normalized = translated
+    for month_number, (english, chinese) in enumerate(_MONTH_NAMES_ZH.items(), 1):
+        if not re.search(rf"\b{english}\b", source, flags=re.I):
+            continue
+        normalized = re.sub(
+            rf"(?<!\d){month_number}\s*月份?",
+            chinese,
+            normalized,
+        )
+    return normalized
 
 
 def build_request_payload(instructions: str, input_text: str, max_output_tokens: int) -> dict[str, Any]:
@@ -2015,6 +2044,7 @@ def process_chunk(
             atomic_json(status_path, status)
             raise
 
+        restored_text = normalize_source_month_names(source, restored_text)
         qc_report = validate_chunk(source, restored_text, {}, qc_terms)
         stage_status["qc"] = qc_report.to_dict()
         if not qc_report.ok:
