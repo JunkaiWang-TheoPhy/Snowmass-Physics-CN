@@ -250,6 +250,22 @@ class NumericComparisonTests(unittest.TestCase):
         self.assertFalse(negative.values_equal)
         self.assertEqual(negative.missing_values, ("-2%",))
 
+    def test_chinese_mid_decade_connector_is_not_a_negative_year(self) -> None:
+        units = load_units()
+
+        result = units.compare_numeric_literals(
+            "operations begin in the mid-2030 and mid/end-2040",
+            "运行始于中叶-2030和中叶/末-2040",
+        )
+        genuine_negative = units.compare_numeric_literals(
+            "the temperature is -2040 K",
+            "温度为2040 K",
+        )
+
+        self.assertTrue(result.values_equal)
+        self.assertFalse(genuine_negative.values_equal)
+        self.assertEqual(genuine_negative.missing_values, ("-2040",))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -264,8 +264,16 @@ def _numeric_literals(text: str) -> tuple[tuple[str, str], ...]:
         if (
             raw.startswith("-")
             and match.start() > 0
-            and source[match.start() - 1].isascii()
-            and source[match.start() - 1].isalpha()
+            and (
+                (
+                    source[match.start() - 1].isascii()
+                    and source[match.start() - 1].isalpha()
+                )
+                or (
+                    re.search(r"(?:中叶|末|中期|后期)$", source[: match.start()]) is not None
+                    and re.fullmatch(r"-(?:19|20)\d{2}", raw) is not None
+                )
+            )
         ):
             semantic = raw[1:]
         values.append((raw, _canonical_number(semantic)))
