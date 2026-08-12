@@ -147,7 +147,11 @@ _UNIT_LITERAL_PATTERN = re.compile(
 _DECIMAL_LITERAL_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])[-+]?\d+\.\d+(?:[eE][-+]?\d+)?(?![A-Za-z0-9_])"
 )
+_REFERENCE_LABEL_PATTERN = re.compile(
+    r"\((?:[A-Za-z](?:\.\d+)+|\d+(?:\.\d+)+|[A-Za-z])\)"
+)
 _STRUCTURE_PATTERNS = (
+    _REFERENCE_LABEL_PATTERN,
     re.compile(r"\((?:\{v\d+\}|[()\s])+\)"),
     re.compile(r"[()（）]"),
     re.compile(r"\{v\d+\}"),

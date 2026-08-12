@@ -68,6 +68,10 @@ _TOKEN_RE = re.compile(r"\[\[SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10}\]\]")
 _EXISTING_PROTECTED_TOKEN_RE = re.compile(
     r"\[\[(?:SM_[0-9]{4}_[0-9a-f]{5,10}|SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10})\]\]"
 )
+_REFERENCE_LABEL_RE = re.compile(
+    r"\((?:[A-Za-z](?:\.\d+)+|\d+(?:\.\d+)+|[A-Za-z])\)"
+)
+_UNITY_RE = re.compile(r"\bunity\b", re.IGNORECASE)
 
 
 def _remove_comment_environments(text: str) -> str:
@@ -149,16 +153,18 @@ def _balanced_command_spans(text: str, command: str) -> list[tuple[int, int]]:
 
 def _candidate_spans(text: str) -> list[tuple[int, int, str]]:
     candidates: list[tuple[int, int, str, int]] = []
+    for match in _REFERENCE_LABEL_RE.finditer(text):
+        candidates.append((match.start(), match.end(), "reference_label", 0))
     for start, end in _balanced_command_spans(text, "url"):
-        candidates.append((start, end, "tex_url", 0))
+        candidates.append((start, end, "tex_url", 1))
     for match in _BARE_URL_RE.finditer(text):
-        candidates.append((match.start(), match.end(), "url", 1))
+        candidates.append((match.start(), match.end(), "url", 2))
     for match in _EMAIL_RE.finditer(text):
-        candidates.append((match.start(), match.end(), "email", 2))
+        candidates.append((match.start(), match.end(), "email", 3))
     for match in _UNIT_VALUE_RE.finditer(text):
-        candidates.append((match.start(), match.end(), "unit", 3))
+        candidates.append((match.start(), match.end(), "unit", 4))
     for match in _NUMBER_RE.finditer(text):
-        candidates.append((match.start(), match.end(), "number", 4))
+        candidates.append((match.start(), match.end(), "number", 5))
 
     accepted: list[tuple[int, int, str]] = []
     occupied = [(match.start(), match.end()) for match in _EXISTING_PROTECTED_TOKEN_RE.finditer(text)]
@@ -263,6 +269,18 @@ def compare_numeric_literals(source: str, translated: str) -> NumericComparison:
     translated_numbers = _numeric_literals(translated)
     source_values = Counter(canonical for _raw, canonical in source_numbers)
     translated_values = Counter(canonical for _raw, canonical in translated_numbers)
+    # In scientific prose, ``unity`` denotes the exact numeric value one. A
+    # Chinese translation may naturally render it as Arabic ``1``. Consume at
+    # most one translated 1 for each source occurrence so real additions still
+    # fail closed.
+    implicit_ones = len(_UNITY_RE.findall(source))
+    if implicit_ones and translated_values["1"] > source_values["1"]:
+        translated_values["1"] -= min(
+            implicit_ones,
+            translated_values["1"] - source_values["1"],
+        )
+        if not translated_values["1"]:
+            del translated_values["1"]
     values_equal = source_values == translated_values
     raw_source = tuple(raw for raw, _canonical in source_numbers)
     raw_translated = tuple(raw for raw, _canonical in translated_numbers)

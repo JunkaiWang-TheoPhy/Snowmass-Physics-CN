@@ -43,6 +43,27 @@ class PublishedTexTests(unittest.TestCase):
 
 
 class TypedProtectionTests(unittest.TestCase):
+    def test_parenthesized_reference_labels_are_one_immutable_node(self) -> None:
+        units = load_units()
+
+        protected = units.protect_translation_unit(
+            "See Eq. (2.6), Eq. (B.63), and Fig. 4(b)."
+        )
+
+        self.assertEqual(
+            [(node.kind, node.value) for node in protected.nodes],
+            [
+                ("reference_label", "(2.6)"),
+                ("reference_label", "(B.63)"),
+                ("number", "4"),
+                ("reference_label", "(b)"),
+            ],
+        )
+        self.assertEqual(
+            units.restore_translation_unit(protected.text, protected.nodes),
+            "See Eq. (2.6), Eq. (B.63), and Fig. 4(b).",
+        )
+
     def test_balanced_tex_url_stops_before_outer_brace_and_chinese_text(self) -> None:
         units = load_units()
         source = "由 \\footnote{\\url{https://example.org/a_b}}，随后计算 2800 个样本。"
@@ -116,6 +137,29 @@ class TypedProtectionTests(unittest.TestCase):
 
 
 class NumericComparisonTests(unittest.TestCase):
+    def test_domain_word_unity_may_be_rendered_as_arabic_one(self) -> None:
+        units = load_units()
+
+        result = units.compare_numeric_literals(
+            "The enhancement approaches unity.",
+            "该增强效应趋近于1。",
+        )
+
+        self.assertTrue(result.values_equal)
+        self.assertEqual(result.missing_values, ())
+        self.assertEqual(result.added_values, ())
+
+    def test_unity_allowance_does_not_hide_an_additional_one(self) -> None:
+        units = load_units()
+
+        result = units.compare_numeric_literals(
+            "The enhancement approaches unity.",
+            "该增强效应在1个额外条件下趋近于1。",
+        )
+
+        self.assertFalse(result.values_equal)
+        self.assertEqual(result.added_values, ("1",))
+
     def test_pdf_glued_number_has_same_value_after_chinese_spacing_changes(self) -> None:
         units = load_units()
 
