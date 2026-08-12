@@ -204,6 +204,25 @@ class RefinedOrchestratorTests(unittest.TestCase):
         for shard in range(1, 11):
             self.assertIn(f"chunk{shard:02d}01:", merged)
 
+    def test_shard_merge_accepts_bounded_per_section_model_interpretation(self) -> None:
+        module = load_module()
+        sections = []
+        next_chunk = 1
+        for heading in ("Accuracy", "Native Voice", "Notes & Adaptation"):
+            lines = []
+            for _ in range(module.CRITIQUE_SHARD_MAX_FINDINGS):
+                lines.append(f"- chunk{next_chunk:04d}: issue {next_chunk}")
+                next_chunk += 1
+            sections.append(f"## {heading}\n" + "\n".join(lines))
+        output = "\n\n".join(sections) + "\n\n## Summary\n- done\n"
+
+        merged = module._merge_sharded_critiques([output])
+
+        self.assertEqual(
+            len(re.findall(r"^- chunk\d{4}:", merged, re.M)),
+            module.CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS,
+        )
+
     def test_shard_merge_accepts_minor_chunk_line_format_variants(self) -> None:
         module = load_module()
         output = (
@@ -228,6 +247,22 @@ class RefinedOrchestratorTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "unparseable actionable"):
+            module._merge_sharded_critiques([output])
+
+    def test_shard_merge_rejects_more_than_bounded_section_fallback(self) -> None:
+        module = load_module()
+        lines = "\n".join(
+            f"- chunk{index:04d}: issue {index}"
+            for index in range(1, module.CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS + 2)
+        )
+        output = (
+            "## Accuracy\n" + lines + "\n\n"
+            "## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Summary\n- done\n"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "exceeds"):
             module._merge_sharded_critiques([output])
 
     def test_revision_context_hash_changes_when_effective_critique_changes(self) -> None:

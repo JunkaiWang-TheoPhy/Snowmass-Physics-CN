@@ -34,6 +34,7 @@ MANUAL_CORRECTIONS_FILE = "manual_corrections.json"
 TRACKED_HARD_CONSTRAINTS = SCRIPT_DIR.parent / "translations/snowmass-hard-constraints.json"
 CRITIQUE_SHARD_CHAR_LIMIT = 16_000
 CRITIQUE_SHARD_MAX_FINDINGS = 4
+CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS = CRITIQUE_SHARD_MAX_FINDINGS * 3
 CRITIQUE_SHARD_MAX_FINDING_CHARACTERS = 160
 CRITIQUE_SHARD_MAX_OUTPUT_TOKENS = 900
 CRITIQUE_GLOBAL_MAX_FINDINGS = 30
@@ -416,7 +417,7 @@ def _merge_sharded_critiques(
     shard_outputs: list[str],
     *,
     max_findings: int = CRITIQUE_GLOBAL_MAX_FINDINGS,
-    max_findings_per_shard: int = CRITIQUE_SHARD_MAX_FINDINGS,
+    max_findings_per_shard: int = CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS,
     max_finding_characters: int = CRITIQUE_SHARD_MAX_FINDING_CHARACTERS,
 ) -> str:
     """Round-robin actionable findings so late shards retain review coverage."""
