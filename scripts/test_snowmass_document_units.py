@@ -75,21 +75,21 @@ class TypedProtectionTests(unittest.TestCase):
         units = load_units()
 
         protected = units.protect_translation_unit(
-            "above 400 GeV, 1TeV, 10%, and 2 TeV"
+            "above 400 GeV, 1Tev, 10%, and 2 TeV"
         )
 
         self.assertEqual(
             [(node.kind, node.value) for node in protected.nodes],
             [
                 ("unit", "400 GeV"),
-                ("unit", "1TeV"),
+                ("unit", "1Tev"),
                 ("unit", "10%"),
                 ("unit", "2 TeV"),
             ],
         )
         self.assertEqual(
             units.restore_translation_unit(protected.text, protected.nodes),
-            "above 400 GeV, 1TeV, 10%, and 2 TeV",
+            "above 400 GeV, 1Tev, 10%, and 2 TeV",
         )
 
     def test_numbers_glued_to_pdf_text_are_still_protected_without_nesting_sentinels(self) -> None:

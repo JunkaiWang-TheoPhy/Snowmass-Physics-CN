@@ -672,6 +672,12 @@ def normalize_source_month_names(source: str, translated: str) -> str:
             chinese,
             normalized,
         )
+        for year in re.findall(rf"\b{english}\s+([12]\d{{3}})\b", source, flags=re.I):
+            normalized = re.sub(
+                rf"({re.escape(year)}年{chinese})\s*{re.escape(year)}(?=\D|$)",
+                r"\1",
+                normalized,
+            )
     return normalized
 
 

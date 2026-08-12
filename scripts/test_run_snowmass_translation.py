@@ -840,6 +840,15 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(normalized, "运行于一月1日2021开始。")
         self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
 
+    def test_month_normalization_folds_duplicate_protected_year(self) -> None:
+        source = "In January 2020, the council met."
+        candidate = "2020年1月2020，理事会召开会议。"
+
+        normalized = RUNNER.normalize_source_month_names(source, candidate)
+
+        self.assertEqual(normalized, "2020年一月，理事会召开会议。")
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
     def test_academic_polish_uses_anchor_protocol_for_chinese_word_order(self) -> None:
         source = "参数 $x$ 与 $y$。\n"
         (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
