@@ -8,6 +8,7 @@ import concurrent.futures
 import json
 import math
 from pathlib import Path
+import re
 import sys
 from typing import Any
 import uuid
@@ -295,12 +296,15 @@ def _chunk_passthrough_reason(
     table_text_ids: set[str] | None = None,
 ) -> str | None:
     chunk_id = str(chunk["id"])
+    source_text = str(chunk.get("source_text") or "")
     if chunk_id in figure_text_ids:
         return "figure_internal_text_passthrough"
     if chunk_id in set(table_text_ids or ()):
         return "table_internal_text_passthrough"
     if chunk_id in reference_ids:
         return "reference_section_passthrough"
+    if source_text.strip() and not re.search(r"[A-Za-z\u3400-\u9fff]", source_text):
+        return "nonlinguistic_symbol_passthrough"
     if chunk_id in fragile_fragment_ids:
         return "fragile_layout_fragment_passthrough"
     return None
@@ -773,7 +777,7 @@ def run_refined_article(
         if fixed_translation is not None and source_text.endswith("\n"):
             fixed_translation += "\n"
         passthrough_reason = _chunk_passthrough_reason(
-            chunk,
+            {**chunk, "source_text": source_text},
             reference_ids=reference_ids,
             fragile_fragment_ids=fragile_fragment_ids,
             figure_text_ids=figure_text_ids,

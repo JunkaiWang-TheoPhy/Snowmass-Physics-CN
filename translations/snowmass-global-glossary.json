@@ -26,7 +26,7 @@
     {"source": "gravitational wave", "target": "引力波", "first_use": true},
     {"source": "cosmic ray", "target": "宇宙线", "first_use": true},
     {"source": "accelerator", "target": "加速器", "first_use": true},
-    {"source": "cyclotron", "target": "回旋加速器", "note": "Do not mistranslate as 旋风加速器; preserve the locked term in facility names and addresses."},
+    {"source": "cyclotron", "target": "回旋加速器", "exclude_phrases": ["Chemin du Cyclotron"], "note": "Do not mistranslate as 旋风加速器; preserve foreign-language proper names listed in exclude_phrases."},
     {"source": "detector", "target": "探测器", "first_use": true},
     {"source": "collaboration", "target": "合作组"},
     {"source": "observatory", "target": "观测台", "first_use": true},

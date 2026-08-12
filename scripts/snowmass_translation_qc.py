@@ -100,6 +100,23 @@ def _sentinel_sequence_is_valid(text: str, mapping: dict[str, str]) -> bool:
 def _locked_term_failures(source: str, translated: str, glossary: list[dict[str, Any]]) -> tuple[str, ...]:
     failures: list[str] = []
     for source_term, target_term in _normalize_terms(glossary):
+        rule = next(
+            (
+                item
+                for item in glossary
+                if str(item.get("source", "")).strip() == source_term
+                and str(item.get("target", "")).strip() == target_term
+            ),
+            {},
+        )
+        excluded = rule.get("exclude_phrases") if isinstance(rule, dict) else None
+        if isinstance(excluded, list) and any(
+            isinstance(phrase, str)
+            and phrase
+            and phrase.casefold() in source.casefold()
+            for phrase in excluded
+        ):
+            continue
         if not _contains_term(source, source_term):
             continue
         if _contains_term(translated, target_term):
@@ -182,6 +199,23 @@ def validate_chunk(source: str, translated: str, mapping: dict[str, str], glossa
 def stage_decision(stage: str, text: str, glossary: list[dict[str, Any]]) -> StageDecision:
     if stage == "terminology":
         for source_term, target_term in _normalize_terms(glossary):
+            rule = next(
+                (
+                    item
+                    for item in glossary
+                    if str(item.get("source", "")).strip() == source_term
+                    and str(item.get("target", "")).strip() == target_term
+                ),
+                {},
+            )
+            excluded = rule.get("exclude_phrases") if isinstance(rule, dict) else None
+            if isinstance(excluded, list) and any(
+                isinstance(phrase, str)
+                and phrase
+                and phrase.casefold() in text.casefold()
+                for phrase in excluded
+            ):
+                continue
             if _contains_term(text, target_term):
                 continue
             if _contains_term(text, source_term) and not _is_permitted_acronym(source_term, target_term):

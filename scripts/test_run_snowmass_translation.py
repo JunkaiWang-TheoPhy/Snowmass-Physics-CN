@@ -354,6 +354,20 @@ class GlossaryMergeTests(unittest.TestCase):
 
         self.assertEqual(selected, terms[1:])
 
+    def test_select_glossary_terms_ignores_configured_proper_name_phrase(self) -> None:
+        selected = RUNNER.select_glossary_terms(
+            "Université Catholique, Chemin du Cyclotron, Belgium.",
+            [
+                {
+                    "source": "cyclotron",
+                    "target": "回旋加速器",
+                    "exclude_phrases": ["Chemin du Cyclotron"],
+                }
+            ],
+        )
+
+        self.assertEqual(selected, [])
+
 
 class BudgetGuardTests(unittest.TestCase):
     def test_zero_budget_is_rejected_instead_of_meaning_unlimited(self) -> None:

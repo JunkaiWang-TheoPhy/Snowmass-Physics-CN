@@ -190,6 +190,18 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(reason, "table_internal_text_passthrough")
 
+    def test_nonlinguistic_symbol_line_is_passthrough(self) -> None:
+        module = load_module()
+
+        reason = module._chunk_passthrough_reason(
+            {"id": "chunk0099", "source_text": "#**************\n"},
+            reference_ids=set(),
+            fragile_fragment_ids=set(),
+            figure_text_ids=set(),
+        )
+
+        self.assertEqual(reason, "nonlinguistic_symbol_passthrough")
+
     def test_manual_correction_is_source_hash_pinned_and_updates_final_checkpoint(self) -> None:
         module = load_module()
         source = "samples)\n"

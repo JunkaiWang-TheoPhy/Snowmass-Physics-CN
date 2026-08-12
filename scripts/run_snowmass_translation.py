@@ -258,6 +258,14 @@ def select_glossary_terms(source_text: str, terms: list[dict[str, Any]]) -> list
     folded = source_text.casefold()
     selected: list[dict[str, Any]] = []
     for term in terms:
+        excluded = term.get("exclude_phrases")
+        if isinstance(excluded, list) and any(
+            isinstance(phrase, str)
+            and phrase.strip()
+            and phrase.strip().casefold() in folded
+            for phrase in excluded
+        ):
+            continue
         surfaces = [term.get("source", ""), *term.get("aliases", [])]
         if any(str(surface).strip().casefold() in folded for surface in surfaces if str(surface).strip()):
             selected.append(term)

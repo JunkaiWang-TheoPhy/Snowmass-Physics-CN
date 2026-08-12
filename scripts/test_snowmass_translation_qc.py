@@ -259,6 +259,22 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("locked_terms_mismatch", report.failures)
 
+    def test_locked_term_phrase_exception_preserves_foreign_proper_name(self) -> None:
+        report = QC.validate_chunk(
+            source="Université Catholique, Chemin du Cyclotron, Belgium.\n",
+            translated="鲁汶天主教大学，Chemin du Cyclotron，比利时。\n",
+            mapping={},
+            glossary=[
+                {
+                    "source": "cyclotron",
+                    "target": "回旋加速器",
+                    "exclude_phrases": ["Chemin du Cyclotron"],
+                }
+            ],
+        )
+
+        self.assertTrue(report.ok)
+
     def test_validate_chunk_accepts_mixed_script_term_with_spacing_difference(self) -> None:
         report = QC.validate_chunk(
             source="CMB lensing constrains the model.\n",
@@ -300,6 +316,21 @@ class StageDecisionTests(unittest.TestCase):
 
         self.assertTrue(decision.should_call_model)
         self.assertEqual(decision.reason, "terminology_locked_term_conflict")
+
+    def test_stage_decision_skips_term_inside_configured_proper_name_phrase(self) -> None:
+        decision = QC.stage_decision(
+            "terminology",
+            "Université Catholique, Chemin du Cyclotron, Belgium.\n",
+            [
+                {
+                    "source": "cyclotron",
+                    "target": "回旋加速器",
+                    "exclude_phrases": ["Chemin du Cyclotron"],
+                }
+            ],
+        )
+
+        self.assertFalse(decision.should_call_model)
 
     def test_stage_decision_treats_mixed_script_spacing_as_canonical(self) -> None:
         decision = QC.stage_decision(

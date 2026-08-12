@@ -585,6 +585,17 @@ class StructureProtectionTests(unittest.TestCase):
             text,
         )
 
+    def test_parenthesized_babeldoc_placeholder_group_is_one_protected_structure(self) -> None:
+        text = "Correction ({v1}({v2})) remains small."
+
+        protected = self.pipeline.protect_structures(text)
+
+        self.assertIn("({v1}({v2}))", protected.mapping.values())
+        self.assertEqual(
+            self.pipeline.validate_and_restore(protected.text, protected.mapping),
+            text,
+        )
+
     def test_protect_structures_keeps_url_separate_from_immediately_following_math(self) -> None:
         text = "See https://example.org/model$^{#3}$ next."
 
