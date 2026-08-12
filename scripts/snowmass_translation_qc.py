@@ -219,8 +219,13 @@ def stage_decision(stage: str, text: str, glossary: list[dict[str, Any]]) -> Sta
                 continue
             if _contains_term(text, target_term):
                 continue
-            if _contains_term(text, source_term) and not _is_permitted_acronym(source_term, target_term):
+            if _is_permitted_acronym(source_term, target_term) and _contains_term(
+                text, source_term
+            ):
+                continue
+            if _contains_term(text, source_term):
                 return StageDecision(True, "terminology_locked_term_conflict")
+            return StageDecision(True, "terminology_locked_term_missing")
         return StageDecision(False, "terminology_noop_no_locked_term_conflicts")
 
     if stage == "anti_ai":

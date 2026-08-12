@@ -317,6 +317,25 @@ class StageDecisionTests(unittest.TestCase):
         self.assertTrue(decision.should_call_model)
         self.assertEqual(decision.reason, "terminology_locked_term_conflict")
 
+    def test_stage_decision_repairs_a_locked_term_omitted_by_the_draft(self) -> None:
+        decision = QC.stage_decision(
+            "terminology",
+            "利用共线 PDF，可以将完整过程重写为下式。\n",
+            [{"source": "cross section", "target": "截面"}],
+        )
+
+        self.assertTrue(decision.should_call_model)
+        self.assertEqual(decision.reason, "terminology_locked_term_missing")
+
+    def test_stage_decision_does_not_expand_a_permitted_acronym(self) -> None:
+        decision = QC.stage_decision(
+            "terminology",
+            "CMB 各向异性限制了该模型。\n",
+            [{"source": "CMB", "target": "宇宙微波背景"}],
+        )
+
+        self.assertFalse(decision.should_call_model)
+
     def test_stage_decision_skips_term_inside_configured_proper_name_phrase(self) -> None:
         decision = QC.stage_decision(
             "terminology",
