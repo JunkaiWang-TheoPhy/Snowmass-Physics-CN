@@ -559,8 +559,8 @@ class RequestKeyAndCheckpointTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
 
-    def test_qc_contract_version_requires_v4_checkpoint_revalidation(self) -> None:
-        self.assertEqual(RUNNER.QC_CONTRACT_VERSION, 4)
+    def test_qc_contract_version_requires_v5_checkpoint_revalidation(self) -> None:
+        self.assertEqual(RUNNER.QC_CONTRACT_VERSION, 5)
 
     def test_nonempty_stale_output_is_not_a_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

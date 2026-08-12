@@ -472,20 +472,47 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
         self.assertFalse(translate["rejected_candidate_protected"])
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
 
+    def test_translate_stage_rejects_a_source_selected_term_omission(self) -> None:
+        (self.article_dir / "chunk0001.md").write_text(
+            "The total cross section can be rewritten below.\n",
+            encoding="utf-8",
+        )
+
+        class OmittingClient:
+            def complete(
+                self, instructions: str, input_text: str, max_output_tokens: int
+            ) -> tuple[dict[str, object], float]:
+                return completed_response("完整结果可重写如下。\n"), 0.1
+
+        with self.assertRaisesRegex(RuntimeError, "locked_terms_mismatch"):
+            RUNNER.process_chunk(
+                self.task,
+                OmittingClient(),
+                [{"source": "cross section", "target": "截面"}],
+                stages=("translate",),
+            )
+
+        status = json.loads(
+            (self.article_dir / "chunk_status" / "chunk0001.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(status["stages"]["translate"]["status"], "failed")
+        self.assertIn(
+            "locked_terms_mismatch",
+            status["stages"]["translate"]["qc"]["failures"],
+        )
+
     def test_terminology_stage_rejects_extra_raw_reference_copied_from_source(self) -> None:
         (self.article_dir / "chunk0001.md").write_text(
             "Energy Frontier result in \\ref{sec:intro}.\n",
             encoding="utf-8",
         )
+        draft = self.article_dir / "stage1_chunk0001.md"
+        draft.write_text("Energy Frontier 结果见 \\ref{sec:intro}。\n", encoding="utf-8")
 
         class FakeClient:
-            def __init__(self) -> None:
-                self.calls = 0
-
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
-                self.calls += 1
-                if self.calls == 1:
-                    return slot_response(input_text, ["Energy Frontier 结果见 "]), 0.1
                 return slot_response(
                     input_text,
                     ["能量前沿结果见，另见 \\ref{sec:intro} "],
@@ -496,6 +523,8 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
                 self.task,
                 FakeClient(),
                 [{"source": "Energy Frontier", "target": "能量前沿"}],
+                stages=("terminology",),
+                initial_text_path=draft,
             )
 
         status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))

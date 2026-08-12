@@ -51,7 +51,7 @@ API_URL = "https://api.deepseek.com/responses"
 MODEL = "deepseek-v4-flash"
 STAGES = ("translate", "terminology", "anti_ai", "academic")
 OPTIONAL_STYLE_STAGES = frozenset({"anti_ai", "academic"})
-QC_CONTRACT_VERSION = 4
+QC_CONTRACT_VERSION = 5
 MODEL_STRUCTURE_SEGMENT_LIMIT = 4
 STRUCTURE_SLOT_PROTOCOL = "snowmass-text-slots-v1"
 STRUCTURE_ANCHOR_PROTOCOL = "snowmass-anchor-template-v1"
@@ -1442,7 +1442,7 @@ def process_chunk(
         input_text = input_texts[0]
         max_output = max_outputs[0]
         passthrough = bool(task.get("passthrough"))
-        qc_terms = [] if stage == "translate" or passthrough else selected_terms
+        qc_terms = [] if passthrough else selected_terms
         if checkpoint_is_valid(stage_status, output_path, expected_key):
             current = output_path.read_text(encoding="utf-8")
             continue
