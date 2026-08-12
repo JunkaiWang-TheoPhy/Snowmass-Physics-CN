@@ -359,6 +359,177 @@ def table_regions_from_document(document: Any) -> list[TableRegion]:
     return regions
 
 
+def restore_verbatim_regions(
+    *,
+    source_pdf: Path,
+    mono_pdf: Path,
+    dual_pdf: Path,
+    figure_regions: Iterable[FigureRegion],
+    table_regions: Iterable[TableRegion],
+) -> dict[str, Any]:
+    """Replace re-typeset figure/table areas with pristine source vectors.
+
+    BabelDOC can reconstruct text inside an XObject even when that paragraph
+    bypasses every model stage.  Redacting the reconstructed target area before
+    inserting the clipped source page prevents both visual drift and hidden,
+    duplicate extractable text.  Captions remain outside the IR-owned regions.
+    """
+
+    import pymupdf
+
+    figures = list(figure_regions)
+    tables = list(table_regions)
+    if not figures and not tables:
+        return {
+            "verified": True,
+            "figure_region_count": 0,
+            "table_region_count": 0,
+        }
+
+    source_pdf = Path(source_pdf)
+    mono_pdf = Path(mono_pdf)
+    dual_pdf = Path(dual_pdf)
+    mono_temporary = mono_pdf.with_name(mono_pdf.stem + ".regions.tmp.pdf")
+    dual_temporary = dual_pdf.with_name(dual_pdf.stem + ".regions.tmp.pdf")
+
+    boxes_by_page: dict[int, list[tuple[float, float, float, float]]] = {}
+    for region in [*figures, *tables]:
+        boxes_by_page.setdefault(region.page_number, []).append(region.box)
+
+    try:
+        with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono, pymupdf.open(
+            dual_pdf
+        ) as dual:
+            if mono.page_count != source.page_count or dual.page_count != source.page_count:
+                raise RuntimeError("Cannot restore verbatim regions across unequal page counts")
+
+            clips_by_page: dict[int, list[Any]] = {}
+            for page_number, boxes in boxes_by_page.items():
+                if page_number < 1 or page_number > source.page_count:
+                    raise RuntimeError(
+                        f"Verbatim region page is outside the source PDF: {page_number}"
+                    )
+                source_page = source[page_number - 1]
+                mono_page = mono[page_number - 1]
+                dual_page = dual[page_number - 1]
+                if (
+                    abs(source_page.rect.width - mono_page.rect.width) > 0.5
+                    or abs(source_page.rect.height - mono_page.rect.height) > 0.5
+                    or abs(dual_page.rect.width - 2 * source_page.rect.width) > 1.0
+                    or abs(dual_page.rect.height - source_page.rect.height) > 0.5
+                ):
+                    raise RuntimeError(
+                        f"Cannot map verbatim regions onto page {page_number} dimensions"
+                    )
+
+                unique: dict[tuple[float, float, float, float], Any] = {}
+                for x, y, x2, y2 in boxes:
+                    clip = pymupdf.Rect(
+                        x,
+                        source_page.rect.height - y2,
+                        x2,
+                        source_page.rect.height - y,
+                    ) & source_page.rect
+                    if clip.is_empty or clip.is_infinite:
+                        raise RuntimeError(
+                            f"Verbatim region is empty on page {page_number}: {(x, y, x2, y2)}"
+                        )
+                    key = tuple(round(float(value), 4) for value in clip)
+                    unique[key] = clip
+                clips_by_page[page_number] = list(unique.values())
+
+            # Apply all redactions before inserting source clips.  Otherwise an
+            # overlapping later redaction could erase a source clip already added.
+            for page_number, clips in clips_by_page.items():
+                mono_page = mono[page_number - 1]
+                dual_page = dual[page_number - 1]
+                midpoint = dual_page.rect.width / 2
+                for clip in clips:
+                    mono_page.add_redact_annot(clip, fill=(1, 1, 1))
+                    dual_page.add_redact_annot(
+                        pymupdf.Rect(
+                            clip.x0 + midpoint,
+                            clip.y0,
+                            clip.x1 + midpoint,
+                            clip.y1,
+                        ),
+                        fill=(1, 1, 1),
+                    )
+                mono_page.apply_redactions()
+                dual_page.apply_redactions()
+
+            for page_number, clips in clips_by_page.items():
+                page_index = page_number - 1
+                mono_page = mono[page_index]
+                dual_page = dual[page_index]
+                midpoint = dual_page.rect.width / 2
+                for clip in clips:
+                    mono_page.show_pdf_page(
+                        clip,
+                        source,
+                        page_index,
+                        clip=clip,
+                        keep_proportion=False,
+                        overlay=True,
+                    )
+                    dual_page.show_pdf_page(
+                        pymupdf.Rect(
+                            clip.x0 + midpoint,
+                            clip.y0,
+                            clip.x1 + midpoint,
+                            clip.y1,
+                        ),
+                        source,
+                        page_index,
+                        clip=clip,
+                        keep_proportion=False,
+                        overlay=True,
+                    )
+
+            mono.save(mono_temporary, garbage=4, deflate=True)
+            dual.save(dual_temporary, garbage=4, deflate=True)
+        os.replace(mono_temporary, mono_pdf)
+        os.replace(dual_temporary, dual_pdf)
+    finally:
+        mono_temporary.unlink(missing_ok=True)
+        dual_temporary.unlink(missing_ok=True)
+
+    with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono, pymupdf.open(
+        dual_pdf
+    ) as dual:
+        for page_number, boxes in boxes_by_page.items():
+            source_page = source[page_number - 1]
+            mono_page = mono[page_number - 1]
+            dual_page = dual[page_number - 1]
+            midpoint = dual_page.rect.width / 2
+            for x, y, x2, y2 in boxes:
+                source_clip = pymupdf.Rect(
+                    x,
+                    source_page.rect.height - y2,
+                    x2,
+                    source_page.rect.height - y,
+                ) & source_page.rect
+                dual_clip = pymupdf.Rect(
+                    source_clip.x0 + midpoint,
+                    source_clip.y0,
+                    source_clip.x1 + midpoint,
+                    source_clip.y1,
+                )
+                expected = _normalized_figure_text(source_page.get_text(clip=source_clip))
+                mono_text = _normalized_figure_text(mono_page.get_text(clip=source_clip))
+                dual_text = _normalized_figure_text(dual_page.get_text(clip=dual_clip))
+                if not expected or mono_text != expected or dual_text != expected:
+                    raise RuntimeError(
+                        f"Verbatim region restoration self-check failed: page={page_number}"
+                    )
+
+    return {
+        "verified": True,
+        "figure_region_count": len(figures),
+        "table_region_count": len(tables),
+    }
+
+
 def verify_verbatim_figure_regions(
     *,
     source_pdf: Path,
@@ -1189,6 +1360,13 @@ def render_translated_document(
             page_numbers=set(verbatim_page_numbers or ()),
             canonical_header=verbatim_header_translation,
             section_heading_translations=verbatim_section_heading_translations,
+        )
+        restore_verbatim_regions(
+            source_pdf=source_pdf,
+            mono_pdf=mono_pdf,
+            dual_pdf=dual_pdf,
+            figure_regions=figure_regions,
+            table_regions=table_regions,
         )
         figure_report = verify_verbatim_figure_regions(
             source_pdf=source_pdf,

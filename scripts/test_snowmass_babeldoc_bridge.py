@@ -539,6 +539,82 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             [1, 2],
         )
 
+    def test_restore_verbatim_regions_replaces_rendered_figure_and_table_content(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "region-source.pdf"
+        mono = self.root / "region-mono.pdf"
+        dual = self.root / "region-dual.pdf"
+
+        def write_source(path: Path) -> None:
+            document = pymupdf.open()
+            page = document.new_page(width=300, height=400)
+            page.draw_rect(pymupdf.Rect(20, 70, 220, 120), color=(0, 0, 0))
+            page.insert_text((30, 100), "Euclid", fontsize=12)
+            page.insert_text((30, 145), "SOURCE FIGURE CAPTION", fontsize=10)
+            page.draw_rect(pymupdf.Rect(20, 170, 240, 220), color=(0, 0, 0))
+            page.insert_text((30, 200), "Technical Maturity", fontsize=12)
+            page.insert_text((30, 245), "SOURCE TABLE CAPTION", fontsize=10)
+            document.save(path)
+            document.close()
+
+        def write_rendered(path: Path, *, dual_page: bool) -> None:
+            document = pymupdf.open()
+            width = 600 if dual_page else 300
+            page = document.new_page(width=width, height=400)
+            offsets = (0, 300) if dual_page else (0,)
+            for offset in offsets:
+                page.draw_rect(
+                    pymupdf.Rect(20 + offset, 70, 220 + offset, 120),
+                    color=(1, 0, 0),
+                )
+                page.insert_text((30 + offset, 100), "Planck", fontsize=12)
+                page.insert_text((30 + offset, 145), "CHINESE FIGURE CAPTION", fontsize=10)
+                page.draw_rect(
+                    pymupdf.Rect(20 + offset, 170, 240 + offset, 220),
+                    color=(1, 0, 0),
+                )
+                page.insert_text((30 + offset, 200), "Maturity", fontsize=12)
+                page.insert_text((30 + offset, 245), "CHINESE TABLE CAPTION", fontsize=10)
+            document.save(path)
+            document.close()
+
+        write_source(source)
+        write_rendered(mono, dual_page=False)
+        write_rendered(dual, dual_page=True)
+        figure_region = bridge.FigureRegion(1, 19, (20, 280, 220, 330))
+        table_region = bridge.TableRegion(1, 7, (20, 180, 240, 230))
+
+        report = bridge.restore_verbatim_regions(
+            source_pdf=source,
+            mono_pdf=mono,
+            dual_pdf=dual,
+            figure_regions=[figure_region],
+            table_regions=[table_region],
+        )
+
+        self.assertEqual(
+            report,
+            {"verified": True, "figure_region_count": 1, "table_region_count": 1},
+        )
+        with pymupdf.open(mono) as document:
+            text = document[0].get_text()
+            self.assertIn("Euclid", text)
+            self.assertNotIn("Planck", text)
+            self.assertIn("Technical Maturity", text)
+            self.assertIn("CHINESE FIGURE CAPTION", text)
+            self.assertIn("CHINESE TABLE CAPTION", text)
+        with pymupdf.open(dual) as document:
+            page = document[0]
+            translated_half = pymupdf.Rect(300, 0, 600, 400)
+            translated_text = page.get_text(clip=translated_half)
+            self.assertIn("Euclid", translated_text)
+            self.assertNotIn("Planck", translated_text)
+            self.assertIn("Technical Maturity", translated_text)
+            self.assertIn("CHINESE FIGURE CAPTION", translated_text)
+            self.assertIn("CHINESE TABLE CAPTION", translated_text)
+
     def test_figure_region_self_check_rejects_rendered_text_drift(self) -> None:
         bridge = load_bridge()
         import pymupdf
