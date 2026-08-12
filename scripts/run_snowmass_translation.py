@@ -474,7 +474,19 @@ def glossary_text(terms: list[dict[str, Any]]) -> str:
     for term in terms:
         source = str(term.get("source", "")).replace("|", "\\|")
         target = str(term.get("target", "")).replace("|", "\\|")
-        note = str(term.get("note", "")).replace("|", "\\|")
+        note_parts = [str(term.get("note", "")).strip()]
+        contextual = term.get("contextual_targets")
+        if isinstance(contextual, list):
+            allowed = [
+                f"{item.get('target')} only when source matches /{item.get('source_regex')}/"
+                for item in contextual
+                if isinstance(item, dict)
+                and item.get("target")
+                and item.get("source_regex")
+            ]
+            if allowed:
+                note_parts.append("Contextual allowed target: " + "; ".join(allowed))
+        note = " ".join(part for part in note_parts if part).replace("|", "\\|")
         lines.append(f"| {source} | {target} | {note} |")
     return "\n".join(lines)
 
@@ -972,8 +984,15 @@ def recover_rejected_candidate(
     expected_key: str,
     qc_terms: list[dict[str, Any]],
 ) -> str | None:
-    if stage_status.get("request_key") != expected_key:
-        return None
+    prior_key = stage_status.get("request_key")
+    contract_changed = prior_key != expected_key
+    if contract_changed:
+        prior_qc = stage_status.get("qc")
+        failures = prior_qc.get("failures") if isinstance(prior_qc, dict) else None
+        if failures != ["locked_terms_mismatch"] and failures != (
+            "locked_terms_mismatch",
+        ):
+            return None
     if stage_status.get("rejected_candidate_protected") is not False:
         return None
     relative_value = stage_status.get("rejected_candidate_file")
@@ -997,12 +1016,17 @@ def recover_rejected_candidate(
     stage_status.update(
         {
             "status": "complete",
+            "request_key": expected_key,
             "finished_at": now(),
             "output_hash": text_hash(candidate),
             "qc": qc_report.to_dict(),
             "recovered_from_rejected_candidate": True,
         }
     )
+    if contract_changed:
+        if isinstance(prior_key, str) and prior_key:
+            stage_status["previous_request_key"] = prior_key
+        stage_status["recovered_after_locked_term_contract_change"] = True
     if prior_error:
         stage_status["recovery_previous_error"] = prior_error
     return candidate

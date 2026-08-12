@@ -1725,6 +1725,52 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertIn("14", recovered)
         self.assertNotIn("[[SMU_", recovered)
 
+    def test_locked_term_contract_change_recovers_now_valid_rejected_candidate(self) -> None:
+        source = "The observable cluster properties constrain mass.\n"
+        candidate = "可观测星系团性质约束质量。\n"
+        output = self.article_dir / "stage1_chunk0001.md"
+        metadata = RUNNER.persist_rejected_candidate(
+            self.article_dir,
+            "chunk0001",
+            "translate",
+            "old-request-key",
+            candidate,
+            protected=False,
+        )
+        status = {
+            "status": "failed",
+            "request_key": "old-request-key",
+            "error": "QC failed: locked_terms_mismatch",
+            "qc": {"ok": False, "failures": ["locked_terms_mismatch"]},
+            **metadata,
+        }
+        terms = [
+            {
+                "source": "observable",
+                "target": "可观测量",
+                "contextual_targets": [
+                    {
+                        "source_regex": r"\bobservable\s+(?:cluster\s+)?properties\b",
+                        "target": "可观测",
+                    }
+                ],
+            }
+        ]
+
+        recovered = RUNNER.recover_rejected_candidate(
+            self.article_dir,
+            source,
+            output,
+            status,
+            "new-request-key",
+            terms,
+        )
+
+        self.assertEqual(recovered, candidate)
+        self.assertEqual(status["request_key"], "new-request-key")
+        self.assertEqual(status["previous_request_key"], "old-request-key")
+        self.assertTrue(status["recovered_after_locked_term_contract_change"])
+
     def test_process_chunk_marks_ambiguous_transport_failure_uncertain_without_output(self) -> None:
         class FakeClient:
             calls = 0

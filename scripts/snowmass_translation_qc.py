@@ -128,6 +128,18 @@ def _locked_term_failures(source: str, translated: str, glossary: list[dict[str,
             continue
         if _contains_term(translated, target_term):
             continue
+        contextual = rule.get("contextual_targets") if isinstance(rule, dict) else None
+        if isinstance(contextual, list) and any(
+            isinstance(item, dict)
+            and isinstance(item.get("source_regex"), str)
+            and isinstance(item.get("target"), str)
+            and bool(item["source_regex"])
+            and bool(item["target"])
+            and re.search(item["source_regex"], source, flags=re.IGNORECASE) is not None
+            and _contains_term(translated, item["target"])
+            for item in contextual
+        ):
+            continue
         if _is_permitted_acronym(source_term, target_term) and _contains_term(translated, source_term):
             continue
         failures.append("locked_terms_mismatch")

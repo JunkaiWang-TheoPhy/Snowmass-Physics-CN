@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "language_pair": "en-zh-CN",
   "first_use_policy": "For entries with first_use=true, the first abstract/body occurrence must use Chinese (English, acronym when defined).",
   "terms": [
@@ -28,12 +28,12 @@
     {"source": "accelerator", "target": "加速器", "first_use": true},
     {"source": "cyclotron", "target": "回旋加速器", "exclude_phrases": ["Chemin du Cyclotron"], "note": "Do not mistranslate as 旋风加速器; preserve foreign-language proper names listed in exclude_phrases."},
     {"source": "detector", "target": "探测器", "first_use": true},
-    {"source": "collaboration", "target": "合作组"},
+    {"source": "collaboration", "target": "合作组", "contextual_targets": [{"source_regex": "\\b(?:model|mode|spirit)\\s+of\\s+collaboration\\b|\\bcollaboration\\s+between\\b", "target": "合作"}], "note": "Use 合作组 for a named scientific collaboration; use 合作 only in the explicitly matched ordinary-cooperation contexts."},
     {"source": "observatory", "target": "观测台", "first_use": true},
     {"source": "21 cm", "target": "21 cm", "note": "Retain the conventional radio-astronomy notation and spacing."},
     {"source": "Dark Ages", "target": "黑暗时期", "first_use": true},
     {"source": "baryon", "target": "重子", "first_use": true},
-    {"source": "observable", "target": "可观测量", "first_use": true},
+    {"source": "observable", "target": "可观测量", "first_use": true, "contextual_targets": [{"source_regex": "\\bobservable\\s+(?:cluster\\s+)?(?:property|properties|quantity|quantities)\\b", "target": "可观测"}], "note": "Use 可观测量 as a noun; use 可观测 only as the modifier in explicitly matched property/quantity phrases."},
     {"source": "cross section", "target": "截面", "first_use": true},
     {"source": "luminosity", "target": "光度", "first_use": true},
     {"source": "redshift", "target": "红移", "first_use": true},

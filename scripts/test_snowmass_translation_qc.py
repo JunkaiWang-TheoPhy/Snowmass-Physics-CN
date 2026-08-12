@@ -269,6 +269,37 @@ class ValidateChunkTests(unittest.TestCase):
 
         self.assertTrue(report.ok)
 
+    def test_locked_term_accepts_only_contextual_target_whitelisted_for_source_pattern(self) -> None:
+        glossary = [
+            {
+                "source": "observable",
+                "target": "可观测量",
+                "contextual_targets": [
+                    {
+                        "source_regex": r"\bobservable\s+(?:cluster\s+)?properties\b",
+                        "target": "可观测",
+                    }
+                ],
+            }
+        ]
+
+        accepted = QC.validate_chunk(
+            source="The observable cluster properties constrain the mass.\n",
+            translated="可观测星系团性质约束其质量。\n",
+            mapping={},
+            glossary=glossary,
+        )
+        rejected = QC.validate_chunk(
+            source="This observable constrains the mass.\n",
+            translated="这一可观测性质约束其质量。\n",
+            mapping={},
+            glossary=glossary,
+        )
+
+        self.assertTrue(accepted.ok)
+        self.assertFalse(rejected.ok)
+        self.assertIn("locked_terms_mismatch", rejected.failures)
+
     def test_locked_term_phrase_exception_preserves_foreign_proper_name(self) -> None:
         report = QC.validate_chunk(
             source="Université Catholique, Chemin du Cyclotron, Belgium.\n",
