@@ -32,8 +32,10 @@ FINAL_FILE = "translation.md"
 NO_ACTIONABLE_CRITIQUE = "NO_ACTIONABLE_CHUNK_CRITIQUE"
 MANUAL_CORRECTIONS_FILE = "manual_corrections.json"
 TRACKED_HARD_CONSTRAINTS = SCRIPT_DIR.parent / "translations/snowmass-hard-constraints.json"
-CRITIQUE_SHARD_CHAR_LIMIT = 24_000
-CRITIQUE_SHARD_MAX_FINDINGS = 6
+CRITIQUE_SHARD_CHAR_LIMIT = 16_000
+CRITIQUE_SHARD_MAX_FINDINGS = 4
+CRITIQUE_SHARD_MAX_FINDING_CHARACTERS = 160
+CRITIQUE_SHARD_MAX_OUTPUT_TOKENS = 900
 CRITIQUE_GLOBAL_MAX_FINDINGS = 30
 
 
@@ -261,8 +263,8 @@ def _run_paper_model_phase(
         retry_instructions = (
             instructions
             + "\n\nOUTPUT-COMPRESSION RETRY: The previous answer reached the output-token "
-            "ceiling. Return only the exact required section headings and no more than 30 "
-            "single-line, chunk-tagged actionable findings total. Omit method, praise, "
+            "ceiling. Return only the exact required section headings and obey the "
+            "original instructions' stricter count and per-line length limits. Omit method, praise, "
             "examples, quotations, and commentary. Do not relax any accuracy check."
         )
         phase.setdefault("output_retries", []).append(
@@ -414,11 +416,15 @@ def _merge_sharded_critiques(
     shard_outputs: list[str],
     *,
     max_findings: int = CRITIQUE_GLOBAL_MAX_FINDINGS,
+    max_findings_per_shard: int = CRITIQUE_SHARD_MAX_FINDINGS,
+    max_finding_characters: int = CRITIQUE_SHARD_MAX_FINDING_CHARACTERS,
 ) -> str:
     """Round-robin actionable findings so late shards retain review coverage."""
 
     if max_findings <= 0:
         raise ValueError("max_findings must be positive")
+    if max_findings_per_shard <= 0 or max_finding_characters <= 0:
+        raise ValueError("per-shard critique limits must be positive")
     per_shard: list[list[str]] = []
     for shard_index, output in enumerate(shard_outputs, 1):
         findings: list[str] = []
@@ -445,9 +451,19 @@ def _merge_sharded_critiques(
                     f"{normalized[:160]}"
                 )
             finding = "- " + match.group(1)
+            if len(match.group(1)) > max_finding_characters:
+                raise RuntimeError(
+                    f"critique shard {shard_index} finding exceeds "
+                    f"{max_finding_characters} characters"
+                )
             if finding not in seen:
                 findings.append(finding)
                 seen.add(finding)
+        if len(findings) > max_findings_per_shard:
+            raise RuntimeError(
+                f"critique shard {shard_index} exceeds "
+                f"{max_findings_per_shard} actionable findings"
+            )
         per_shard.append(findings)
     selected: list[str] = []
     index = 0
@@ -493,7 +509,7 @@ def _run_sharded_critique(
     shard_outputs: list[str] = []
     instructions = f"""Review one aligned English/Chinese shard of an academic paper.
 Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
-Report only high-impact actionable defects. Every actionable line must start with its exact chunk ID, for example `- chunk0001:`. Return at most {CRITIQUE_SHARD_MAX_FINDINGS} actionable lines total. If none exist, write `- NO_ACTIONABLE_FINDINGS`. Do not quote passages, enumerate correct chunks, explain methods, or rewrite the draft."""
+Report only high-impact actionable defects. Every actionable line must start with its exact chunk ID, for example `- chunk0001:`. Return at most {CRITIQUE_SHARD_MAX_FINDINGS} actionable lines total, ranked highest risk first. Each actionable line must contain at most {CRITIQUE_SHARD_MAX_FINDING_CHARACTERS} characters including its chunk ID. If none exist, write `- NO_ACTIONABLE_FINDINGS`. In every other empty section write only `- NO_ACTIONABLE_FINDINGS`. Do not quote passages, enumerate correct chunks, explain methods, add prose summaries, or rewrite the draft."""
     for index, (source_shard, draft_shard) in enumerate(shards, 1):
         output = _run_paper_model_phase(
             phase_name=f"critique_shard_{index:04d}",
@@ -503,7 +519,7 @@ Report only high-impact actionable defects. Every actionable line must start wit
                 f"ENGLISH SOURCE SHARD {index}/{len(shards)}:\n{source_shard}\n\n"
                 f"CHINESE DRAFT SHARD {index}/{len(shards)}:\n{draft_shard}"
             ),
-            max_output_tokens=1200,
+            max_output_tokens=CRITIQUE_SHARD_MAX_OUTPUT_TOKENS,
             client=client,
             status=status,
             status_path=status_path,

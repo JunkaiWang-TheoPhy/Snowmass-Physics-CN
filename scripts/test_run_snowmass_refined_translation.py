@@ -125,13 +125,70 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertEqual(resumed, critique)
         self.assertEqual(len(calls), first_call_count)
 
+    def test_sharded_critique_prompt_enforces_machine_bounded_output(self) -> None:
+        module = load_module()
+        source_text = "English source.\n"
+        (self.article / "chunk0001.md").write_text(source_text, encoding="utf-8")
+        (self.article / "stage2_chunk0001.md").write_text("中文草稿。\n", encoding="utf-8")
+        chunks = [
+            {
+                "id": "chunk0001",
+                "order": 1,
+                "source_file": "chunk0001.md",
+                "output_file": "output_chunk0001.md",
+                "source_hash": module.runner.text_hash(source_text),
+                "babeldoc_unit_id": "p0001-i0000",
+            }
+        ]
+        calls: list[tuple[str, int]] = []
+
+        class Client:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                calls.append((instructions, max_output_tokens))
+                if len(calls) == 1:
+                    response = completed_response("过长输出", "first")
+                    response["status"] = "incomplete"
+                    response["incomplete_details"] = {"reason": "max_output_tokens"}
+                    return response, 0.1
+                return completed_response(
+                    "## Accuracy\n- NO_ACTIONABLE_FINDINGS\n\n"
+                    "## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+                    "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+                    "## Summary\n- NO_ACTIONABLE_FINDINGS\n",
+                    "compact",
+                ), 0.1
+
+        module._run_sharded_critique(
+            article_dir=self.article,
+            chunks=chunks,
+            client=Client(),
+            status={"record_id": "arxiv:allowed", "phases": {}},
+            status_path=self.article / "paper_status.json",
+            run_id="run-one",
+            budget_guard=None,
+            retry_uncertain=False,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(limit == module.CRITIQUE_SHARD_MAX_OUTPUT_TOKENS for _, limit in calls))
+        self.assertIn(
+            f"at most {module.CRITIQUE_SHARD_MAX_FINDINGS} actionable lines",
+            calls[0][0],
+        )
+        self.assertIn(
+            f"at most {module.CRITIQUE_SHARD_MAX_FINDING_CHARACTERS} characters",
+            calls[0][0],
+        )
+        self.assertIn("original instructions' stricter count", calls[1][0])
+        self.assertNotIn("no more than 30", calls[1][0])
+
     def test_sharded_critique_round_robins_before_global_cap(self) -> None:
         module = load_module()
         shard_outputs = []
         for shard in range(1, 11):
             lines = "\n".join(
                 f"- chunk{shard:02d}{item:02d}: issue {shard}-{item}"
-                for item in range(1, 7)
+                for item in range(1, 5)
             )
             shard_outputs.append(
                 "## Accuracy\n"
