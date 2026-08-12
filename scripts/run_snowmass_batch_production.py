@@ -381,6 +381,35 @@ def production_metrics_and_gate(
         if cost_per_article is not None
         else None
     )
+    style_projections = [
+        result["style_batch_projection"]
+        for result in results
+        if isinstance(result.get("style_batch_projection"), dict)
+    ]
+    style_current_requests = sum(
+        max(0, int(item.get("current_style_requests") or 0))
+        for item in style_projections
+    )
+    style_projected_requests = sum(
+        max(0, int(item.get("projected_style_requests") or 0))
+        for item in style_projections
+    )
+    style_projection = {
+        "papers": len(style_projections),
+        "eligible_chunks": sum(
+            max(0, int(item.get("eligible_chunks") or 0)) for item in style_projections
+        ),
+        "groupable_chunks": sum(
+            max(0, int(item.get("groupable_chunks") or 0)) for item in style_projections
+        ),
+        "current_style_requests": style_current_requests,
+        "projected_style_requests": style_projected_requests,
+        "projected_request_reduction_fraction": (
+            (style_current_requests - style_projected_requests) / style_current_requests
+            if style_current_requests
+            else 0.0
+        ),
+    }
     metrics = {
         "source_characters": source_characters,
         "completed_articles": completed,
@@ -397,6 +426,7 @@ def production_metrics_and_gate(
         "cost_rmb_per_10k_source_characters": round(cost_per_10k, 6) if cost_per_10k is not None else None,
         "projected_total_rmb_for_eligible_records": round(projected_total, 6) if projected_total is not None else None,
         "uncertain_request_rate": round(uncertain_calls / api_calls, 6) if api_calls else 0.0,
+        "style_batch_projection": style_projection,
     }
     reasons: list[str] = []
     expected_status = "qc_passed" if through_stage in {"rendered", "qc_passed"} else through_stage
@@ -536,6 +566,12 @@ def _run_article(
         concurrency=config.chunk_concurrency,
         retry_uncertain=config.retry_uncertain,
     )
+    projection_path = article_dir / "style_batch_projection.json"
+    if projection_path.is_file():
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        if not isinstance(projection, dict):
+            raise RuntimeError("style batch projection must be a JSON object")
+        result["style_batch_projection"] = projection
     result["status"] = "translated"
     if config.through_stage == "translated":
         return result

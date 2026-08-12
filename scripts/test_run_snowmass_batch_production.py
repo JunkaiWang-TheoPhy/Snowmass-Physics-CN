@@ -336,6 +336,62 @@ class PromotionGateTests(unittest.TestCase):
         self.assertEqual(metrics["unresolved_uncertain_paid_requests"], 0)
         self.assertTrue(gate["allowed"])
 
+    def test_style_batch_projection_is_aggregated_but_does_not_control_promotion(self) -> None:
+        module = load_module()
+        results = [
+            {
+                "record_id": "arxiv:a",
+                "status": "packaged",
+                "source_characters": 10000,
+                "style_batch_projection": {
+                    "eligible_chunks": 100,
+                    "groupable_chunks": 20,
+                    "current_style_requests": 200,
+                    "projected_style_requests": 170,
+                },
+            },
+            {
+                "record_id": "arxiv:b",
+                "status": "packaged",
+                "source_characters": 10000,
+                "style_batch_projection": {
+                    "eligible_chunks": 50,
+                    "groupable_chunks": 5,
+                    "current_style_requests": 100,
+                    "projected_style_requests": 90,
+                },
+            },
+        ]
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 2.0,
+            "project_reserved_rmb": 0.0,
+            "stage_max_cost_rmb": 50.0,
+            "stage_spent_rmb": 1.0,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {"api_calls": 2, "settled_calls": 2},
+        }
+
+        metrics, gate = module.production_metrics_and_gate(
+            stage="pilot10",
+            through_stage="packaged",
+            eligible_record_count=273,
+            selected_count=2,
+            results=results,
+            failures=[],
+            budget=budget,
+        )
+
+        self.assertEqual(metrics["style_batch_projection"]["eligible_chunks"], 150)
+        self.assertEqual(metrics["style_batch_projection"]["groupable_chunks"], 25)
+        self.assertEqual(metrics["style_batch_projection"]["current_style_requests"], 300)
+        self.assertEqual(metrics["style_batch_projection"]["projected_style_requests"], 260)
+        self.assertAlmostEqual(
+            metrics["style_batch_projection"]["projected_request_reduction_fraction"],
+            40 / 300,
+        )
+        self.assertTrue(gate["allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()
