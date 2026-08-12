@@ -298,6 +298,29 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertIn("- chunk0001: issue one", merged)
         self.assertIn("- chunk0002: issue two", merged)
 
+    def test_shard_merge_splits_one_overlong_finding_without_losing_content(self) -> None:
+        module = load_module()
+        output = (
+            "## Accuracy\n"
+            "- chunk0001: first defect needs correction；second independent defect also needs correction。\n\n"
+            "## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Summary\n- done\n"
+        )
+
+        merged = module._merge_sharded_critiques(
+            [output],
+            max_finding_characters=55,
+        )
+
+        findings = re.findall(r"^- chunk0001: (.+)$", merged, re.M)
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(
+            "".join(findings),
+            "first defect needs correction；second independent defect also needs correction。",
+        )
+        self.assertTrue(all(len("chunk0001: " + item) <= 55 for item in findings))
+
     def test_shard_merge_rejects_unparseable_actionable_content(self) -> None:
         module = load_module()
         output = (

@@ -422,6 +422,31 @@ def _merge_sharded_critiques(
 ) -> str:
     """Round-robin actionable findings so late shards retain review coverage."""
 
+    def split_finding(value: str) -> list[str]:
+        if len(value) <= max_finding_characters:
+            return [value]
+        label = re.match(r"^(chunk\d{4}:\s*)", value, flags=re.I)
+        if label is None:
+            raise RuntimeError("critique finding has no routable chunk label")
+        prefix = label.group(1)
+        body = value[label.end() :]
+        body_limit = max_finding_characters - len(prefix)
+        if body_limit <= 0:
+            raise RuntimeError("critique finding character limit cannot contain its chunk label")
+        parts: list[str] = []
+        while len(body) > body_limit:
+            window = body[:body_limit]
+            boundaries = [
+                match.end()
+                for match in re.finditer(r"[。；;！？!?，,]\s*|\s+", window)
+            ]
+            cut = boundaries[-1] if boundaries else body_limit
+            parts.append(prefix + body[:cut])
+            body = body[cut:]
+        if body:
+            parts.append(prefix + body)
+        return parts
+
     if max_findings <= 0:
         raise ValueError("max_findings must be positive")
     if max_findings_per_shard <= 0 or max_finding_characters <= 0:
@@ -430,6 +455,7 @@ def _merge_sharded_critiques(
     for shard_index, output in enumerate(shard_outputs, 1):
         findings: list[str] = []
         seen: set[str] = set()
+        original_finding_count = 0
         section = ""
         for line in output.splitlines():
             normalized = line.strip()
@@ -451,16 +477,13 @@ def _merge_sharded_critiques(
                     f"critique shard {shard_index} contains unparseable actionable content: "
                     f"{normalized[:160]}"
                 )
-            finding = "- " + match.group(1)
-            if len(match.group(1)) > max_finding_characters:
-                raise RuntimeError(
-                    f"critique shard {shard_index} finding exceeds "
-                    f"{max_finding_characters} characters"
-                )
-            if finding not in seen:
-                findings.append(finding)
-                seen.add(finding)
-        if len(findings) > max_findings_per_shard:
+            original_finding_count += 1
+            for fragment in split_finding(match.group(1)):
+                finding = "- " + fragment
+                if finding not in seen:
+                    findings.append(finding)
+                    seen.add(finding)
+        if original_finding_count > max_findings_per_shard:
             raise RuntimeError(
                 f"critique shard {shard_index} exceeds "
                 f"{max_findings_per_shard} actionable findings"
