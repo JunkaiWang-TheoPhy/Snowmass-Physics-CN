@@ -105,6 +105,10 @@ class PersistentBudgetGuard:
         self.run_id = run_id
         self.usd_cny_rate = float(usd_cny_rate)
         self.stop_event = stop_event
+        self._ledger_cache_events: list[dict[str, Any]] | None = None
+        self._ledger_cache_offset = 0
+        self._ledger_cache_identity: tuple[int, int] | None = None
+        self._ledger_cache_mtime_ns = 0
         with self._locked():
             self._initialize_locked(float(historical_spent_rmb))
             self._recover_orphans_locked()
@@ -196,8 +200,45 @@ class PersistentBudgetGuard:
     def _events_locked(self) -> list[dict[str, Any]]:
         if not self.ledger_path.exists():
             raise RuntimeError("Snowmass budget ledger is missing")
-        events: list[dict[str, Any]] = []
-        for line_number, line in enumerate(self.ledger_path.read_text(encoding="utf-8").splitlines(), 1):
+        stat = self.ledger_path.stat()
+        identity = (stat.st_dev, stat.st_ino)
+        if stat.st_size:
+            with self.ledger_path.open("rb") as stream:
+                stream.seek(-1, os.SEEK_END)
+                if stream.read(1) != b"\n":
+                    raise RuntimeError("Corrupt budget ledger: incomplete final event")
+        if (
+            self._ledger_cache_events is not None
+            and self._ledger_cache_identity == identity
+            and stat.st_size >= self._ledger_cache_offset
+        ):
+            if (
+                stat.st_size == self._ledger_cache_offset
+                and stat.st_mtime_ns == self._ledger_cache_mtime_ns
+            ):
+                return list(self._ledger_cache_events)
+            if stat.st_size > self._ledger_cache_offset:
+                with self.ledger_path.open("rb") as stream:
+                    stream.seek(self._ledger_cache_offset)
+                    tail_bytes = stream.read()
+                try:
+                    tail = tail_bytes.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    raise RuntimeError("Corrupt budget ledger tail encoding") from error
+                if tail and not tail.endswith("\n"):
+                    raise RuntimeError("Corrupt budget ledger: incomplete final event")
+                events = list(self._ledger_cache_events)
+                first_line = len(events) + 1
+                lines = tail.splitlines()
+            else:
+                events = []
+                first_line = 1
+                lines = self.ledger_path.read_text(encoding="utf-8").splitlines()
+        else:
+            events = []
+            first_line = 1
+            lines = self.ledger_path.read_text(encoding="utf-8").splitlines()
+        for line_number, line in enumerate(lines, first_line):
             if not line.strip():
                 continue
             try:
@@ -207,18 +248,40 @@ class PersistentBudgetGuard:
             if not isinstance(event, dict) or not isinstance(event.get("kind"), str):
                 raise RuntimeError(f"Invalid budget ledger event on line {line_number}")
             events.append(event)
-        return events
+        final_stat = self.ledger_path.stat()
+        self._ledger_cache_events = events
+        self._ledger_cache_offset = final_stat.st_size
+        self._ledger_cache_identity = (final_stat.st_dev, final_stat.st_ino)
+        self._ledger_cache_mtime_ns = final_stat.st_mtime_ns
+        return list(events)
 
     def _append_locked(self, event: dict[str, Any]) -> None:
         payload = dict(event)
         payload.setdefault("schema_version", SCHEMA_VERSION)
         line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+        prior_stat = self.ledger_path.stat() if self.ledger_path.exists() else None
         descriptor = os.open(self.ledger_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
             os.write(descriptor, line.encode("utf-8"))
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+        final_stat = self.ledger_path.stat()
+        if (
+            prior_stat is not None
+            and self._ledger_cache_events is not None
+            and self._ledger_cache_identity == (prior_stat.st_dev, prior_stat.st_ino)
+            and self._ledger_cache_offset == prior_stat.st_size
+        ):
+            self._ledger_cache_events.append(payload)
+            self._ledger_cache_offset = final_stat.st_size
+            self._ledger_cache_identity = (final_stat.st_dev, final_stat.st_ino)
+            self._ledger_cache_mtime_ns = final_stat.st_mtime_ns
+        else:
+            self._ledger_cache_events = None
+            self._ledger_cache_offset = 0
+            self._ledger_cache_identity = None
+            self._ledger_cache_mtime_ns = 0
 
     @staticmethod
     def _state(events: list[dict[str, Any]]) -> tuple[float, dict[str, float], dict[str, dict[str, Any]]]:

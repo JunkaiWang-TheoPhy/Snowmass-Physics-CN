@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("snowmass_batch_budget.py")
@@ -224,6 +225,76 @@ class PersistentBudgetGuardTests(unittest.TestCase):
             guard.snapshot()["stage_usage"]["unresolved_uncertain_calls"],
             0,
         )
+
+    def test_warm_guard_parses_only_new_ledger_tail(self) -> None:
+        module = load_module()
+        guard = module.PersistentBudgetGuard(
+            self.control,
+            project_max_cost_rmb=1.0,
+            stage_max_cost_rmb=1.0,
+            run_id="incremental",
+            usd_cny_rate=7.2,
+        )
+        for _ in range(20):
+            reservation = guard.reserve("source", 4096)
+            guard.settle(
+                reservation,
+                {
+                    "input_tokens": 10,
+                    "cached_tokens": 0,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            )
+        guard.snapshot()
+
+        original_loads = module.json.loads
+        with mock.patch.object(module.json, "loads", wraps=original_loads) as loads:
+            guard.snapshot()
+            reservation = guard.reserve("new source", 4096)
+            guard.settle(
+                reservation,
+                {
+                    "input_tokens": 10,
+                    "cached_tokens": 0,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            )
+            snapshot = guard.snapshot()
+
+        self.assertEqual(snapshot["stage_usage"]["settled_calls"], 21)
+        self.assertLessEqual(loads.call_count, 2)
+
+    def test_warm_guard_observes_events_appended_by_another_guard(self) -> None:
+        first = self.guard(run_id="shared", project=1.0, stage=1.0)
+        second = self.guard(run_id="shared", project=1.0, stage=1.0)
+        first.snapshot()
+
+        reservation = second.reserve("source", 4096)
+        second.settle(
+            reservation,
+            {
+                "input_tokens": 25,
+                "cached_tokens": 0,
+                "output_tokens": 5,
+                "total_tokens": 30,
+            },
+        )
+
+        snapshot = first.snapshot()
+        self.assertEqual(snapshot["stage_usage"]["settled_calls"], 1)
+        self.assertEqual(snapshot["stage_usage"]["total_tokens"], 30)
+
+    def test_truncated_ledger_invalidates_warm_cache_and_fails_closed(self) -> None:
+        guard = self.guard(run_id="truncate", project=1.0, stage=1.0)
+        reservation = guard.reserve("source", 4096)
+        guard.snapshot()
+        ledger = self.control / "budget_ledger.jsonl"
+        ledger.write_bytes(ledger.read_bytes()[:-1])
+
+        with self.assertRaisesRegex(RuntimeError, "incomplete final event"):
+            guard.snapshot()
 
 
 if __name__ == "__main__":
