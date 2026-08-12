@@ -49,6 +49,112 @@ def completed_response(text: str, response_id: str) -> dict[str, object]:
 
 
 class RefinedOrchestratorTests(unittest.TestCase):
+    def test_paper_phase_compacts_once_after_output_limit(self) -> None:
+        module = load_module()
+        status = {"record_id": "arxiv:allowed", "phases": {}}
+        status_path = self.article / "paper_status.json"
+        calls: list[str] = []
+
+        class BudgetGuard:
+            usd_cny_rate = 7.2
+
+            def __init__(self) -> None:
+                self.events: list[tuple[str, str]] = []
+                self.counter = 0
+
+            def reserve(self, input_text, max_output_tokens, *, uncertainty_key=None):
+                self.counter += 1
+                reservation = f"reservation-{self.counter}"
+                self.events.append(("reserve", str(uncertainty_key)))
+                return reservation
+
+            def settle(self, reservation, usage):
+                self.events.append(("settle", reservation))
+
+            def resolve_uncertain(self, uncertainty_key):
+                self.events.append(("resolve", uncertainty_key))
+
+        budget = BudgetGuard()
+
+        class Client:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                calls.append(instructions)
+                if len(calls) == 1:
+                    response = completed_response("过长输出", "first")
+                    response["status"] = "incomplete"
+                    response["incomplete_details"] = {"reason": "max_output_tokens"}
+                    response["usage"]["output_tokens"] = max_output_tokens
+                    response["usage"]["total_tokens"] = max_output_tokens + 10
+                    return response, 0.1
+                return completed_response(
+                    "## Accuracy\n- chunk0001: 无。\n\n## Summary\n通过。\n",
+                    "compact",
+                ), 0.1
+
+        text = module._run_paper_model_phase(
+            phase_name="critique",
+            output_path=self.article / "04-critique.md",
+            instructions="Return a bounded critique.",
+            input_text="source and draft",
+            max_output_tokens=4000,
+            client=Client(),
+            status=status,
+            status_path=status_path,
+            run_id="run-one",
+            budget_guard=budget,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("OUTPUT-COMPRESSION RETRY", calls[1])
+        self.assertIn("## Accuracy", text)
+        self.assertEqual(status["phases"]["critique"]["status"], "complete")
+        self.assertEqual(len(status["phases"]["critique"]["output_retries"]), 1)
+        self.assertEqual(
+            budget.events,
+            [
+                ("reserve", "arxiv:allowed:critique:paper"),
+                ("settle", "reservation-1"),
+                ("resolve", "arxiv:allowed:critique:paper"),
+                ("reserve", "arxiv:allowed:critique:paper:compression-1"),
+                ("settle", "reservation-2"),
+                ("resolve", "arxiv:allowed:critique:paper:compression-1"),
+            ],
+        )
+        ledger = (self.article / "api_cost_ledger.jsonl").read_text(encoding="utf-8")
+        self.assertIn('"event_id": "first"', ledger)
+        self.assertIn('"event_id": "compact"', ledger)
+
+    def test_paper_phase_fails_after_one_compaction_retry(self) -> None:
+        module = load_module()
+        status = {"record_id": "arxiv:allowed", "phases": {}}
+        calls = 0
+
+        class Client:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                nonlocal calls
+                calls += 1
+                response = completed_response("过长输出", f"incomplete-{calls}")
+                response["status"] = "incomplete"
+                response["incomplete_details"] = {"reason": "max_output_tokens"}
+                return response, 0.1
+
+        with self.assertRaisesRegex(module.runner.IncompleteResponseError, "max_output_tokens"):
+            module._run_paper_model_phase(
+                phase_name="critique",
+                output_path=self.article / "04-critique.md",
+                instructions="Return a bounded critique.",
+                input_text="source and draft",
+                max_output_tokens=4000,
+                client=Client(),
+                status=status,
+                status_path=self.article / "paper_status.json",
+                run_id="run-one",
+                budget_guard=None,
+            )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(status["phases"]["critique"]["status"], "failed")
+
     def test_hard_exact_translations_bind_repeated_pdf_headers_once(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
@@ -512,6 +618,31 @@ class RefinedOrchestratorTests(unittest.TestCase):
                 self.article, module.runner.DEFAULT_USD_CNY_RATE
             ),
             expected,
+        )
+
+    def test_existing_cost_includes_paper_phase_uncertain_replay(self) -> None:
+        module = load_module()
+        (self.article / "paper_status.json").write_text(
+            json.dumps(
+                {
+                    "phases": {
+                        "critique": {
+                            "status": "complete",
+                            "uncertain_replays": [
+                                {"conservative_cost_rmb": 0.456}
+                            ],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertAlmostEqual(
+            module.existing_article_cost_rmb(
+                self.article, module.runner.DEFAULT_USD_CNY_RATE
+            ),
+            0.456,
         )
 
     def test_immutable_cost_ledger_overrides_mutable_checkpoint_totals(self) -> None:

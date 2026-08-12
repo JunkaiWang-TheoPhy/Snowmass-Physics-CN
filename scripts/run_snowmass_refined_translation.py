@@ -128,102 +128,178 @@ def _run_paper_model_phase(
         ]
     _persist_status(status_path, status)
 
-    reservation: str | None = None
-    try:
-        if budget_guard is not None:
-            reservation = budget_guard.reserve(
-                instructions + "\n" + input_text,
-                max_output_tokens,
-                uncertainty_key=uncertainty_key,
+    def paid_request(
+        request_instructions: str,
+        *,
+        request_uncertainty_key: str,
+        request_kind: str,
+    ) -> tuple[dict[str, Any], float]:
+        reservation: str | None = None
+        try:
+            if budget_guard is not None:
+                reservation = budget_guard.reserve(
+                    request_instructions + "\n" + input_text,
+                    max_output_tokens,
+                    uncertainty_key=request_uncertainty_key,
+                )
+            response, latency = client.complete(
+                request_instructions, input_text, max_output_tokens
             )
-        response, latency = client.complete(instructions, input_text, max_output_tokens)
-    except runner.AmbiguousTransportError as exc:
-        if reservation is not None:
-            conservative_cost_rmb = budget_guard.commit_estimate(reservation)
-        else:
-            conservative_cost_rmb = 0.0
-        if conservative_cost_rmb > 0:
-            runner.append_cost_ledger(
-                article_dir,
+        except runner.AmbiguousTransportError as exc:
+            conservative_cost_rmb = (
+                budget_guard.commit_estimate(reservation)
+                if reservation is not None
+                else 0.0
+            )
+            if conservative_cost_rmb > 0:
+                runner.append_cost_ledger(
+                    article_dir,
+                    {
+                        "event_id": uuid.uuid4().hex,
+                        "kind": "paper_ambiguous_transport_reservation",
+                        "phase": phase_name,
+                        "input_hash": input_hash,
+                        "request_kind": request_kind,
+                        "cost_rmb": conservative_cost_rmb,
+                    },
+                )
+            phase.update(
                 {
-                    "event_id": uuid.uuid4().hex,
-                    "kind": "paper_ambiguous_transport_reservation",
-                    "phase": phase_name,
-                    "input_hash": input_hash,
-                    "cost_rmb": conservative_cost_rmb,
-                },
+                    "status": "uncertain",
+                    "finished_at": runner.now(),
+                    "error": str(exc),
+                    "conservative_cost_rmb": conservative_cost_rmb,
+                    "uncertainty_key": request_uncertainty_key,
+                    "uncertainty_reservation_id": reservation,
+                }
             )
-        phase.update(
-            {
-                "status": "uncertain",
-                "finished_at": runner.now(),
-                "error": str(exc),
-                "conservative_cost_rmb": conservative_cost_rmb,
-                "uncertainty_key": uncertainty_key,
-                "uncertainty_reservation_id": reservation,
-            }
-        )
-        _persist_status(status_path, status)
-        raise
-    except Exception as exc:
-        if reservation is not None:
-            conservative_cost_rmb = budget_guard.commit_estimate(reservation)
-        else:
-            conservative_cost_rmb = 0.0
-        if conservative_cost_rmb > 0:
-            runner.append_cost_ledger(
-                article_dir,
+            _persist_status(status_path, status)
+            raise
+        except Exception as exc:
+            conservative_cost_rmb = (
+                budget_guard.commit_estimate(reservation)
+                if reservation is not None
+                else 0.0
+            )
+            if conservative_cost_rmb > 0:
+                runner.append_cost_ledger(
+                    article_dir,
+                    {
+                        "event_id": uuid.uuid4().hex,
+                        "kind": "paper_failed_transport_reservation",
+                        "phase": phase_name,
+                        "input_hash": input_hash,
+                        "request_kind": request_kind,
+                        "cost_rmb": conservative_cost_rmb,
+                    },
+                )
+            phase.update(
                 {
-                    "event_id": uuid.uuid4().hex,
-                    "kind": "paper_failed_transport_reservation",
-                    "phase": phase_name,
-                    "input_hash": input_hash,
-                    "cost_rmb": conservative_cost_rmb,
-                },
+                    "status": "failed",
+                    "finished_at": runner.now(),
+                    "error": repr(exc),
+                    "conservative_cost_rmb": conservative_cost_rmb,
+                }
             )
-        phase.update(
-            {
-                "status": "failed",
-                "finished_at": runner.now(),
-                "error": repr(exc),
-                "conservative_cost_rmb": conservative_cost_rmb,
-            }
-        )
-        _persist_status(status_path, status)
-        raise
+            _persist_status(status_path, status)
+            raise
 
-    if reservation is not None:
-        budget_guard.settle(reservation, runner.coarse_response_usage(response))
-        budget_guard.resolve_uncertain(uncertainty_key)
-    billed_usage = runner.coarse_response_usage(response)
-    runner.append_cost_ledger(
-        article_dir,
-        {
-            "event_id": str(response.get("id") or uuid.uuid4().hex),
-            "kind": "paper_settled_response",
-            "phase": phase_name,
-            "input_hash": input_hash,
-            "usage": billed_usage,
-            "cost_rmb": runner.estimate_cost_rmb(
-                billed_usage,
-                budget_guard.usd_cny_rate
-                if budget_guard is not None
-                else runner.DEFAULT_USD_CNY_RATE,
-            ),
-        },
+        billed_usage = runner.coarse_response_usage(response)
+        if reservation is not None:
+            budget_guard.settle(reservation, billed_usage)
+            budget_guard.resolve_uncertain(request_uncertainty_key)
+        runner.append_cost_ledger(
+            article_dir,
+            {
+                "event_id": str(response.get("id") or uuid.uuid4().hex),
+                "kind": "paper_settled_response",
+                "phase": phase_name,
+                "input_hash": input_hash,
+                "request_kind": request_kind,
+                "usage": billed_usage,
+                "cost_rmb": runner.estimate_cost_rmb(
+                    billed_usage,
+                    budget_guard.usd_cny_rate
+                    if budget_guard is not None
+                    else runner.DEFAULT_USD_CNY_RATE,
+                ),
+            },
+        )
+        return response, latency
+
+    response, latency = paid_request(
+        instructions,
+        request_uncertainty_key=uncertainty_key,
+        request_kind="primary",
     )
+    responses = [response]
+    total_latency = latency
     phase["raw_response"] = runner.response_metadata(response)
     _persist_status(status_path, status)
     try:
         parsed = runner.validate_response(response, runner.MODEL)
+    except runner.IncompleteResponseError as exc:
+        if "max_output_tokens" not in str(exc):
+            phase.update({"status": "failed", "finished_at": runner.now(), "error": str(exc)})
+            _persist_status(status_path, status)
+            raise
+        retry_instructions = (
+            instructions
+            + "\n\nOUTPUT-COMPRESSION RETRY: The previous answer reached the output-token "
+            "ceiling. Return only the exact required section headings and no more than 30 "
+            "single-line, chunk-tagged actionable findings total. Omit method, praise, "
+            "examples, quotations, and commentary. Do not relax any accuracy check."
+        )
+        phase.setdefault("output_retries", []).append(
+            {
+                "attempt": 1,
+                "authorized_at": runner.now(),
+                "reason": "max_output_tokens",
+                "previous_response_id": str(response.get("id") or ""),
+            }
+        )
+        _persist_status(status_path, status)
+        response, retry_latency = paid_request(
+            retry_instructions,
+            request_uncertainty_key=uncertainty_key + ":compression-1",
+            request_kind="output_compression_retry",
+        )
+        responses.append(response)
+        total_latency += retry_latency
+        phase["raw_response"] = runner.response_metadata(response)
+        _persist_status(status_path, status)
+        try:
+            parsed = runner.validate_response(response, runner.MODEL)
+        except Exception as retry_exc:
+            phase.update(
+                {
+                    "status": "failed",
+                    "finished_at": runner.now(),
+                    "error": str(retry_exc),
+                }
+            )
+            _persist_status(status_path, status)
+            raise
     except Exception as exc:
         phase.update({"status": "failed", "finished_at": runner.now(), "error": str(exc)})
         _persist_status(status_path, status)
         raise
 
     text = _write_text(output_path, parsed.text)
-    usage = dict(parsed.usage)
-    usage["latency_seconds"] = latency
+    usage = {
+        key: sum(
+            int(runner.coarse_response_usage(item).get(key) or 0)
+            for item in responses
+        )
+        for key in (
+            "input_tokens",
+            "cached_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "total_tokens",
+        )
+    }
+    usage["latency_seconds"] = total_latency
     phase.update(
         {
             "status": "complete",
@@ -543,11 +619,15 @@ def existing_article_cost_rmb(article_dir: Path, usd_cny_rate: float) -> float:
     conservative = 0.0
     if paper_status_path.is_file():
         paper_status = _load_json(paper_status_path)
-        conservative += sum(
-            float(phase.get("conservative_cost_rmb") or 0)
-            for phase in paper_status.get("phases", {}).values()
-            if isinstance(phase, dict)
-        )
+        for phase in paper_status.get("phases", {}).values():
+            if not isinstance(phase, dict):
+                continue
+            conservative += float(phase.get("conservative_cost_rmb") or 0)
+            conservative += sum(
+                float(item.get("conservative_cost_rmb") or 0)
+                for item in phase.get("uncertain_replays", [])
+                if isinstance(item, dict)
+            )
     for status_path in sorted((article_dir / "chunk_status").glob("*.json")):
         chunk_status = _load_json(status_path)
         for stage in chunk_status.get("stages", {}).values():
