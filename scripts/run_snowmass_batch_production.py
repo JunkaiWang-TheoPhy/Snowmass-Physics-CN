@@ -369,6 +369,10 @@ def production_metrics_and_gate(
     usage = budget.get("stage_usage") if isinstance(budget.get("stage_usage"), dict) else {}
     api_calls = max(0, int(usage.get("api_calls") or 0))
     uncertain_calls = max(0, int(usage.get("uncertain_calls") or 0))
+    unresolved_uncertain_calls = max(
+        0,
+        int(usage.get("unresolved_uncertain_calls", uncertain_calls) or 0),
+    )
     cost_per_article = stage_spent / len(results) if results else None
     cost_per_10k = stage_spent * 10_000 / source_characters if source_characters else None
     historical_before_stage = max(0.0, float(budget.get("project_spent_rmb") or 0) - stage_spent)
@@ -383,6 +387,7 @@ def production_metrics_and_gate(
         "failed_articles": len(failures),
         "api_calls": api_calls,
         "uncertain_paid_requests": uncertain_calls,
+        "unresolved_uncertain_paid_requests": unresolved_uncertain_calls,
         "input_tokens": max(0, int(usage.get("input_tokens") or 0)),
         "cached_tokens": max(0, int(usage.get("cached_tokens") or 0)),
         "output_tokens": max(0, int(usage.get("output_tokens") or 0)),
@@ -401,7 +406,7 @@ def production_metrics_and_gate(
         reasons.append("selected_articles_incomplete")
     if any(result.get("status") != expected_status for result in results):
         reasons.append(f"selected_articles_not_{expected_status}")
-    if uncertain_calls:
+    if unresolved_uncertain_calls:
         reasons.append("uncertain_paid_requests")
     if float(budget.get("project_reserved_rmb") or 0) or float(budget.get("stage_reserved_rmb") or 0):
         reasons.append("active_budget_reservations")

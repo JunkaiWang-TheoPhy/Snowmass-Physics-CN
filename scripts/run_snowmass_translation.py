@@ -327,7 +327,13 @@ class BudgetGuard:
         ) / 1_000_000
         return cost_usd * self.usd_cny_rate
 
-    def reserve(self, input_text: str, max_output_tokens: int) -> str:
+    def reserve(
+        self,
+        input_text: str,
+        max_output_tokens: int,
+        *,
+        uncertainty_key: str | None = None,
+    ) -> str:
         estimate = self._conservative_request_cost(input_text, max_output_tokens)
         with self._lock:
             reserved = sum(self._reservations.values())
@@ -352,6 +358,17 @@ class BudgetGuard:
             estimate = self._reservations.pop(reservation)
             self._spent_rmb += estimate
             return estimate
+
+    def resolve_uncertain(
+        self,
+        uncertainty_key: str,
+        *,
+        reservation_id: str | None = None,
+    ) -> bool:
+        return False
+
+    def unresolved_uncertain_cost(self, uncertainty_key: str) -> float:
+        return 0.0
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -1612,6 +1629,9 @@ def process_chunk(
             1,
         ):
             sub_status = subrequests[segment_index - 1]
+            uncertainty_key = (
+                f"{task['record_id']}:{chunk_id}:{stage}:segment{segment_index:04d}"
+            )
             sub_output = (
                 article_dir
                 / "stage_subrequests"
@@ -1694,7 +1714,7 @@ def process_chunk(
                 parsed_response_ids.append(str(sub_status.get("response_id", "")))
                 continue
             if (
-                sub_status.get("status") == "running"
+                sub_status.get("status") in {"running", "uncertain"}
                 and sub_status.get("request_key") == segment_key
             ):
                 if not task.get("retry_uncertain"):
@@ -1725,9 +1745,14 @@ def process_chunk(
                         sub_status.get("conservative_cost_rmb") or 0
                     )
                     if conservative_cost_rmb <= 0:
+                        conservative_cost_rmb = budget_guard.unresolved_uncertain_cost(
+                            uncertainty_key
+                        )
+                    if conservative_cost_rmb <= 0:
                         stale_reservation = budget_guard.reserve(
                             segment_instructions + "\n" + segment_input,
                             segment_max_output,
+                            uncertainty_key=uncertainty_key,
                         )
                         conservative_cost_rmb = budget_guard.commit_estimate(
                             stale_reservation
@@ -1755,7 +1780,7 @@ def process_chunk(
                     }
                 )
 
-            sub_status.clear()
+                sub_status.clear()
             sub_status.update(
                 {
                     "status": "running",
@@ -1772,7 +1797,9 @@ def process_chunk(
             try:
                 if budget_guard is not None:
                     reservation = budget_guard.reserve(
-                        segment_instructions + "\n" + segment_input, segment_max_output
+                        segment_instructions + "\n" + segment_input,
+                        segment_max_output,
+                        uncertainty_key=uncertainty_key,
                     )
                 response, segment_latency = client.complete(
                     segment_instructions, segment_input, segment_max_output
@@ -1807,6 +1834,8 @@ def process_chunk(
                         "finished_at": now(),
                         "error": str(exc),
                         "conservative_cost_rmb": conservative_cost_rmb,
+                        "uncertainty_key": uncertainty_key,
+                        "uncertainty_reservation_id": reservation,
                     }
                 )
                 stage_status.update({"status": "uncertain", "finished_at": now(), "error": str(exc)})
@@ -1847,6 +1876,7 @@ def process_chunk(
 
             if reservation is not None:
                 budget_guard.settle(reservation, coarse_response_usage(response))
+                budget_guard.resolve_uncertain(uncertainty_key)
             billed_usage = coarse_response_usage(response)
             append_cost_ledger(
                 article_dir,

@@ -71,6 +71,7 @@ def _run_paper_model_phase(
     status_path: Path,
     run_id: str | None,
     budget_guard: runner.BudgetGuard | None,
+    retry_uncertain: bool = False,
 ) -> str:
     article_dir = status_path.parent
     input_hash = runner.text_hash(
@@ -86,12 +87,21 @@ def _run_paper_model_phase(
         )
     )
     phase = status.setdefault("phases", {}).setdefault(phase_name, {})
+    uncertainty_key = f"{status.get('record_id')}:{phase_name}:paper"
     if _phase_valid(phase, output_path, input_hash):
         return output_path.read_text(encoding="utf-8")
-    if phase.get("status") == "uncertain" and phase.get("input_hash") == input_hash:
-        raise runner.AmbiguousTransportError(
-            f"Paper phase {phase_name} is uncertain; inspect it before replaying the paid request"
-        )
+    prior_uncertain_cost = 0.0
+    if (
+        phase.get("status") in {"running", "uncertain"}
+        and phase.get("input_hash") == input_hash
+    ):
+        if not retry_uncertain:
+            raise runner.AmbiguousTransportError(
+                f"Paper phase {phase_name} is uncertain; inspect it before replaying the paid request"
+            )
+        prior_uncertain_cost = float(phase.get("conservative_cost_rmb") or 0)
+        if budget_guard is not None and prior_uncertain_cost <= 0:
+            prior_uncertain_cost = budget_guard.unresolved_uncertain_cost(uncertainty_key)
 
     phase.clear()
     phase.update(
@@ -105,12 +115,24 @@ def _run_paper_model_phase(
     )
     if run_id is not None:
         phase["run_id"] = run_id
+    if prior_uncertain_cost > 0:
+        phase["uncertain_replays"] = [
+            {
+                "authorized_at": runner.now(),
+                "uncertainty_key": uncertainty_key,
+                "conservative_cost_rmb": prior_uncertain_cost,
+            }
+        ]
     _persist_status(status_path, status)
 
     reservation: str | None = None
     try:
         if budget_guard is not None:
-            reservation = budget_guard.reserve(instructions + "\n" + input_text, max_output_tokens)
+            reservation = budget_guard.reserve(
+                instructions + "\n" + input_text,
+                max_output_tokens,
+                uncertainty_key=uncertainty_key,
+            )
         response, latency = client.complete(instructions, input_text, max_output_tokens)
     except runner.AmbiguousTransportError as exc:
         if reservation is not None:
@@ -134,6 +156,8 @@ def _run_paper_model_phase(
                 "finished_at": runner.now(),
                 "error": str(exc),
                 "conservative_cost_rmb": conservative_cost_rmb,
+                "uncertainty_key": uncertainty_key,
+                "uncertainty_reservation_id": reservation,
             }
         )
         _persist_status(status_path, status)
@@ -167,6 +191,7 @@ def _run_paper_model_phase(
 
     if reservation is not None:
         budget_guard.settle(reservation, runner.coarse_response_usage(response))
+        budget_guard.resolve_uncertain(uncertainty_key)
     billed_usage = runner.coarse_response_usage(response)
     runner.append_cost_ledger(
         article_dir,
@@ -760,6 +785,7 @@ Identify the paper's argument, domain-specific meanings, preferred terminology, 
         status_path=status_path,
         run_id=run_id,
         budget_guard=budget_guard,
+        retry_uncertain=retry_uncertain,
     )
     _require_sections(
         analysis,
@@ -818,6 +844,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         status_path=status_path,
         run_id=run_id,
         budget_guard=budget_guard,
+        retry_uncertain=retry_uncertain,
     )
     _require_sections(
         critique,

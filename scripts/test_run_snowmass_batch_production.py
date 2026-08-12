@@ -301,6 +301,41 @@ class PromotionGateTests(unittest.TestCase):
         self.assertIn("uncertain_paid_requests", gate["reasons"])
         self.assertIn("selected_articles_not_packaged", gate["reasons"])
 
+    def test_resolved_uncertain_charge_remains_metric_without_blocking_promotion(self) -> None:
+        module = load_module()
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 2.0,
+            "project_reserved_rmb": 0.0,
+            "stage_max_cost_rmb": 50.0,
+            "stage_spent_rmb": 1.0,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {
+                "api_calls": 2,
+                "settled_calls": 1,
+                "uncertain_calls": 1,
+                "unresolved_uncertain_calls": 0,
+                "input_tokens": 100,
+                "cached_tokens": 0,
+                "output_tokens": 20,
+                "total_tokens": 120,
+            },
+        }
+
+        metrics, gate = module.production_metrics_and_gate(
+            stage="pilot10",
+            through_stage="packaged",
+            eligible_record_count=273,
+            selected_count=1,
+            results=[{"record_id": "arxiv:a", "status": "packaged", "source_characters": 10000}],
+            failures=[],
+            budget=budget,
+        )
+
+        self.assertEqual(metrics["uncertain_paid_requests"], 1)
+        self.assertEqual(metrics["unresolved_uncertain_paid_requests"], 0)
+        self.assertTrue(gate["allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()

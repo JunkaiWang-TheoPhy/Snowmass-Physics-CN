@@ -254,6 +254,11 @@ class PersistentBudgetGuard:
                     "reservation_id": reservation_id,
                     "cost_rmb": float(reservation["estimated_cost_rmb"]),
                     "owner_pid": owner_pid,
+                    **(
+                        {"uncertainty_key": reservation["uncertainty_key"]}
+                        if reservation.get("uncertainty_key")
+                        else {}
+                    ),
                 }
             )
 
@@ -266,7 +271,13 @@ class PersistentBudgetGuard:
         ) / 1_000_000
         return cost_usd * self.usd_cny_rate
 
-    def reserve(self, input_text: str, max_output_tokens: int) -> str:
+    def reserve(
+        self,
+        input_text: str,
+        max_output_tokens: int,
+        *,
+        uncertainty_key: str | None = None,
+    ) -> str:
         if self.stop_event is not None and self.stop_event.is_set():
             raise ProductionStoppedError("production stop signal is active")
         estimate = self._conservative_request_cost(input_text, max_output_tokens)
@@ -294,16 +305,19 @@ class PersistentBudgetGuard:
                     f"> ¥{self.stage_max_cost_rmb:.6f}"
                 )
             reservation_id = uuid.uuid4().hex
-            self._append_locked(
-                {
-                    "event_id": uuid.uuid4().hex,
-                    "kind": "reserve",
-                    "run_id": self.run_id,
-                    "reservation_id": reservation_id,
-                    "estimated_cost_rmb": estimate,
-                    "owner_pid": os.getpid(),
-                }
-            )
+            event = {
+                "event_id": uuid.uuid4().hex,
+                "kind": "reserve",
+                "run_id": self.run_id,
+                "reservation_id": reservation_id,
+                "estimated_cost_rmb": estimate,
+                "owner_pid": os.getpid(),
+            }
+            if uncertainty_key is not None:
+                if not isinstance(uncertainty_key, str) or not uncertainty_key.strip():
+                    raise ValueError("uncertainty_key must be a non-empty string")
+                event["uncertainty_key"] = uncertainty_key
+            self._append_locked(event)
             return reservation_id
 
     def _complete(
@@ -332,6 +346,8 @@ class PersistentBudgetGuard:
                 "reservation_id": reservation_id,
                 "cost_rmb": charged,
             }
+            if reservation.get("uncertainty_key"):
+                event["uncertainty_key"] = reservation["uncertainty_key"]
             if usage is not None:
                 event["usage"] = {
                     key: max(0, int(usage.get(key) or 0))
@@ -351,6 +367,77 @@ class PersistentBudgetGuard:
     def commit_estimate(self, reservation: str) -> float:
         return self._complete(reservation, kind="commit_estimate", cost_rmb=None)
 
+    def resolve_uncertain(
+        self,
+        uncertainty_key: str,
+        *,
+        reservation_id: str | None = None,
+    ) -> bool:
+        """Close an ambiguity risk without changing its conservative charge."""
+
+        if not isinstance(uncertainty_key, str) or not uncertainty_key.strip():
+            raise ValueError("uncertainty_key must be a non-empty string")
+        with self._locked():
+            events = self._events_locked()
+            matching = [
+                event
+                for event in events
+                if event.get("run_id") == self.run_id
+                and event.get("kind") in {"commit_estimate", "recover_orphan"}
+                and (
+                    event.get("uncertainty_key") == uncertainty_key
+                    or (
+                        reservation_id is not None
+                        and event.get("reservation_id") == reservation_id
+                    )
+                )
+            ]
+            opened = bool(matching)
+            resolved = any(
+                event.get("run_id") == self.run_id
+                and event.get("kind") == "resolve_uncertain"
+                and (
+                    event.get("uncertainty_key") == uncertainty_key
+                    or (
+                        reservation_id is not None
+                        and event.get("reservation_id") == reservation_id
+                    )
+                )
+                for event in events
+            )
+            if not opened or resolved:
+                return False
+            event = {
+                "event_id": uuid.uuid4().hex,
+                "kind": "resolve_uncertain",
+                "run_id": self.run_id,
+                "uncertainty_key": uncertainty_key,
+            }
+            if reservation_id is not None:
+                event["reservation_id"] = reservation_id
+            self._append_locked(event)
+            return True
+
+    def unresolved_uncertain_cost(self, uncertainty_key: str) -> float:
+        """Return already committed conservative cost for one open risk."""
+
+        with self._locked():
+            events = self._events_locked()
+            if any(
+                event.get("run_id") == self.run_id
+                and event.get("kind") == "resolve_uncertain"
+                and event.get("uncertainty_key") == uncertainty_key
+                for event in events
+            ):
+                return 0.0
+            return sum(
+                float(event.get("cost_rmb") or 0)
+                for event in events
+                if event.get("run_id") == self.run_id
+                and event.get("kind") in {"commit_estimate", "recover_orphan"}
+                and event.get("uncertainty_key") == uncertainty_key
+            )
+
     def snapshot(self) -> dict[str, Any]:
         with self._locked():
             self._recover_orphans_locked()
@@ -368,10 +455,41 @@ class PersistentBudgetGuard:
                 if event.get("run_id") == self.run_id
                 and event.get("kind") in {"settle", "commit_estimate", "recover_orphan"}
             ]
+            uncertainty_events = [
+                event
+                for event in stage_events
+                if event.get("kind") in {"commit_estimate", "recover_orphan"}
+            ]
+            resolved_keys = {
+                str(event["uncertainty_key"])
+                for event in self._events_locked()
+                if event.get("run_id") == self.run_id
+                and event.get("kind") == "resolve_uncertain"
+                and event.get("uncertainty_key")
+            }
+            resolved_reservations = {
+                str(event["reservation_id"])
+                for event in self._events_locked()
+                if event.get("run_id") == self.run_id
+                and event.get("kind") == "resolve_uncertain"
+                and event.get("reservation_id")
+            }
+            unresolved_uncertain_calls = sum(
+                (
+                    event.get("uncertainty_key")
+                    and str(event["uncertainty_key"]) not in resolved_keys
+                )
+                or (
+                    not event.get("uncertainty_key")
+                    and str(event.get("reservation_id") or "") not in resolved_reservations
+                )
+                for event in uncertainty_events
+            )
             stage_usage = {
                 "api_calls": len(stage_events),
                 "settled_calls": sum(event.get("kind") == "settle" for event in stage_events),
-                "uncertain_calls": sum(event.get("kind") != "settle" for event in stage_events),
+                "uncertain_calls": len(uncertainty_events),
+                "unresolved_uncertain_calls": unresolved_uncertain_calls,
                 "input_tokens": 0,
                 "cached_tokens": 0,
                 "output_tokens": 0,

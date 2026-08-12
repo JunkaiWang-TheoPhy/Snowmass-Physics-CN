@@ -162,6 +162,69 @@ class PersistentBudgetGuardTests(unittest.TestCase):
         self.assertEqual(usage["cached_tokens"], 20)
         self.assertEqual(usage["output_tokens"], 40)
 
+    def test_resolved_uncertainty_keeps_cost_audit_but_closes_gate_risk(self) -> None:
+        guard = self.guard(run_id="replay", project=1.0, stage=1.0)
+        uncertain = guard.reserve(
+            "source",
+            4096,
+            uncertainty_key="arxiv:test:chunk0001:translate",
+        )
+        charged = guard.commit_estimate(uncertain)
+
+        replay = guard.reserve(
+            "source",
+            4096,
+            uncertainty_key="arxiv:test:chunk0001:translate",
+        )
+        guard.settle(
+            replay,
+            {
+                "input_tokens": 120,
+                "cached_tokens": 20,
+                "output_tokens": 40,
+                "total_tokens": 160,
+            },
+        )
+        self.assertTrue(guard.resolve_uncertain("arxiv:test:chunk0001:translate"))
+
+        snapshot = guard.snapshot()
+        usage = snapshot["stage_usage"]
+        self.assertGreaterEqual(snapshot["stage_spent_rmb"], charged)
+        self.assertEqual(usage["uncertain_calls"], 1)
+        self.assertEqual(usage["unresolved_uncertain_calls"], 0)
+
+        events = [
+            json.loads(line)
+            for line in (self.control / "budget_ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(sum(event["kind"] == "commit_estimate" for event in events), 1)
+        self.assertEqual(sum(event["kind"] == "resolve_uncertain" for event in events), 1)
+
+    def test_resolving_unknown_uncertainty_is_idempotent_and_writes_nothing(self) -> None:
+        guard = self.guard(run_id="replay", project=1.0, stage=1.0)
+
+        self.assertFalse(guard.resolve_uncertain("missing-risk"))
+        self.assertEqual(
+            (self.control / "budget_ledger.jsonl").read_text(encoding="utf-8"),
+            "",
+        )
+
+    def test_legacy_uncertainty_can_be_closed_by_reservation_id(self) -> None:
+        guard = self.guard(run_id="legacy", project=1.0, stage=1.0)
+        reservation = guard.reserve("source", 4096)
+        guard.commit_estimate(reservation)
+
+        self.assertTrue(
+            guard.resolve_uncertain(
+                "arxiv:test:chunk0001:translate:legacy",
+                reservation_id=reservation,
+            )
+        )
+        self.assertEqual(
+            guard.snapshot()["stage_usage"]["unresolved_uncertain_calls"],
+            0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

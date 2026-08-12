@@ -1623,6 +1623,67 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(guard.snapshot()["active_reservations"], 0)
         self.assertGreater(guard.snapshot()["spent_rmb"], 0)
 
+    def test_authorized_uncertain_replay_closes_persistent_risk_after_success(self) -> None:
+        class RecordingGuard:
+            usd_cny_rate = RUNNER.DEFAULT_USD_CNY_RATE
+
+            def __init__(self) -> None:
+                self.reservations = 0
+                self.resolved: list[str] = []
+
+            def reserve(self, _input: str, _maximum: int, *, uncertainty_key=None):
+                self.reservations += 1
+                self.last_key = uncertainty_key
+                return f"reservation-{self.reservations}"
+
+            def commit_estimate(self, _reservation: str) -> float:
+                return 0.125
+
+            def settle(self, _reservation: str, _usage: dict[str, object]) -> None:
+                return None
+
+            def unresolved_uncertain_cost(self, _uncertainty_key: str) -> float:
+                return 0.125
+
+            def resolve_uncertain(self, uncertainty_key: str) -> bool:
+                self.resolved.append(uncertainty_key)
+                return True
+
+        class AmbiguousClient:
+            def complete(self, _instructions: str, _input: str, _maximum: int):
+                raise RUNNER.AmbiguousTransportError("response may have been generated")
+
+        guard = RecordingGuard()
+        first = RUNNER.process_chunk(
+            self.task,
+            AmbiguousClient(),
+            [],
+            stages=("translate",),
+            budget_guard=guard,
+        )
+        self.assertEqual(first["status"], "uncertain")
+
+        self.task["retry_uncertain"] = True
+
+        class SuccessClient:
+            def complete(self, _instructions: str, _input: str, _maximum: int):
+                return completed_response("原文段落。\n"), 0.1
+
+        second = RUNNER.process_chunk(
+            self.task,
+            SuccessClient(),
+            [],
+            stages=("translate",),
+            budget_guard=guard,
+        )
+
+        self.assertEqual(second["status"], "complete")
+        self.assertEqual(guard.reservations, 2)
+        self.assertEqual(
+            guard.resolved,
+            ["arxiv:allowed:chunk0001:translate:segment0001"],
+        )
+
     def test_process_chunk_persists_raw_response_before_validation_failure(self) -> None:
         class FakeClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
