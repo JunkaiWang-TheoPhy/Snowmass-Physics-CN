@@ -251,10 +251,19 @@ def _canonical_number(value: str) -> str:
 
 def _numeric_literals(text: str) -> tuple[tuple[str, str], ...]:
     source = _numeric_source_text(text)
-    return tuple(
-        (match.group(0), _canonical_number(match.group(0)))
-        for match in _COMPARE_NUMBER_RE.finditer(source)
-    )
+    values: list[tuple[str, str]] = []
+    for match in _COMPARE_NUMBER_RE.finditer(source):
+        raw = match.group(0)
+        semantic = raw
+        if (
+            raw.startswith("-")
+            and match.start() > 0
+            and source[match.start() - 1].isascii()
+            and source[match.start() - 1].isalpha()
+        ):
+            semantic = raw[1:]
+        values.append((raw, _canonical_number(semantic)))
+    return tuple(values)
 
 
 def _counter_difference(left: Counter[str], right: Counter[str]) -> tuple[str, ...]:

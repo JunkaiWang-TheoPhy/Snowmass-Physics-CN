@@ -192,6 +192,22 @@ class NumericComparisonTests(unittest.TestCase):
         self.assertEqual(result.missing_values, ("2",))
         self.assertEqual(result.added_values, ())
 
+    def test_hyphenated_numeric_modifier_is_not_a_negative_number(self) -> None:
+        units = load_units()
+
+        modifier = units.compare_numeric_literals(
+            "The estimate has sub-2% uncertainty.",
+            "该估计的不确定度低于2%。",
+        )
+        negative = units.compare_numeric_literals(
+            "The shift is -2%.",
+            "该偏移为2%。",
+        )
+
+        self.assertTrue(modifier.values_equal)
+        self.assertFalse(negative.values_equal)
+        self.assertEqual(negative.missing_values, ("-2%",))
+
 
 if __name__ == "__main__":
     unittest.main()
