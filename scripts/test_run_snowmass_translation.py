@@ -796,7 +796,7 @@ class ProcessChunkTests(unittest.TestCase):
                 correction_retry,
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             RUNNER.should_use_structure_anchor_fallback(
                 "translate",
                 {"error": "Structure-slot response is suspiciously short"},
@@ -809,6 +809,13 @@ class ProcessChunkTests(unittest.TestCase):
             RUNNER.should_use_structure_anchor_fallback(
                 "translate",
                 {"error": "Invalid structure-slot value for T0001"},
+                "",
+            )
+        )
+        self.assertTrue(
+            RUNNER.should_use_structure_anchor_fallback(
+                "translate",
+                {"error": "Structure-slot response is suspiciously short for the complete segment"},
                 "",
             )
         )

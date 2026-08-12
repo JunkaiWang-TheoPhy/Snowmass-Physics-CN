@@ -51,6 +51,7 @@ API_URL = "https://api.deepseek.com/responses"
 MODEL = "deepseek-v4-flash"
 STAGES = ("translate", "terminology", "anti_ai", "academic")
 OPTIONAL_STYLE_STAGES = frozenset({"anti_ai", "academic"})
+QC_CONTRACT_VERSION = 2
 MODEL_STRUCTURE_SEGMENT_LIMIT = 4
 STRUCTURE_SLOT_PROTOCOL = "snowmass-text-slots-v1"
 STRUCTURE_ANCHOR_PROTOCOL = "snowmass-anchor-template-v1"
@@ -644,7 +645,10 @@ def should_use_structure_anchor_fallback(
     """Use the flexible protocol once, then return to strict slots if it fails."""
 
     error = str(stage_status.get("error") or "")
-    if stage == "translate" and error.startswith("Invalid structure-slot value"):
+    if stage == "translate" and (
+        error.startswith("Invalid structure-slot value")
+        or error.startswith("Structure-slot response")
+    ):
         return True
     if stage not in {"revision", *OPTIONAL_STYLE_STAGES}:
         return False
@@ -725,6 +729,7 @@ def request_key(
 ) -> str:
     payload = {
         "stage": stage,
+        "qc_contract_version": QC_CONTRACT_VERSION,
         **build_request_payload(instructions, input_text, max_output_tokens),
     }
     payload["model"] = model

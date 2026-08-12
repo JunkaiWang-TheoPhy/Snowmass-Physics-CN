@@ -138,6 +138,27 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("units_mismatch", report.failures)
 
+    def test_validate_chunk_rejects_new_parenthesis_residue(self) -> None:
+        report = QC.validate_chunk(
+            source="linear (ILC) or circular (FCC-ee) collider.\n",
+            translated="直线（ILC）或环形（FCC-ee））对撞机。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertFalse(report.ok)
+        self.assertIn("parentheses_mismatch", report.failures)
+
+    def test_validate_chunk_preserves_source_inherited_parenthesis_residue(self) -> None:
+        report = QC.validate_chunk(
+            source="diagnostics ) and extraction.\n",
+            translated="诊断）以及引出。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+
     def test_validate_chunk_allows_ascii_unit_literal_next_to_chinese_text(self) -> None:
         report = QC.validate_chunk(
             source="The line is at 21cm.\n",

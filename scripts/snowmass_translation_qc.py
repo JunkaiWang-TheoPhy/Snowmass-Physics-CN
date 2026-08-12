@@ -124,6 +124,20 @@ def _extract_unit_values(text: str) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _parenthesis_residue(text: str) -> tuple[int, int]:
+    stack: list[str] = []
+    unmatched_closing = 0
+    for character in text:
+        if character in {"(", "（"}:
+            stack.append(character)
+        elif character in {")", "）"}:
+            if stack:
+                stack.pop()
+            else:
+                unmatched_closing += 1
+    return len(stack), unmatched_closing
+
+
 def _same_multiset(left: tuple[str, ...] | list[str], right: tuple[str, ...] | list[str]) -> bool:
     return Counter(left) == Counter(right)
 
@@ -147,6 +161,8 @@ def validate_chunk(source: str, translated: str, mapping: dict[str, str], glossa
         failures.append("numbers_mismatch")
     if not _same_multiset(_extract_unit_values(source), _extract_unit_values(translated)):
         failures.append("units_mismatch")
+    if _parenthesis_residue(source) != _parenthesis_residue(translated):
+        failures.append("parentheses_mismatch")
     if not _same_multiset(_extract_urls(source), _extract_urls(translated)):
         failures.append("urls_mismatch")
     if not _same_multiset(tuple(_CITATION_RE.findall(source)), tuple(_CITATION_RE.findall(translated))):
