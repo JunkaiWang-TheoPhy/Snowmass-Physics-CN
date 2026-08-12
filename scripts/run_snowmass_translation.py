@@ -256,6 +256,18 @@ def merge_glossary_terms(
 
 def select_glossary_terms(source_text: str, terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
     folded = source_text.casefold()
+
+    def surface_is_present(surface: Any) -> bool:
+        value = str(surface).strip().casefold()
+        if not value:
+            return False
+        if value.isascii() and any(character.isalpha() for character in value):
+            return re.search(
+                rf"(?<![A-Za-z]){re.escape(value)}(?![A-Za-z])",
+                folded,
+            ) is not None
+        return value in folded
+
     selected: list[dict[str, Any]] = []
     for term in terms:
         excluded = term.get("exclude_phrases")
@@ -267,7 +279,7 @@ def select_glossary_terms(source_text: str, terms: list[dict[str, Any]]) -> list
         ):
             continue
         surfaces = [term.get("source", ""), *term.get("aliases", [])]
-        if any(str(surface).strip().casefold() in folded for surface in surfaces if str(surface).strip()):
+        if any(surface_is_present(surface) for surface in surfaces):
             selected.append(term)
     return selected
 

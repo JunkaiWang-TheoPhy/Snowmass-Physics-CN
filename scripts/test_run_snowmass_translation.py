@@ -368,6 +368,14 @@ class GlossaryMergeTests(unittest.TestCase):
 
         self.assertEqual(selected, [])
 
+    def test_select_glossary_terms_does_not_match_inside_a_longer_english_word(self) -> None:
+        selected = RUNNER.select_glossary_terms(
+            "Education initiatives and collaborations with industry.",
+            [{"source": "collaboration", "target": "合作组"}],
+        )
+
+        self.assertEqual(selected, [])
+
 
 class BudgetGuardTests(unittest.TestCase):
     def test_zero_budget_is_rejected_instead_of_meaning_unlimited(self) -> None:

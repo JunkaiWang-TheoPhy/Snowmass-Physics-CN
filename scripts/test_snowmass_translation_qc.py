@@ -259,6 +259,16 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("locked_terms_mismatch", report.failures)
 
+    def test_locked_term_does_not_match_inside_a_longer_english_word(self) -> None:
+        report = QC.validate_chunk(
+            source="Education initiatives and collaborations with industry.\n",
+            translated="教育计划以及与工业界的合作。\n",
+            mapping={},
+            glossary=[{"source": "collaboration", "target": "合作组"}],
+        )
+
+        self.assertTrue(report.ok)
+
     def test_locked_term_phrase_exception_preserves_foreign_proper_name(self) -> None:
         report = QC.validate_chunk(
             source="Université Catholique, Chemin du Cyclotron, Belgium.\n",

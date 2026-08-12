@@ -75,7 +75,14 @@ def _contains_term(text: str, term: str) -> bool:
         return False
     if _ACRONYM_RE.fullmatch(term):
         return term in text
-    if term.casefold() in text.casefold():
+    if term.isascii() and any(character.isalpha() for character in term):
+        if re.search(
+            rf"(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])",
+            text,
+            re.IGNORECASE,
+        ):
+            return True
+    elif term.casefold() in text.casefold():
         return True
     has_cjk = any("\u4e00" <= character <= "\u9fff" for character in term)
     has_ascii_letters = any(character.isascii() and character.isalpha() for character in term)
