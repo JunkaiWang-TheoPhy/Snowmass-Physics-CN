@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Any
+import unicodedata
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,6 +114,52 @@ def _translation_inputs(article_dir: Path, manifest: dict[str, Any]):
 
 def _normalized_phrase(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _normalized_qc_text(value: str) -> str:
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value)).casefold()
+
+
+def _forbidden_translation_error(
+    texts: list[str],
+    rules: list[dict[str, Any]],
+    chunk_ids: list[str],
+) -> str | None:
+    for index, text in enumerate(texts):
+        normalized_text = _normalized_qc_text(text)
+        for rule in rules:
+            forbidden = str(rule.get("text", "")).strip()
+            replacement = str(rule.get("replacement", "")).strip()
+            if not forbidden or not replacement:
+                raise RuntimeError("Forbidden translation rule is incomplete")
+            if _normalized_qc_text(forbidden) in normalized_text:
+                return (
+                    f"forbidden translation in {chunk_ids[index]}: "
+                    f"{forbidden}; use {replacement}"
+                )
+    return None
+
+
+def _merge_exact_translation_rules(
+    baseline: list[dict[str, Any]],
+    overrides: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = [dict(rule) for rule in baseline]
+    positions: dict[str, int] = {}
+    for index, rule in enumerate(merged):
+        source = _normalized_phrase(str(rule.get("source", "")))
+        if source:
+            positions[source] = index
+    for rule in overrides:
+        replacement = dict(rule)
+        source = _normalized_phrase(str(replacement.get("source", "")))
+        if source in positions:
+            merged[positions[source]] = replacement
+        else:
+            if source:
+                positions[source] = len(merged)
+            merged.append(replacement)
+    return merged
 
 
 def _term_match(text: str, term: str) -> re.Match[str] | None:
@@ -241,6 +288,14 @@ def prepare_publication_translations(
             prepared_texts[translation_index], term
         )
 
+    forbidden_error = _forbidden_translation_error(
+        prepared_texts,
+        list(constraints.get("forbidden_translations", [])),
+        [str(chunk["id"]) for chunk in chunks],
+    )
+    if forbidden_error:
+        raise RuntimeError(forbidden_error)
+
     publication_dir = article_dir / "publication_chunks"
     prepared: list[Any] = []
     chunk_hashes: dict[str, str] = {}
@@ -292,26 +347,37 @@ def _load_constraints(
     policy_path: Path = DEFAULT_HARD_CONSTRAINTS,
 ) -> dict[str, Any]:
     path = article_dir / "hard_constraints.json"
+    policy: dict[str, Any] = {"schema_version": 1, "records": {}}
+    if policy_path.is_file():
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        if not isinstance(policy, dict) or policy.get("schema_version") != 1:
+            raise RuntimeError(f"Invalid tracked hard constraint policy: {policy_path}")
+        if not isinstance(policy.get("records"), dict):
+            raise RuntimeError(f"Tracked hard constraint policy has no records: {policy_path}")
+    record_rules = policy["records"].get(record_id, {})
+    if not isinstance(record_rules, dict):
+        raise RuntimeError(f"Tracked hard constraints are invalid for {record_id}")
+    value = record_rules
     if path.is_file():
         value = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise RuntimeError(f"Hard constraints must be a JSON object: {path}")
-        return value
-    if not policy_path.is_file():
-        return {"schema_version": 1, "record_id": record_id, "exact_translations": []}
-    policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    if not isinstance(policy, dict) or policy.get("schema_version") != 1:
-        raise RuntimeError(f"Invalid tracked hard constraint policy: {policy_path}")
-    records = policy.get("records")
-    if not isinstance(records, dict):
-        raise RuntimeError(f"Tracked hard constraint policy has no records: {policy_path}")
-    record_rules = records.get(record_id, {})
-    if not isinstance(record_rules, dict):
-        raise RuntimeError(f"Tracked hard constraints are invalid for {record_id}")
+    forbidden = []
+    for source in (policy, record_rules, value):
+        rules = source.get("forbidden_translations", [])
+        if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
+            raise RuntimeError("forbidden_translations must be a list of objects")
+        for rule in rules:
+            if rule not in forbidden:
+                forbidden.append(rule)
     return {
         "schema_version": 1,
-        "record_id": record_id,
-        "exact_translations": record_rules.get("exact_translations", []),
+        "record_id": value.get("record_id", record_id),
+        "exact_translations": _merge_exact_translation_rules(
+            list(record_rules.get("exact_translations", [])),
+            list(value.get("exact_translations", [])) if path.is_file() else [],
+        ),
+        "forbidden_translations": forbidden,
     }
 
 

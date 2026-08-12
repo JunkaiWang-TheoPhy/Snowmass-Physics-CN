@@ -26,6 +26,7 @@ translations/<record-slug>/
 ## 发布级硬约束
 
 - `snowmass-global-glossary.json` 是可版本化的中英术语真源。`first_use=true` 的术语在每篇摘要或正文首次出现时必须写成“中文（English，缩写）”；后续才可只用锁定中文或缩写。
+- `snowmass-hard-constraints.json` 的全局 `forbidden_translations` 是发布阻断表；命中已知误译时，BabelDOC 发布预检和最终 PDF 打包均须失败关闭，并提示锁定替换词。论文级 `exact_translations` 用于地址、机构名、运行页眉等必须逐字一致的文本。
 - `snowmass-hard-constraints.json` 保存逐篇精确对照。运行页眉等由 TeX 一次定义、却在 PDF 每页重复出现的对象只确定一次译法，所有重复实例必须复用，不能逐页调用模型。
 - 图像、图表和矢量图内部的文字整体保持原文，包括坐标轴、图例、标注、实验/任务名称、符号和单位；只翻译图外的图注。BabelDOC IR 中 `xobj_id != 0` 的段落必须标记为 `verbatim_figure_text`，在进入模型前跳过，并在回填时再次核验原文逐字一致，禁止按关键词局部翻译。
 - 参考文献条目保持原文和原排版，不进入模型翻译或 BabelDOC 二次排版；仅运行页眉和 `References` 标题按精确对照替换。

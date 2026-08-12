@@ -285,15 +285,9 @@ def _hard_exact_translations(
 ) -> dict[str, str]:
     """Load document-level exact translations used for repeated PDF artifacts."""
 
-    path = article_dir / "hard_constraints.json"
-    if path.is_file():
-        value = _load_json(path)
-        if value.get("schema_version") != 1:
-            raise RuntimeError(f"Unsupported hard constraint schema: {path}")
-        if value.get("record_id") not in {None, record_id}:
-            raise RuntimeError(f"Hard constraint record mismatch: {path}")
-        rules = value.get("exact_translations", [])
-    elif policy_path.is_file():
+    local_path = article_dir / "hard_constraints.json"
+    rule_sets: list[tuple[Path, list[dict[str, Any]]]] = []
+    if policy_path.is_file():
         policy = _load_json(policy_path)
         if policy.get("schema_version") != 1 or not isinstance(
             policy.get("records"), dict
@@ -302,19 +296,26 @@ def _hard_exact_translations(
         record_rules = policy["records"].get(record_id, {})
         if not isinstance(record_rules, dict):
             raise RuntimeError(f"Invalid tracked hard constraints for {record_id}")
-        rules = record_rules.get("exact_translations", [])
-        path = policy_path
-    else:
+        rule_sets.append((policy_path, record_rules.get("exact_translations", [])))
+    if local_path.is_file():
+        value = _load_json(local_path)
+        if value.get("schema_version") != 1:
+            raise RuntimeError(f"Unsupported hard constraint schema: {local_path}")
+        if value.get("record_id") not in {None, record_id}:
+            raise RuntimeError(f"Hard constraint record mismatch: {local_path}")
+        rule_sets.append((local_path, value.get("exact_translations", [])))
+    if not rule_sets:
         return {}
     mapping: dict[str, str] = {}
-    for rule in rules:
-        source = " ".join(str(rule.get("source", "")).split()).casefold()
-        target = str(rule.get("target", "")).strip()
-        if not source or not target:
-            raise RuntimeError(f"Incomplete exact translation rule: {path}")
-        if source in mapping and mapping[source] != target:
-            raise RuntimeError(f"Conflicting exact translation rule: {path}")
-        mapping[source] = target
+    for path, rules in rule_sets:
+        if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
+            raise RuntimeError(f"Exact translations must be a list of objects: {path}")
+        for rule in rules:
+            source = " ".join(str(rule.get("source", "")).split()).casefold()
+            target = str(rule.get("target", "")).strip()
+            if not source or not target:
+                raise RuntimeError(f"Incomplete exact translation rule: {path}")
+            mapping[source] = target
     return mapping
 
 
@@ -906,8 +907,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.glossary is not None:
         global_terms = runner.load_glossary(args.glossary)
     else:
-        default_glossary = args.article_dir.parents[1] / "global_glossary.json"
-        global_terms = runner.load_glossary(default_glossary) if default_glossary.is_file() else []
+        default_glossary = runner.resolve_glossary_path(args.article_dir.parents[1], None)
+        global_terms = runner.load_glossary(default_glossary)
     terms = runner.merge_glossary_terms(
         global_terms,
         runner.load_article_glossary(args.article_dir),

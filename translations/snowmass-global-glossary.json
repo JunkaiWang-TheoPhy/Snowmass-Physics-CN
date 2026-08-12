@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "language_pair": "en-zh-CN",
   "first_use_policy": "For entries with first_use=true, the first abstract/body occurrence must use Chinese (English, acronym when defined).",
   "terms": [
@@ -26,6 +26,7 @@
     {"source": "gravitational wave", "target": "引力波", "first_use": true},
     {"source": "cosmic ray", "target": "宇宙线", "first_use": true},
     {"source": "accelerator", "target": "加速器", "first_use": true},
+    {"source": "cyclotron", "target": "回旋加速器", "note": "Do not mistranslate as 旋风加速器; preserve the locked term in facility names and addresses."},
     {"source": "detector", "target": "探测器", "first_use": true},
     {"source": "collaboration", "target": "合作组"},
     {"source": "observatory", "target": "观测台", "first_use": true},

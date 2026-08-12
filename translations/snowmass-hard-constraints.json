@@ -1,5 +1,12 @@
 {
   "schema_version": 1,
+  "forbidden_translations": [
+    {
+      "text": "旋风加速器",
+      "replacement": "回旋加速器",
+      "reason": "Cyclotron is a particle accelerator term and must not be confused with whirlwind/cyclone."
+    }
+  ],
   "document_object_policies": {
     "figure_internal_text": {
       "classification": "babeldoc_xobj_id_nonzero",
@@ -22,6 +29,12 @@
           "target": "参考文献",
           "scope": "all_occurrences",
           "reason": "Canonical Chinese section heading while preserving bibliography entries verbatim."
+        },
+        {
+          "source": "{v1}Lawrence Berkeley National Laboratory, One Cyclotron Road, Berkeley, CA 94720, USA{v2}Berkeley Center for Cosmological Physics, Department of Physics, University of California, Berkeley, CA 94720, USA{v3}Physics Department, BrookhavenNational Laboratory, Upton, NY11973, USA",
+          "target": "{v1}劳伦斯伯克利国家实验室，回旋加速器路一号，伯克利，加利福尼亚州94720，美国{v2}加利福尼亚大学伯克利分校物理系，伯克利宇宙学物理中心，伯克利，加利福尼亚州94720，美国{v3}布鲁克海文国家实验室物理系，厄普顿，纽约州11973，美国",
+          "scope": "all_occurrences",
+          "reason": "Lock the official One Cyclotron Road affiliation and preserve all affiliation markers and postal data."
         }
       ]
     }

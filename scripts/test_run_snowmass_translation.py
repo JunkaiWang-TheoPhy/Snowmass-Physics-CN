@@ -138,7 +138,18 @@ class RightsGateTests(unittest.TestCase):
         explicit = Path("locked-terms.json")
 
         self.assertEqual(RUNNER.resolve_glossary_path(root, explicit), explicit)
-        self.assertEqual(RUNNER.resolve_glossary_path(root, None), root / "global_glossary.json")
+        self.assertEqual(
+            RUNNER.resolve_glossary_path(root, None),
+            RUNNER.TRACKED_GLOBAL_GLOSSARY,
+        )
+
+    def test_root_glossary_overrides_tracked_fallback_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            local = root / "global_glossary.json"
+            local.write_text('{"terms": []}\n', encoding="utf-8")
+
+            self.assertEqual(RUNNER.resolve_glossary_path(root, None), local)
 
     def test_main_loads_external_glossary_for_production_root_and_records_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

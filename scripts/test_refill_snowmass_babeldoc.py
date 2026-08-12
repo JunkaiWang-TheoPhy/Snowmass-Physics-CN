@@ -252,6 +252,94 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(constraints["record_id"], "arxiv:allowed")
         self.assertEqual(constraints["exact_translations"][0]["target"], "统一页眉")
 
+    def test_local_constraints_inherit_global_forbidden_translations(self) -> None:
+        module = load_module()
+        (self.article / "hard_constraints.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "exact_translations": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        policy = self.root / "hard-policy.json"
+        policy.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "forbidden_translations": [
+                        {
+                            "text": "旋风加速器",
+                            "replacement": "回旋加速器",
+                        }
+                    ],
+                    "records": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        constraints = module._load_constraints(
+            self.article,
+            "arxiv:allowed",
+            policy_path=policy,
+        )
+
+        self.assertEqual(
+            constraints["forbidden_translations"],
+            [{"text": "旋风加速器", "replacement": "回旋加速器"}],
+        )
+
+    def test_local_exact_translations_override_and_extend_tracked_record_rules(self) -> None:
+        module = load_module()
+        (self.article / "hard_constraints.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "exact_translations": [
+                        {"source": "Header", "target": "本地统一页眉"},
+                        {"source": "Local only", "target": "仅本地"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        policy = self.root / "hard-policy.json"
+        policy.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "records": {
+                        "arxiv:allowed": {
+                            "exact_translations": [
+                                {"source": "Header", "target": "跟踪页眉"},
+                                {"source": "Tracked only", "target": "仅跟踪"},
+                            ]
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        constraints = module._load_constraints(
+            self.article,
+            "arxiv:allowed",
+            policy_path=policy,
+        )
+
+        self.assertEqual(
+            constraints["exact_translations"],
+            [
+                {"source": "Header", "target": "本地统一页眉"},
+                {"source": "Tracked only", "target": "仅跟踪"},
+                {"source": "Local only", "target": "仅本地"},
+            ],
+        )
+
     def test_publication_preflight_canonicalizes_headers_and_adds_first_use_terms(self) -> None:
         module = load_module()
         chunks = [
@@ -447,6 +535,44 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
                 },
                 glossary=[],
             )
+
+    def test_publication_preflight_blocks_known_mistranslation_before_writing_chunks(self) -> None:
+        module = load_module()
+        translation = module.BRIDGE.RefillTranslation(
+            1,
+            0,
+            "One Cyclotron Road\n",
+            "旋风加速器路一号\n",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "旋风加速器.*回旋加速器"):
+            module.prepare_publication_translations(
+                self.article,
+                {
+                    "chunks": [
+                        {
+                            "id": "chunk0001",
+                            "order": 1,
+                            "page_number": 1,
+                            "paragraph_index": 0,
+                        }
+                    ]
+                },
+                [translation],
+                constraints={
+                    "schema_version": 1,
+                    "exact_translations": [],
+                    "forbidden_translations": [
+                        {
+                            "text": "旋风加速器",
+                            "replacement": "回旋加速器",
+                        }
+                    ],
+                },
+                glossary=[],
+            )
+
+        self.assertFalse((self.article / "publication_chunks").exists())
 
     def test_first_use_definition_skips_title_and_starts_in_body(self) -> None:
         module = load_module()

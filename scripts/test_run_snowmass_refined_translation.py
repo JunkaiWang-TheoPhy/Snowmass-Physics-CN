@@ -104,6 +104,54 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(mapping, {"header": "统一页眉"})
 
+    def test_hard_exact_translations_merge_local_overrides_with_tracked_baseline(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            article = root / "article"
+            article.mkdir()
+            (article / "hard_constraints.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "record_id": "arxiv:allowed",
+                        "exact_translations": [
+                            {"source": "Header", "target": "本地页眉"},
+                            {"source": "Local only", "target": "仅本地"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            policy = root / "policy.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "records": {
+                            "arxiv:allowed": {
+                                "exact_translations": [
+                                    {"source": "Header", "target": "跟踪页眉"},
+                                    {"source": "Tracked only", "target": "仅跟踪"},
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            mapping = module._hard_exact_translations(
+                article,
+                "arxiv:allowed",
+                policy_path=policy,
+            )
+
+        self.assertEqual(
+            mapping,
+            {"header": "本地页眉", "tracked only": "仅跟踪", "local only": "仅本地"},
+        )
+
     def test_chunk_critique_context_is_local_and_marks_noop(self) -> None:
         module = load_module()
         critique = "chunk0001: 修正甲。\nchunk0002: 修正乙。\n"

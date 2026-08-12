@@ -180,6 +180,9 @@ def load_article_glossary(article_dir: Path) -> list[dict[str, Any]]:
     return load_glossary(path) if path.exists() else []
 
 
+TRACKED_GLOBAL_GLOSSARY = Path(__file__).resolve().parents[1] / "translations" / "snowmass-global-glossary.json"
+
+
 def merge_glossary_terms(
     global_terms: list[dict[str, Any]],
     article_terms: list[dict[str, Any]],
@@ -213,7 +216,10 @@ def select_glossary_terms(source_text: str, terms: list[dict[str, Any]]) -> list
 
 
 def resolve_glossary_path(root: Path, explicit: Path | None) -> Path:
-    return explicit if explicit is not None else root / "global_glossary.json"
+    if explicit is not None:
+        return explicit
+    root_glossary = root / "global_glossary.json"
+    return root_glossary if root_glossary.is_file() else TRACKED_GLOBAL_GLOSSARY
 
 
 def _token_count(value: Any) -> int:
