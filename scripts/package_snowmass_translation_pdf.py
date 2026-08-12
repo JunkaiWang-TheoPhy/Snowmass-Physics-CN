@@ -14,6 +14,11 @@ from urllib.parse import urlparse
 import fitz
 from pypdf import PdfReader, PdfWriter
 
+try:
+    from snowmass_publication_qc import validate_pdf_forbidden_translations
+except ModuleNotFoundError:
+    from scripts.snowmass_publication_qc import validate_pdf_forbidden_translations
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MOUNTAIN_SVG_PATH = ROOT / "site" / "assets" / "snowmass-mountain.png"
@@ -67,6 +72,11 @@ def package_translation_pdf(
         raise FileNotFoundError(f"mountain cover asset not found: {mountain_asset}")
     if not SYSTEM_CJK_FONT.is_file():
         raise FileNotFoundError(f"required system font not found: {SYSTEM_CJK_FONT}")
+
+    validate_pdf_forbidden_translations(
+        source_pdf,
+        ROOT / "translations" / "snowmass-hard-constraints.json",
+    )
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     packaged_on_text = _normalize_packaged_on(packaged_on)
