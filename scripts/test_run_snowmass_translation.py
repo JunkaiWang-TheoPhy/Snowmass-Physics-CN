@@ -208,6 +208,7 @@ class RightsGateTests(unittest.TestCase):
                         "--rights-manifest", str(rights),
                         "--glossary", str(glossary),
                         "--concurrency", "1",
+                        "--max-cost-rmb", "1",
                     ]
                 )
 
@@ -355,6 +356,10 @@ class GlossaryMergeTests(unittest.TestCase):
 
 
 class BudgetGuardTests(unittest.TestCase):
+    def test_zero_budget_is_rejected_instead_of_meaning_unlimited(self) -> None:
+        with self.assertRaises(ValueError):
+            RUNNER.BudgetGuard(0.0)
+
     def test_reservation_settles_to_reported_v4_flash_cost(self) -> None:
         guard = RUNNER.BudgetGuard(1.0, usd_cny_rate=7.2)
 
@@ -508,6 +513,12 @@ class ResponseValidationTests(unittest.TestCase):
 
 
 class RequestKeyAndCheckpointTests(unittest.TestCase):
+    def test_article_artifact_path_rejects_absolute_and_parent_escape(self) -> None:
+        article = Path("/tmp/article")
+        for value in ("../other.md", "/tmp/other.md", "nested/../../other.md"):
+            with self.subTest(value=value), self.assertRaises(RUNNER.UnsafeArticlePathError):
+                RUNNER.article_artifact_path(article, value)
+
     def test_request_key_is_deterministic_for_same_payload(self) -> None:
         first = RUNNER.request_key(
             stage="translate",
@@ -984,7 +995,11 @@ class ProcessChunkTests(unittest.TestCase):
                 observed_inputs.append(input_text)
                 raise RuntimeError("stop after capture")
 
-        with self.assertRaisesRegex(RuntimeError, "stop after capture"):
+        with mock.patch.object(
+            RUNNER,
+            "stage_decision",
+            return_value=RUNNER.StageDecision(True, "test_forced_model_call"),
+        ), self.assertRaisesRegex(RuntimeError, "stop after capture"):
             RUNNER.process_chunk(
                 self.task,
                 StopAfterCaptureClient(),
@@ -1034,7 +1049,11 @@ class ProcessChunkTests(unittest.TestCase):
                 observed_inputs.append(input_text)
                 raise RuntimeError("stop after capture")
 
-        with self.assertRaisesRegex(RuntimeError, "stop after capture"):
+        with mock.patch.object(
+            RUNNER,
+            "stage_decision",
+            return_value=RUNNER.StageDecision(True, "test_forced_model_call"),
+        ), self.assertRaisesRegex(RuntimeError, "stop after capture"):
             RUNNER.process_chunk(
                 self.task,
                 StopAfterCaptureClient(),

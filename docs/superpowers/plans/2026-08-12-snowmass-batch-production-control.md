@@ -53,6 +53,7 @@
 - [ ] Write tests for exact-true rights filtering, deterministic stage selection, explicit blocked IDs, required budgets, resume after interruption, stop-on-first-hard-failure and complete QC aggregation.
 - [ ] Run focused tests and observe failures.
 - [ ] Implement immutable run snapshot, atomic per-paper state, shared persistent guard, prepare/refined/refill/package adapters, and fail-closed summary.
+- [ ] Persist token/call/source-character cost metrics and a machine-readable next-stage promotion gate.
 - [ ] Run focused tests to green.
 
 ### Task 3: Cost-efficient quality stages
@@ -63,12 +64,12 @@
 - Modify: `scripts/test_run_snowmass_refined_translation.py`
 
 **Interfaces:**
-- `stage_decision("anti_ai", text, glossary)` returns deterministic copy when no locked marker is present.
+- `stage_decision("anti_ai", text, glossary)` always retains the independent model pass.
 - Existing no-actionable revision behavior remains mandatory and audited.
 
-- [ ] Write failing tests proving clean text skips anti-AI while marked text calls it and academic always calls it.
-- [ ] Implement the minimal decision change.
-- [ ] Verify a refined fake-client run uses one fewer call without losing stage artifacts.
+- [ ] Preserve tests proving anti-AI and academic remain independent model stages.
+- [ ] Keep cost optimization at document scheduling and no-actionable revision boundaries.
+- [ ] Verify refined artifacts and usage accounting remain complete.
 
 ### Task 4: Integrated verification and staged production
 

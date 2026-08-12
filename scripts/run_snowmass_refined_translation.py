@@ -239,7 +239,7 @@ def _deterministic_phase(
 def _tagged_source(article_dir: Path, chunks: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for chunk in chunks:
-        source_path = article_dir / str(chunk["source_file"])
+        source_path = runner.article_artifact_path(article_dir, str(chunk["source_file"]))
         source = source_path.read_text(encoding="utf-8").rstrip()
         unit_id = str(chunk.get("babeldoc_unit_id", ""))
         parts.append(f"<!-- {chunk['id']} {unit_id} -->\n{source}\n")
@@ -250,7 +250,9 @@ def _reference_chunk_ids(article_dir: Path, chunks: list[dict[str, Any]]) -> set
     """Return the bibliography heading and following units for verbatim passthrough."""
 
     for index, chunk in enumerate(chunks):
-        text = (article_dir / str(chunk["source_file"])).read_text(encoding="utf-8")
+        text = runner.article_artifact_path(
+            article_dir, str(chunk["source_file"])
+        ).read_text(encoding="utf-8")
         heading = " ".join(text.split()).rstrip(":").casefold()
         if heading in {"references", "bibliography"}:
             return {str(item["id"]) for item in chunks[index:]}
@@ -357,7 +359,7 @@ def _apply_manual_corrections(
         chunk = chunks_by_id.get(chunk_id)
         if chunk is None:
             raise RuntimeError(f"Unknown manual correction chunk: {record_id}/{chunk_id}")
-        source_path = article_dir / str(chunk["source_file"])
+        source_path = runner.article_artifact_path(article_dir, str(chunk["source_file"]))
         source = source_path.read_text(encoding="utf-8")
         live_source_hash = runner.text_hash(source)
         if live_source_hash != chunk.get("source_hash") or live_source_hash != source_hash:
@@ -381,7 +383,7 @@ def _apply_manual_corrections(
                 f"Manual correction failed QC: {record_id}/{chunk_id}: "
                 f"{', '.join(qc_report.failures)}"
             )
-        output_path = article_dir / str(chunk["output_file"])
+        output_path = runner.article_artifact_path(article_dir, str(chunk["output_file"]))
         previous_hash = (
             runner.text_hash(output_path.read_text(encoding="utf-8"))
             if output_path.exists()
@@ -421,7 +423,7 @@ def _verified_merge(
     fingerprints: list[dict[str, str]] = []
     for chunk in chunks:
         chunk_id = str(chunk["id"])
-        source_path = article_dir / str(chunk["source_file"])
+        source_path = runner.article_artifact_path(article_dir, str(chunk["source_file"]))
         source_hash = runner.text_hash(source_path.read_text(encoding="utf-8"))
         if source_hash != chunk.get("source_hash"):
             raise RuntimeError(f"Source hash mismatch before merge: {record_id}/{chunk_id}")
@@ -541,6 +543,7 @@ def _run_chunk_barrier(
     phase: str,
     record_id: str,
     max_qc_retries: int = 2,
+    stop_event: Any = None,
 ) -> None:
     """Run independent chunks concurrently and stop before the next paper phase on failure."""
 
@@ -550,27 +553,52 @@ def _run_chunk_barrier(
     for attempt in range(max_qc_retries + 1):
         retryable: list[dict[str, Any]] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
-            future_map = {
-                executor.submit(invoke, chunk, attempt): chunk for chunk in pending
-            }
-            for future in concurrent.futures.as_completed(future_map):
-                chunk = future_map[future]
-                chunk_id = str(chunk["id"])
+            iterator = iter(pending)
+            future_map: dict[concurrent.futures.Future[Any], dict[str, Any]] = {}
+            for _ in range(concurrency):
                 try:
-                    result = future.result()
-                    result_status = result.get("status")
-                    if result_status == "complete":
-                        failures.pop(chunk_id, None)
-                    elif result_status == "uncertain":
-                        terminal_failures[chunk_id] = "uncertain"
-                    else:
-                        failures[chunk_id] = str(result_status)
+                    chunk = next(iterator)
+                except StopIteration:
+                    break
+                future_map[executor.submit(invoke, chunk, attempt)] = chunk
+            while future_map:
+                done, _remaining = concurrent.futures.wait(
+                    future_map,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                for future in done:
+                    chunk = future_map.pop(future)
+                    chunk_id = str(chunk["id"])
+                    try:
+                        result = future.result()
+                        result_status = result.get("status")
+                        if result_status == "complete":
+                            failures.pop(chunk_id, None)
+                        elif result_status == "uncertain":
+                            if stop_event is not None:
+                                stop_event.set()
+                            terminal_failures[chunk_id] = "uncertain"
+                        else:
+                            failures[chunk_id] = str(result_status)
+                            retryable.append(chunk)
+                    except runner.BudgetExceededError as exc:
+                        if stop_event is not None:
+                            stop_event.set()
+                        terminal_failures[chunk_id] = f"{type(exc).__name__}:{exc}"
+                    except Exception as exc:
+                        if attempt == max_qc_retries and stop_event is not None:
+                            stop_event.set()
+                        failures[chunk_id] = f"{type(exc).__name__}:{exc}"
                         retryable.append(chunk)
-                except runner.BudgetExceededError as exc:
-                    terminal_failures[chunk_id] = f"{type(exc).__name__}:{exc}"
-                except Exception as exc:
-                    failures[chunk_id] = f"{type(exc).__name__}:{exc}"
-                    retryable.append(chunk)
+                if terminal_failures or (stop_event is not None and stop_event.is_set()):
+                    for queued in future_map:
+                        queued.cancel()
+                    continue
+                try:
+                    next_chunk = next(iterator)
+                except StopIteration:
+                    continue
+                future_map[executor.submit(invoke, next_chunk, attempt)] = next_chunk
         if not retryable:
             break
         if attempt == max_qc_retries:
@@ -578,6 +606,8 @@ def _run_chunk_barrier(
         pending = retryable
     failures.update(terminal_failures)
     if failures:
+        if stop_event is not None:
+            stop_event.set()
         raise RuntimeError(
             f"{phase} barrier failed for {record_id}: "
             + "; ".join(f"{key}:{value}" for key, value in sorted(failures.items())[:20])
@@ -664,16 +694,18 @@ def run_refined_article(
         for chunk in chunks
         if str(chunk.get("layout_label", "")) == "fallback_line"
         and len(
-            (article_dir / str(chunk["source_file"])).read_text(encoding="utf-8").strip()
+            runner.article_artifact_path(
+                article_dir, str(chunk["source_file"])
+            ).read_text(encoding="utf-8").strip()
         )
         <= 12
     }
 
     def chunk_task(chunk: dict[str, Any]) -> dict[str, Any]:
         chunk_id = str(chunk["id"])
-        source_text = (article_dir / str(chunk["source_file"])).read_text(
-            encoding="utf-8"
-        )
+        source_text = runner.article_artifact_path(
+            article_dir, str(chunk["source_file"])
+        ).read_text(encoding="utf-8")
         normalized_source = " ".join(source_text.split()).casefold()
         fixed_translation = hard_exact_translations.get(normalized_source)
         if fixed_translation is not None and source_text.endswith("\n"):
@@ -751,6 +783,7 @@ Identify the paper's argument, domain-specific meanings, preferred terminology, 
         concurrency=concurrency,
         phase="draft",
         record_id=record_id,
+        stop_event=getattr(budget_guard, "stop_event", None),
         invoke=lambda chunk, attempt: runner.process_chunk(
             chunk_task(chunk),
             client,
@@ -801,6 +834,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         concurrency=concurrency,
         phase="revision",
         record_id=record_id,
+        stop_event=getattr(budget_guard, "stop_event", None),
         invoke=lambda chunk, attempt: runner.process_chunk(
             chunk_task(chunk),
             client,
@@ -839,6 +873,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         concurrency=concurrency,
         phase="final",
         record_id=record_id,
+        stop_event=getattr(budget_guard, "stop_event", None),
         invoke=lambda chunk, attempt: runner.process_chunk(
             chunk_task(chunk),
             client,

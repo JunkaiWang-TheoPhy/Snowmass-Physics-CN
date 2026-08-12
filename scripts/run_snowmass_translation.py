@@ -16,6 +16,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -99,6 +100,23 @@ class BudgetExceededError(RuntimeError):
     """A request could not be reserved within the configured RMB budget."""
 
 
+class UnsafeArticlePathError(RuntimeError):
+    """A manifest artifact path escaped its article workspace."""
+
+
+def article_artifact_path(article_dir: Path, relative: str) -> Path:
+    candidate = Path(relative)
+    if not relative or candidate.is_absolute():
+        raise UnsafeArticlePathError(f"article artifact must be a relative path: {relative}")
+    root = Path(article_dir).resolve()
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as error:
+        raise UnsafeArticlePathError(f"article artifact escapes workspace: {relative}") from error
+    return resolved
+
+
 class ParsedResponse:
     def __init__(
         self,
@@ -124,9 +142,16 @@ def now() -> str:
 
 def atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
 
 
 def append_cost_ledger(article_dir: Path, event: dict[str, Any]) -> None:
@@ -149,9 +174,16 @@ def append_cost_ledger(article_dir: Path, event: dict[str, Any]) -> None:
 
 def atomic_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(text, encoding="utf-8")
-    os.replace(temporary, path)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
 
 
 def load_api_key() -> str:
@@ -256,8 +288,8 @@ class BudgetGuard:
         usd_cny_rate: float = DEFAULT_USD_CNY_RATE,
         initial_spent_rmb: float = 0.0,
     ) -> None:
-        if not math.isfinite(max_cost_rmb) or max_cost_rmb < 0:
-            raise ValueError("max_cost_rmb must be finite and non-negative")
+        if not math.isfinite(max_cost_rmb) or max_cost_rmb <= 0:
+            raise ValueError("max_cost_rmb must be finite and greater than zero")
         if not math.isfinite(usd_cny_rate) or usd_cny_rate <= 0:
             raise ValueError("usd_cny_rate must be finite and positive")
         if not math.isfinite(initial_spent_rmb) or initial_spent_rmb < 0:
@@ -285,7 +317,7 @@ class BudgetGuard:
         with self._lock:
             reserved = sum(self._reservations.values())
             projected = self._spent_rmb + reserved + estimate
-            if self.max_cost_rmb > 0 and projected > self.max_cost_rmb:
+            if projected > self.max_cost_rmb:
                 raise BudgetExceededError(
                     f"DeepSeek budget cap would be exceeded: "
                     f"projected ¥{projected:.6f} > cap ¥{self.max_cost_rmb:.6f}"
@@ -309,11 +341,7 @@ class BudgetGuard:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             reserved = sum(self._reservations.values())
-            remaining = (
-                max(0.0, self.max_cost_rmb - self._spent_rmb - reserved)
-                if self.max_cost_rmb > 0
-                else None
-            )
+            remaining = max(0.0, self.max_cost_rmb - self._spent_rmb - reserved)
             return {
                 "max_cost_rmb": self.max_cost_rmb,
                 "usd_cny_rate": self.usd_cny_rate,
@@ -793,7 +821,7 @@ def stage_output_path(article_dir: Path, chunk_id: str, final_output_file: str, 
         return article_dir / f"stage_revision_{chunk_id}.md"
     if stage == "anti_ai":
         return article_dir / f"stage3_{chunk_id}.md"
-    return article_dir / final_output_file
+    return article_artifact_path(article_dir, final_output_file)
 
 
 def persist_rejected_candidate(
@@ -1115,7 +1143,7 @@ def process_chunk(
     article_dir = task["article_dir"]
     chunk = task["chunk"]
     chunk_id = chunk["id"]
-    source_path = article_dir / chunk["source_file"]
+    source_path = article_artifact_path(article_dir, str(chunk["source_file"]))
     source = source_path.read_text(encoding="utf-8")
     neighbor_context = load_neighbor_context(article_dir, chunk["source_file"])
     selected_terms = select_glossary_terms(source, terms)
@@ -2013,7 +2041,8 @@ def process_chunk(
         atomic_json(status_path, status)
         current = restored_text
 
-    meta_path = article_dir / f"{chunk['output_file'][:-3]}.meta.json"
+    output_file = str(chunk["output_file"])
+    meta_path = article_artifact_path(article_dir, f"{output_file[:-3]}.meta.json")
     if "academic" in stage_sequence and not meta_path.exists():
         atomic_json(
             meta_path,
@@ -2115,13 +2144,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--article", default="")
     parser.add_argument("--rights-manifest", type=Path, default=RIGHTS_MANIFEST)
     parser.add_argument("--glossary", type=Path)
-    parser.add_argument("--max-cost-rmb", type=float, default=0.0)
+    parser.add_argument("--max-cost-rmb", type=float, required=True)
     parser.add_argument("--usd-cny-rate", type=float, default=DEFAULT_USD_CNY_RATE)
     args = parser.parse_args(argv)
     if args.concurrency < 1 or args.concurrency > 64:
         parser.error("--concurrency must be between 1 and 64")
-    if not math.isfinite(args.max_cost_rmb) or args.max_cost_rmb < 0:
-        parser.error("--max-cost-rmb must be finite and non-negative")
+    if not math.isfinite(args.max_cost_rmb) or args.max_cost_rmb <= 0:
+        parser.error("--max-cost-rmb must be finite and greater than zero")
     if not math.isfinite(args.usd_cny_rate) or args.usd_cny_rate <= 0:
         parser.error("--usd-cny-rate must be finite and positive")
     glossary_path = resolve_glossary_path(args.root, args.glossary)

@@ -250,6 +250,16 @@ class ValidateChunkTests(unittest.TestCase):
 
 
 class StageDecisionTests(unittest.TestCase):
+    def test_anti_ai_is_always_an_independent_model_pass(self) -> None:
+        clean = QC.stage_decision("anti_ai", "该结果满足实验约束。", [])
+        marked = QC.stage_decision("anti_ai", "值得注意的是，该结果满足实验约束。", [])
+        academic = QC.stage_decision("academic", "该结果满足实验约束。", [])
+
+        self.assertTrue(clean.should_call_model)
+        self.assertEqual(clean.reason, "anti_ai_refined_review_required")
+        self.assertTrue(marked.should_call_model)
+        self.assertTrue(academic.should_call_model)
+
     def test_stage_decision_skips_terminology_when_text_is_already_canonical(self) -> None:
         decision = QC.stage_decision(
             "terminology",
@@ -279,7 +289,7 @@ class StageDecisionTests(unittest.TestCase):
 
         self.assertFalse(decision.should_call_model)
 
-    def test_stage_decision_runs_anti_ai_as_an_independent_refined_pass(self) -> None:
+    def test_stage_decision_runs_anti_ai_when_no_locked_marker_is_present(self) -> None:
         decision = QC.stage_decision("anti_ai", "探测器达到 14 TeV，见 [12]。\n", [])
 
         self.assertTrue(decision.should_call_model)
