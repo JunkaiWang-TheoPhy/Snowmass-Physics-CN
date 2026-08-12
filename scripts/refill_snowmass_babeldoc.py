@@ -257,9 +257,24 @@ def _first_use_terms(
     return accepted
 
 
-def _insert_first_use(text: str, term: dict[str, Any]) -> str:
+def _first_use_target(source_text: str, term: dict[str, Any]) -> str:
+    contextual = term.get("contextual_targets")
+    if isinstance(contextual, list):
+        for item in contextual:
+            if not isinstance(item, dict):
+                continue
+            source_regex = item.get("source_regex")
+            target = str(item.get("target", "")).strip()
+            if not isinstance(source_regex, str) or not source_regex or not target:
+                continue
+            if re.search(source_regex, source_text, flags=re.IGNORECASE):
+                return target
+    return str(term["target"]).strip()
+
+
+def _insert_first_use(text: str, source_text: str, term: dict[str, Any]) -> str:
     source_term = str(term["source"]).strip()
-    target_term = str(term["target"]).strip()
+    target_term = _first_use_target(source_text, term)
     target_index = text.find(target_term)
     if target_index < 0:
         raise RuntimeError(f"locked first-use target is missing: {target_term}")
@@ -366,7 +381,9 @@ def prepare_publication_translations(
     )
     for translation_index, _start, _end, term in first_use:
         prepared_texts[translation_index] = _insert_first_use(
-            prepared_texts[translation_index], term
+            prepared_texts[translation_index],
+            translations[translation_index].source_text,
+            term,
         )
 
     forbidden_error = _forbidden_translation_error(

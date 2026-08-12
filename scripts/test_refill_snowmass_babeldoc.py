@@ -792,6 +792,46 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(prepared[0].translated_text, "加速器实验室")
         self.assertEqual(prepared[2].translated_text, "该加速器（accelerator）运行。")
 
+    def test_first_use_definition_uses_the_contextually_allowed_target(self) -> None:
+        module = load_module()
+        chunks = [
+            {"id": "chunk0001", "order": 1, "page_number": 2, "layout_label": "text"}
+        ]
+        translations = [
+            module.BRIDGE.RefillTranslation(
+                2,
+                0,
+                "Observable cluster properties constrain mass.",
+                "可观测星系团性质约束质量。",
+            )
+        ]
+
+        prepared, report = module.prepare_publication_translations(
+            self.article,
+            {"chunks": chunks},
+            translations,
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[
+                {
+                    "source": "observable",
+                    "target": "可观测量",
+                    "first_use": True,
+                    "contextual_targets": [
+                        {
+                            "source_regex": r"\bobservable\s+(?:cluster\s+)?properties\b",
+                            "target": "可观测",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        self.assertEqual(
+            prepared[0].translated_text,
+            "可观测（observable）星系团性质约束质量。",
+        )
+        self.assertEqual(report["first_use_terms"], 1)
+
     def test_verbatim_reference_pages_require_a_canonical_repeated_header(self) -> None:
         module = load_module()
         chunks = []
