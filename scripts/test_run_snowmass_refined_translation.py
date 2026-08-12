@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -49,6 +50,175 @@ def completed_response(text: str, response_id: str) -> dict[str, object]:
 
 
 class RefinedOrchestratorTests(unittest.TestCase):
+    def test_sharded_critique_covers_late_chunks_and_is_resumable(self) -> None:
+        module = load_module()
+        chunks = []
+        for index in range(1, 7):
+            chunk_id = f"chunk{index:04d}"
+            source_file = f"{chunk_id}.md"
+            output_file = f"output_{chunk_id}.md"
+            source_text = f"English source {index} " + ("x" * 40) + "\n"
+            (self.article / source_file).write_text(source_text, encoding="utf-8")
+            (self.article / f"stage2_{chunk_id}.md").write_text(
+                f"中文草稿 {index} " + ("中" * 40) + "\n",
+                encoding="utf-8",
+            )
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": index,
+                    "source_file": source_file,
+                    "output_file": output_file,
+                    "source_hash": module.runner.text_hash(source_text),
+                    "babeldoc_unit_id": f"p{index:04d}-i0000",
+                }
+            )
+        status = {"record_id": "arxiv:allowed", "phases": {}}
+        calls: list[str] = []
+
+        class Client:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                calls.append(input_text)
+                ids = sorted(set(re.findall(r"chunk\d{4}", input_text)))
+                findings = "\n".join(
+                    f"- {chunk_id}: 核对该块的事实表达。" for chunk_id in ids
+                )
+                return completed_response(
+                    "## Accuracy\n"
+                    + findings
+                    + "\n\n## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+                    "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+                    "## Summary\n- 分片检查完成。\n",
+                    f"shard-{len(calls)}",
+                ), 0.1
+
+        critique = module._run_sharded_critique(
+            article_dir=self.article,
+            chunks=chunks,
+            client=Client(),
+            status=status,
+            status_path=self.article / "paper_status.json",
+            run_id="run-one",
+            budget_guard=None,
+            retry_uncertain=False,
+            shard_char_limit=230,
+        )
+
+        self.assertGreater(len(calls), 1)
+        self.assertIn("chunk0001:", critique)
+        self.assertIn("chunk0006:", critique)
+        self.assertLessEqual(len(re.findall(r"^- chunk\d{4}:", critique, re.M)), 30)
+        first_call_count = len(calls)
+
+        resumed = module._run_sharded_critique(
+            article_dir=self.article,
+            chunks=chunks,
+            client=Client(),
+            status=status,
+            status_path=self.article / "paper_status.json",
+            run_id="run-two",
+            budget_guard=None,
+            retry_uncertain=False,
+            shard_char_limit=230,
+        )
+
+        self.assertEqual(resumed, critique)
+        self.assertEqual(len(calls), first_call_count)
+
+    def test_sharded_critique_round_robins_before_global_cap(self) -> None:
+        module = load_module()
+        shard_outputs = []
+        for shard in range(1, 11):
+            lines = "\n".join(
+                f"- chunk{shard:02d}{item:02d}: issue {shard}-{item}"
+                for item in range(1, 7)
+            )
+            shard_outputs.append(
+                "## Accuracy\n"
+                + lines
+                + "\n\n## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+                "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+                "## Summary\n- done\n"
+            )
+
+        merged = module._merge_sharded_critiques(shard_outputs, max_findings=30)
+
+        self.assertEqual(len(re.findall(r"^- chunk\d{4}:", merged, re.M)), 30)
+        for shard in range(1, 11):
+            self.assertIn(f"chunk{shard:02d}01:", merged)
+
+    def test_shard_merge_accepts_minor_chunk_line_format_variants(self) -> None:
+        module = load_module()
+        output = (
+            "## Accuracy\nchunk0001: issue one\n1. chunk0002: issue two\n\n"
+            "## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Summary\n- done\n"
+        )
+
+        merged = module._merge_sharded_critiques([output])
+
+        self.assertIn("- chunk0001: issue one", merged)
+        self.assertIn("- chunk0002: issue two", merged)
+
+    def test_shard_merge_rejects_unparseable_actionable_content(self) -> None:
+        module = load_module()
+        output = (
+            "## Accuracy\n- The conclusion changes the source modality.\n\n"
+            "## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Summary\n- done\n"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "unparseable actionable"):
+            module._merge_sharded_critiques([output])
+
+    def test_revision_context_hash_changes_when_effective_critique_changes(self) -> None:
+        module = load_module()
+
+        first = module._revision_context_signature(
+            "chunk0001", "# Actionable critique for this chunk only\n- chunk0001: first"
+        )
+        second = module._revision_context_signature(
+            "chunk0001", "# Actionable critique for this chunk only\n- chunk0001: second"
+        )
+
+        self.assertNotEqual(first, second)
+
+    def test_valid_legacy_critique_is_reused_for_identical_source_and_draft(self) -> None:
+        module = load_module()
+        source = "<!-- chunk0001 -->\nEnglish source.\n"
+        draft = "<!-- chunk0001 -->\n中文草稿。\n"
+        instructions = "Return a critique."
+        input_text = f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}"
+        critique = (
+            "## Accuracy\n- chunk0001: 无。\n\n## Native Voice\n- 无。\n\n"
+            "## Notes & Adaptation\n- 无。\n\n## Summary\n- 通过。\n"
+        )
+        path = self.article / "04-critique.md"
+        path.write_text(critique, encoding="utf-8")
+        status = {
+            "phases": {
+                "critique": {
+                    "status": "complete",
+                    "input_hash": module._paper_phase_input_hash(
+                        instructions, input_text, 4000
+                    ),
+                    "output_hash": module.runner.text_hash(critique),
+                }
+            }
+        }
+
+        reused = module._valid_legacy_critique(
+            article_dir=self.article,
+            status=status,
+            instructions=instructions,
+            source=source,
+            draft=draft,
+        )
+
+        self.assertEqual(reused, critique)
+
     def test_paper_phase_compacts_once_after_output_limit(self) -> None:
         module = load_module()
         status = {"record_id": "arxiv:allowed", "phases": {}}

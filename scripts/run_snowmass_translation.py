@@ -1446,7 +1446,15 @@ def process_chunk(
         if checkpoint_is_valid(stage_status, output_path, expected_key):
             current = output_path.read_text(encoding="utf-8")
             continue
-        if checkpoint_is_reusable_after_contract_change(stage_status, output_path):
+        context_hash = text_hash(paper_context) if stage == "revision" else None
+        context_allows_reuse = (
+            stage != "revision"
+            or stage_status.get("paper_context_hash") == context_hash
+        )
+        if (
+            context_allows_reuse
+            and checkpoint_is_reusable_after_contract_change(stage_status, output_path)
+        ):
             candidate = output_path.read_text(encoding="utf-8")
             live_qc = validate_chunk(source, candidate, {}, qc_terms)
             if live_qc.ok:
@@ -1479,24 +1487,32 @@ def process_chunk(
             current = output_path.read_text(encoding="utf-8")
             continue
 
-        recovered = recover_prior_valid_output(
-            source,
-            output_path,
-            stage_status,
-            expected_key,
-            qc_terms,
+        recovered = (
+            recover_prior_valid_output(
+                source,
+                output_path,
+                stage_status,
+                expected_key,
+                qc_terms,
+            )
+            if context_allows_reuse
+            else None
         )
         if recovered is not None:
             current = recovered
             atomic_json(status_path, status)
             continue
-        recovered = recover_rejected_candidate(
-            article_dir,
-            source,
-            output_path,
-            stage_status,
-            expected_key,
-            qc_terms,
+        recovered = (
+            recover_rejected_candidate(
+                article_dir,
+                source,
+                output_path,
+                stage_status,
+                expected_key,
+                qc_terms,
+            )
+            if context_allows_reuse
+            else None
         )
         if recovered is not None:
             current = recovered
@@ -1530,6 +1546,7 @@ def process_chunk(
             }
         )
         if stage == "revision":
+            stage_status["paper_context_hash"] = context_hash
             stage_status["paper_context_scope"] = (
                 "no_actionable"
                 if "NO_ACTIONABLE_CHUNK_CRITIQUE" in paper_context

@@ -32,6 +32,9 @@ FINAL_FILE = "translation.md"
 NO_ACTIONABLE_CRITIQUE = "NO_ACTIONABLE_CHUNK_CRITIQUE"
 MANUAL_CORRECTIONS_FILE = "manual_corrections.json"
 TRACKED_HARD_CONSTRAINTS = SCRIPT_DIR.parent / "translations/snowmass-hard-constraints.json"
+CRITIQUE_SHARD_CHAR_LIMIT = 24_000
+CRITIQUE_SHARD_MAX_FINDINGS = 6
+CRITIQUE_GLOBAL_MAX_FINDINGS = 30
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -57,6 +60,25 @@ def _phase_valid(phase: dict[str, Any], path: Path, input_hash: str) -> bool:
     )
 
 
+def _paper_phase_input_hash(
+    instructions: str,
+    input_text: str,
+    max_output_tokens: int,
+) -> str:
+    return runner.text_hash(
+        json.dumps(
+            {
+                "model": runner.MODEL,
+                "instructions": instructions,
+                "input": input_text,
+                "max_output_tokens": max_output_tokens,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+
+
 def _persist_status(path: Path, status: dict[str, Any]) -> None:
     status["updated_at"] = runner.now()
     runner.atomic_json(path, status)
@@ -77,17 +99,10 @@ def _run_paper_model_phase(
     retry_uncertain: bool = False,
 ) -> str:
     article_dir = status_path.parent
-    input_hash = runner.text_hash(
-        json.dumps(
-            {
-                "model": runner.MODEL,
-                "instructions": instructions,
-                "input": input_text,
-                "max_output_tokens": max_output_tokens,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
+    input_hash = _paper_phase_input_hash(
+        instructions,
+        input_text,
+        max_output_tokens,
     )
     phase = status.setdefault("phases", {}).setdefault(phase_name, {})
     uncertainty_key = f"{status.get('record_id')}:{phase_name}:paper"
@@ -348,6 +363,200 @@ def _tagged_source(article_dir: Path, chunks: list[dict[str, Any]]) -> str:
         unit_id = str(chunk.get("babeldoc_unit_id", ""))
         parts.append(f"<!-- {chunk['id']} {unit_id} -->\n{source}\n")
     return "".join(parts)
+
+
+def _critique_shards(
+    article_dir: Path,
+    chunks: list[dict[str, Any]],
+    *,
+    shard_char_limit: int,
+) -> list[tuple[str, str]]:
+    """Build aligned source/draft shards without splitting a semantic chunk."""
+
+    if shard_char_limit <= 0:
+        raise ValueError("shard_char_limit must be positive")
+    shards: list[tuple[str, str]] = []
+    source_parts: list[str] = []
+    draft_parts: list[str] = []
+    shard_size = 0
+    for chunk in chunks:
+        chunk_id = str(chunk["id"])
+        unit_id = str(chunk.get("babeldoc_unit_id", ""))
+        source = runner.article_artifact_path(
+            article_dir, str(chunk["source_file"])
+        ).read_text(encoding="utf-8").rstrip()
+        draft_path = runner.stage_output_path(
+            article_dir,
+            chunk_id,
+            str(chunk["output_file"]),
+            "terminology",
+        )
+        if not runner.nonempty(draft_path):
+            raise RuntimeError(f"Missing terminology draft for critique shard: {chunk_id}")
+        draft = draft_path.read_text(encoding="utf-8").rstrip()
+        source_part = f"<!-- {chunk_id} {unit_id} -->\n{source}\n"
+        draft_part = f"<!-- {chunk_id} {unit_id} -->\n{draft}\n"
+        pair_size = len(source_part) + len(draft_part)
+        if source_parts and shard_size + pair_size > shard_char_limit:
+            shards.append(("".join(source_parts), "".join(draft_parts)))
+            source_parts = []
+            draft_parts = []
+            shard_size = 0
+        source_parts.append(source_part)
+        draft_parts.append(draft_part)
+        shard_size += pair_size
+    if source_parts:
+        shards.append(("".join(source_parts), "".join(draft_parts)))
+    return shards
+
+
+def _merge_sharded_critiques(
+    shard_outputs: list[str],
+    *,
+    max_findings: int = CRITIQUE_GLOBAL_MAX_FINDINGS,
+) -> str:
+    """Round-robin actionable findings so late shards retain review coverage."""
+
+    if max_findings <= 0:
+        raise ValueError("max_findings must be positive")
+    per_shard: list[list[str]] = []
+    for shard_index, output in enumerate(shard_outputs, 1):
+        findings: list[str] = []
+        seen: set[str] = set()
+        section = ""
+        for line in output.splitlines():
+            normalized = line.strip()
+            heading = re.match(r"^##\s+(.+?)\s*$", normalized)
+            if heading:
+                section = heading.group(1)
+                continue
+            if section not in {"Accuracy", "Native Voice", "Notes & Adaptation"}:
+                continue
+            if not normalized or "NO_ACTIONABLE_FINDINGS" in normalized:
+                continue
+            match = re.match(
+                r"^(?:[-*]\s*|\d+[.)]\s*)?(chunk\d{4}:\s*.+)$",
+                normalized,
+                flags=re.I,
+            )
+            if match is None:
+                raise RuntimeError(
+                    f"critique shard {shard_index} contains unparseable actionable content: "
+                    f"{normalized[:160]}"
+                )
+            finding = "- " + match.group(1)
+            if finding not in seen:
+                findings.append(finding)
+                seen.add(finding)
+        per_shard.append(findings)
+    selected: list[str] = []
+    index = 0
+    while len(selected) < max_findings:
+        added = False
+        for findings in per_shard:
+            if index < len(findings):
+                selected.append(findings[index])
+                added = True
+                if len(selected) == max_findings:
+                    break
+        if not added:
+            break
+        index += 1
+    body = "\n".join(selected) if selected else "- NO_ACTIONABLE_FINDINGS"
+    return (
+        "## Accuracy\n"
+        + body
+        + "\n\n## Native Voice\n- Findings are included above by chunk ID.\n\n"
+        "## Notes & Adaptation\n- Preserve all locked terminology and immutable structures.\n\n"
+        "## Summary\n- Deterministically merged from aligned critique shards.\n"
+    )
+
+
+def _run_sharded_critique(
+    *,
+    article_dir: Path,
+    chunks: list[dict[str, Any]],
+    client: Any,
+    status: dict[str, Any],
+    status_path: Path,
+    run_id: str | None,
+    budget_guard: runner.BudgetGuard | None,
+    retry_uncertain: bool,
+    shard_char_limit: int = CRITIQUE_SHARD_CHAR_LIMIT,
+) -> str:
+    shards = _critique_shards(
+        article_dir,
+        chunks,
+        shard_char_limit=shard_char_limit,
+    )
+    shard_dir = article_dir / "critique_shards"
+    shard_outputs: list[str] = []
+    instructions = f"""Review one aligned English/Chinese shard of an academic paper.
+Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
+Report only high-impact actionable defects. Every actionable line must start with its exact chunk ID, for example `- chunk0001:`. Return at most {CRITIQUE_SHARD_MAX_FINDINGS} actionable lines total. If none exist, write `- NO_ACTIONABLE_FINDINGS`. Do not quote passages, enumerate correct chunks, explain methods, or rewrite the draft."""
+    for index, (source_shard, draft_shard) in enumerate(shards, 1):
+        output = _run_paper_model_phase(
+            phase_name=f"critique_shard_{index:04d}",
+            output_path=shard_dir / f"shard{index:04d}.md",
+            instructions=instructions,
+            input_text=(
+                f"ENGLISH SOURCE SHARD {index}/{len(shards)}:\n{source_shard}\n\n"
+                f"CHINESE DRAFT SHARD {index}/{len(shards)}:\n{draft_shard}"
+            ),
+            max_output_tokens=1200,
+            client=client,
+            status=status,
+            status_path=status_path,
+            run_id=run_id,
+            budget_guard=budget_guard,
+            retry_uncertain=retry_uncertain,
+        )
+        _require_sections(
+            output,
+            ("Accuracy", "Native Voice", "Notes & Adaptation", "Summary"),
+            f"critique shard {index}",
+        )
+        shard_outputs.append(output)
+    merged = _merge_sharded_critiques(shard_outputs)
+    signature = runner.text_hash(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "shard_hashes": [runner.text_hash(item) for item in shard_outputs],
+                "max_findings": CRITIQUE_GLOBAL_MAX_FINDINGS,
+            },
+            sort_keys=True,
+        )
+    )
+    return _deterministic_phase(
+        name="critique_merge",
+        path=article_dir / CRITIQUE_FILE,
+        text=merged,
+        input_hash=signature,
+        status=status,
+        status_path=status_path,
+    )
+
+
+def _valid_legacy_critique(
+    *,
+    article_dir: Path,
+    status: dict[str, Any],
+    instructions: str,
+    source: str,
+    draft: str,
+) -> str | None:
+    """Reuse a pre-sharding critique only when its exact aligned input still matches."""
+
+    path = article_dir / CRITIQUE_FILE
+    phase = status.get("phases", {}).get("critique", {})
+    if not isinstance(phase, dict):
+        return None
+    input_text = f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}"
+    input_hash = _paper_phase_input_hash(instructions, input_text, 4000)
+    if _phase_valid(phase, path, input_hash):
+        return path.read_text(encoding="utf-8")
+    return None
 
 
 def _reference_chunk_ids(article_dir: Path, chunks: list[dict[str, Any]]) -> set[str]:
@@ -793,6 +1002,16 @@ def _critique_context_for_chunk(critique: str, chunk_id: str) -> str:
     return "# Actionable critique for this chunk only\n" + "\n".join(findings)
 
 
+def _revision_context_signature(chunk_id: str, context: str) -> str:
+    return runner.text_hash(
+        json.dumps(
+            {"chunk_id": chunk_id, "context": context},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+
+
 def _revision_context_preserving_completed_checkpoint(
     article_dir: Path,
     chunk_id: str,
@@ -956,19 +1175,40 @@ Identify the paper's argument, domain-specific meanings, preferred terminology, 
     critique_instructions = """Perform a paper-level critical review of the tagged Chinese draft against the tagged English source.
 Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
 Every actionable finding must start with its chunk ID (for example, `chunk0001:`). Check omissions, additions, factual drift, modality, terminology, syntax, academic register, and translationese. Report only high-impact actionable defects, at most 30 one-line findings total. If more exist, select the 30 highest-risk defects. Do not enumerate correct chunks, reproduce passages, explain your method, or rewrite the draft."""
-    critique = _run_paper_model_phase(
-        phase_name="critique",
-        output_path=article_dir / CRITIQUE_FILE,
-        instructions=critique_instructions,
-        input_text=f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}",
-        max_output_tokens=4000,
-        client=client,
+    legacy_critique = _valid_legacy_critique(
+        article_dir=article_dir,
         status=status,
-        status_path=status_path,
-        run_id=run_id,
-        budget_guard=budget_guard,
-        retry_uncertain=retry_uncertain,
+        instructions=critique_instructions,
+        source=source,
+        draft=draft,
     )
+    if legacy_critique is not None:
+        critique = legacy_critique
+    elif len(source) + len(draft) > CRITIQUE_SHARD_CHAR_LIMIT:
+        critique = _run_sharded_critique(
+            article_dir=article_dir,
+            chunks=chunks,
+            client=client,
+            status=status,
+            status_path=status_path,
+            run_id=run_id,
+            budget_guard=budget_guard,
+            retry_uncertain=retry_uncertain,
+        )
+    else:
+        critique = _run_paper_model_phase(
+            phase_name="critique",
+            output_path=article_dir / CRITIQUE_FILE,
+            instructions=critique_instructions,
+            input_text=f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}",
+            max_output_tokens=4000,
+            client=client,
+            status=status,
+            status_path=status_path,
+            run_id=run_id,
+            budget_guard=budget_guard,
+            retry_uncertain=retry_uncertain,
+        )
     _require_sections(
         critique,
         ("Accuracy", "Native Voice", "Notes & Adaptation", "Summary"),

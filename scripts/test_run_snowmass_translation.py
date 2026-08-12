@@ -1450,7 +1450,54 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertNotIn("12345", observed_inputs[0])
         self.assertNotIn("Neighbor-only evidence", observed_inputs[0])
         self.assertNotIn("999", observed_inputs[0])
-        self.assertIn("QC-CORRECTION RETRY 1", observed_inputs[0])
+
+    def test_revision_checkpoint_is_not_reused_after_critique_context_changes(self) -> None:
+        source = "Original source paragraph.\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage2_chunk0001.md"
+        initial.write_text("现有中文初稿。\n", encoding="utf-8")
+        output = self.article_dir / "stage_revision_chunk0001.md"
+        output.write_text("旧批评下的修订。\n", encoding="utf-8")
+        status_dir = self.article_dir / "chunk_status"
+        status_dir.mkdir()
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "chunk_id": "chunk0001",
+                    "stages": {
+                        "revision": {
+                            "status": "complete",
+                            "request_key": "old-key",
+                            "output_hash": RUNNER.text_hash("旧批评下的修订。\n"),
+                            "qc": {"ok": True, "failures": []},
+                            "paper_context_hash": RUNNER.text_hash("old critique"),
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        calls = 0
+
+        class Client:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                nonlocal calls
+                calls += 1
+                return completed_response("新批评下的修订。"), 0.1
+
+        RUNNER.process_chunk(
+            self.task,
+            Client(),
+            [],
+            stages=("revision",),
+            paper_context="new critique",
+            initial_text_path=initial,
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(output.read_text(encoding="utf-8"), "新批评下的修订。\n")
 
     def test_process_chunk_revision_uses_terminology_draft_and_local_critique(self) -> None:
         terminology = self.article_dir / "stage2_chunk0001.md"
