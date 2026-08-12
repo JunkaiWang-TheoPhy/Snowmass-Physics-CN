@@ -51,6 +51,19 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         document.save(path)
         document.close()
 
+    def write_cjk_source_pdf(self, path: Path, text: str) -> None:
+        document = fitz.open()
+        page = document.new_page()
+        page.insert_textbox(
+            (72, 72, 520, 200),
+            text,
+            fontfile=str(self.require_module().SYSTEM_CJK_FONT),
+            fontname="testcjk",
+            fontsize=12,
+        )
+        document.save(path)
+        document.close()
+
     def base_record(self, **overrides: object) -> dict[str, object]:
         record = {
             "record_id": "arxiv:2111.06932",
@@ -164,6 +177,49 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         self.assertFalse((self.root / "source-alias.cover.pdf").exists())
         self.assertFalse((self.root / "source-alias.json").exists())
 
+    def test_blocks_known_mistranslation_in_source_pdf_before_packaging(self) -> None:
+        packager = self.require_module()
+        self.write_cjk_source_pdf(
+            self.source_pdf,
+            "劳伦斯伯克利国家实验室，旋风加速器路一号",
+        )
+
+        with self.assertRaisesRegex(ValueError, "旋风加速器.*回旋加速器"):
+            packager.package_translation_pdf(
+                record=self.base_record(),
+                chinese_title="已知误译阻断测试",
+                source_pdf_path=self.source_pdf,
+                output_pdf_path=self.output_pdf,
+                version="v1.1",
+                packaged_on=dt.date(2026, 8, 11),
+            )
+
+        self.assertFalse(self.output_pdf.exists())
+        self.assertFalse((self.root / "packaged.cover.pdf").exists())
+        self.assertFalse((self.root / "packaged.json").exists())
+
+    def test_blocks_pdf_when_no_text_can_be_extracted_for_forbidden_scan(self) -> None:
+        packager = self.require_module()
+        document = fitz.open()
+        page = document.new_page()
+        page.draw_rect((72, 72, 300, 200), fill=(0.2, 0.3, 0.4))
+        document.save(self.source_pdf)
+        document.close()
+
+        with self.assertRaisesRegex(ValueError, "no extractable text"):
+            packager.package_translation_pdf(
+                record=self.base_record(),
+                chinese_title="不可抽取文本阻断测试",
+                source_pdf_path=self.source_pdf,
+                output_pdf_path=self.output_pdf,
+                version="v1.1",
+                packaged_on=dt.date(2026, 8, 11),
+            )
+
+        self.assertFalse(self.output_pdf.exists())
+        self.assertFalse((self.root / "packaged.cover.pdf").exists())
+        self.assertFalse((self.root / "packaged.json").exists())
+
     def test_cover_text_blocks_occupy_ordered_non_overlapping_vertical_regions(self) -> None:
         page = self.render_cover_page()
         ordered_rects = [
@@ -195,7 +251,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         self.assertLessEqual(qr_rect.y1, page_rect.y1)
 
         for text in [
-            "Website (Temporary): snowmass-physics-cn.netlify.app",
+            "snowmass-physics-cn.netlify.app/paper/2203.07506/",
             "本译文由中文翻译协作项目制作，不代表原作者审定或认可；如有歧义，以英文原文为准。",
             "原文许可证：CC-BY-4.0",
             "适用条件：署名；注明修改",
@@ -336,9 +392,10 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         self.assertIn("A Cost-Efective Upgrade Path for the Fermilab Accelerator Complex", cover_text)
         self.assertIn("S. Nagaitsev et al.", cover_text)
         self.assertIn("中文翻译贡献者：WangTheoPhys*", cover_text)
-        self.assertIn("Website (Temporary): snowmass-physics-cn.netlify.app", cover_text)
+        self.assertIn("TRANSLATION PAGE / 本论文译文页", cover_text)
+        self.assertIn("snowmass-physics-cn.netlify.app/paper/2111.06932/", cover_text)
         self.assertIn("arXiv: 2111.06932", cover_text)
-        self.assertIn("DOI: 未提供", cover_text)
+        self.assertIn("DOI: 未提供 / Not Provided", cover_text)
         self.assertIn("原文许可证：CC-BY-4.0", cover_text)
         self.assertIn("适用条件：署名；注明修改", cover_text)
         self.assertIn("本译文由中文翻译协作项目制作，不代表原作者审定或认可；如有歧义，以英文原文为准。", cover_text)
@@ -354,13 +411,17 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         }
         self.assertIn("https://arxiv.org/abs/2111.06932", uris)
         self.assertIn("https://creativecommons.org/licenses/by/4.0/", uris)
-        self.assertIn("https://snowmass-physics-cn.netlify.app/", uris)
+        self.assertIn("https://snowmass-physics-cn.netlify.app/paper/2111.06932/", uris)
 
         qr_probe = fitz.open(self.output_pdf)
         self.assertGreaterEqual(len(qr_probe[0].get_images(full=True)), 1)
         qr_probe.close()
 
         persisted_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted_receipt["translation_page_url"],
+            "https://snowmass-physics-cn.netlify.app/paper/2111.06932/",
+        )
         self.assertEqual(persisted_receipt["source_pdf_sha256"], sha256_file(self.source_pdf))
         self.assertEqual(persisted_receipt["cover_pdf_sha256"], sha256_file(cover_pdf_path))
         self.assertEqual(persisted_receipt["packaged_pdf_sha256"], sha256_file(self.output_pdf))

@@ -36,6 +36,10 @@ REQUIRED_FIELDS = {
     "publication_basis",
     "publication_conditions",
     "publication_translation_url",
+    "publication_translation_sha256",
+    "publication_translation_size_bytes",
+    "translation_version",
+    "translation_published_at",
     "public_updated_at",
 }
 
@@ -120,6 +124,23 @@ class PublicManifestTests(unittest.TestCase):
         self.assertEqual(stats["publication_counts"]["allowed"], sum(
             bool(record["publication_allowed"]) for record in records
         ))
+
+    def test_published_pilot_has_versioned_verified_pdf(self) -> None:
+        record = next(
+            item for item in _load_manifest()
+            if item["record_id"] == "arxiv:2203.07506"
+        )
+        self.assertEqual(record["translation_status"], "machine-draft")
+        self.assertEqual(record["machine_model"], "deepseek-v4-flash")
+        self.assertEqual(record["translation_version"], "v0.1")
+        self.assertRegex(record["publication_translation_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(record["publication_translation_size_bytes"], 14_165_001)
+        self.assertEqual(record["translation_published_at"], "2026-08-12")
+        self.assertEqual(
+            record["publication_translation_url"],
+            "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.07506/v0.1/"
+            "snowmass-2203.07506.zh-CN.pdf",
+        )
 
 
 if __name__ == "__main__":

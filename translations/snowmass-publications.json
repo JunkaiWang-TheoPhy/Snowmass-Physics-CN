@@ -1,0 +1,14 @@
+[
+  {
+    "record_id": "arxiv:2203.07506",
+    "translation_status": "machine-draft",
+    "translation_license": "CC-BY-4.0",
+    "machine_model": "deepseek-v4-flash",
+    "human_reviewers": [],
+    "translation_version": "v0.1",
+    "translation_published_at": "2026-08-12",
+    "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.07506/v0.1/snowmass-2203.07506.zh-CN.pdf",
+    "publication_translation_sha256": "6d5e9f5c60f736bd80c68441dab027abaf0f46bb7446a90da2b5beb0648db09c",
+    "publication_translation_size_bytes": 14165001
+  }
+]

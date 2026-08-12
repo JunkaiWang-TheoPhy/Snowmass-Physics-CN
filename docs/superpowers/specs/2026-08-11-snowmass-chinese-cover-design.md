@@ -21,7 +21,13 @@
 
 ## 架构
 
-采用后置装订：BabelDOC 先照常生成 PDF，独立脚本再生成一页说明页，并把它插入发布版 PDF 的最前面。脚本从 `site/data/papers.json` 读取权利和论文元数据；缺失 DOI 时显示 `DOI: 未提供`，不得猜测。只有 `publication_allowed: true` 的记录可以生成发布版。
+采用后置装订：BabelDOC 先照常生成 PDF，独立脚本再生成一页说明页，并把它插入发布版 PDF 的最前面。脚本从 `site/data/papers.json` 读取权利和论文元数据；缺失 DOI 时显示中英对照的 `DOI: 未提供 / Not Provided`，不得猜测。只有 `publication_allowed: true` 的记录可以生成发布版。
+
+第 06 栏固定为 `TRANSLATION PAGE / 本论文译文页`，显示由论文记录推导的
+`snowmass-physics-cn.netlify.app/paper/<arXiv-id>/` 永久链接。该栏、页面底部链接、二维码和
+PDF 点击热区必须指向同一论文页，不能退回项目首页。
+
+原文许可证条件采用中英对照；例如 `CC BY 4.0 · 署名 / Attribution · 注明修改 / Indicate Changes`。
 
 原始 BabelDOC PDF 不覆盖。输出为新的、稳定命名的发布文件，并记录输入、说明页和最终文件的 SHA-256，以支持断点续做和审计。
 

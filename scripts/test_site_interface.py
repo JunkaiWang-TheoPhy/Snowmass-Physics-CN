@@ -25,6 +25,8 @@ class SiteInterfaceTest(unittest.TestCase):
         html = (ROOT / "site/index.html").read_text()
         css = (ROOT / "site/styles.css").read_text()
         self.assertIn('content="light"', html)
+        self.assertIn('rel="icon" href="/favicon.svg"', html)
+        self.assertTrue((ROOT / "site/favicon.svg").is_file())
         self.assertIn("assets/snowmass-mountain", css)
         self.assertNotIn("images.unsplash.com", css)
 
@@ -32,6 +34,39 @@ class SiteInterfaceTest(unittest.TestCase):
         css = (ROOT / "site/styles.css").read_text()
         self.assertIn("prefers-reduced-motion", css)
         self.assertIn("@media (max-width: 720px)", css)
+
+    def test_paper_routes_are_permanent_and_nested_path_safe(self):
+        html = (ROOT / "site/index.html").read_text()
+        app = (ROOT / "site/app.js").read_text()
+        netlify = (ROOT / "netlify.toml").read_text()
+
+        self.assertIn('href="/styles.css"', html)
+        self.assertIn('src="/app.js"', html)
+        self.assertIn('from = "/paper/*"', netlify)
+        self.assertIn('to = "/index.html"', netlify)
+        self.assertIn("status = 200", netlify)
+        self.assertIn("function paperPath(recordId)", app)
+        self.assertIn("function recordIdFromLocation(location)", app)
+        self.assertIn('slug.startsWith("cds-")', app)
+        self.assertIn('slug.startsWith("hal-")', app)
+        self.assertIn('fetch("/data/papers.json")', app)
+        self.assertIn('.get("paper")', app)
+        self.assertIn('rel="canonical"', html)
+
+    def test_missing_paper_route_has_explicit_state(self):
+        app = (ROOT / "site/app.js").read_text()
+        self.assertIn("这篇论文尚未收录", app)
+        self.assertIn("renderMissingPaper", app)
+
+    def test_published_translation_exposes_versioned_pdf_metadata(self):
+        app = (ROOT / "site/app.js").read_text()
+        netlify = (ROOT / "netlify.toml").read_text()
+
+        self.assertIn("下载中文试译版 PDF", app)
+        self.assertIn("paper.translation_version", app)
+        self.assertIn("paper.publication_translation_sha256", app)
+        self.assertIn('for = "/pdfs/*"', netlify)
+        self.assertIn('Cache-Control = "public, max-age=31536000, immutable"', netlify)
 
 
 if __name__ == "__main__":

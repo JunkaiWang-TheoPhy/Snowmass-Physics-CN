@@ -15,6 +15,7 @@ AGENTS.md
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.playwright-cli/
 
 # Large local Snowmass inputs are resumable runtime data, not source control artifacts.
 output/snowmass2021_sources/
@@ -23,4 +24,7 @@ output/snowmass2021/rights/cache/
 output/snowmass2021/analysis/*.inspect.ndjson
 output/github_skill_research/
 output/local_tools/
+output/playwright/
+site/pdfs/
+output/pdf/
 tmp/

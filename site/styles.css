@@ -123,15 +123,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
   background-position: center;
   background-size: cover;
 }
-.hero::after {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: repeating-radial-gradient(ellipse at 84% 22%, transparent 0 38px, rgba(37, 86, 101, .13) 39px 40px, transparent 41px 59px);
-  content: "";
-  mix-blend-mode: multiply;
-  pointer-events: none;
-}
 .hero-copy, .rights-principle { min-width: 0; }
 .eyebrow, .principle-index, .metric-label {
   margin: 0;

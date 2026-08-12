@@ -6,9 +6,9 @@
   PYTHON_VERSION = "3.12"
 
 [[redirects]]
-  from = "/paper/:record"
-  to = "/?paper=:record"
-  status = 302
+  from = "/paper/*"
+  to = "/index.html"
+  status = 200
 
 [[headers]]
   for = "/*"
@@ -23,6 +23,13 @@
   for = "/data/*.json"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/pdfs/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+    Content-Disposition = "inline"
+    X-Content-Type-Options = "nosniff"
 
 [[headers]]
   for = "/*.css"

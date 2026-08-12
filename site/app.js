@@ -71,6 +71,36 @@ const state = {
   page: 1,
 };
 
+const SITE_ORIGIN = "https://snowmass-physics-cn.netlify.app";
+
+function paperPath(recordId) {
+  const value = String(recordId || "");
+  if (value.toLowerCase().startsWith("arxiv:")) {
+    return `/paper/${encodeURIComponent(value.slice(6))}/`;
+  }
+  const cds = value.match(/cds\.cern\.ch\/record\/(\d+)/);
+  if (cds) return `/paper/cds-${cds[1]}/`;
+  const hal = value.match(/hal-(\d+)/);
+  if (hal) return `/paper/hal-${hal[1]}/`;
+  return `/paper/${encodeURIComponent(value)}/`;
+}
+
+function recordIdFromLocation(location) {
+  const match = location.pathname.match(/^\/paper\/([^/]+)\/?$/);
+  if (match) {
+    const slug = decodeURIComponent(match[1]);
+    if (slug.startsWith("cds-")) return `external:https://cds.cern.ch/record/${slug.slice(4)}`;
+    if (slug.startsWith("hal-")) return `external:https://hal.archives-ouvertes.fr/hal-${slug.slice(4)}`;
+    return `arxiv:${slug}`;
+  }
+  return new URLSearchParams(location.search).get("paper");
+}
+
+function setCanonical(path = "/") {
+  const canonical = document.querySelector('link[rel="canonical"]');
+  if (canonical) canonical.href = `${SITE_ORIGIN}${path}`;
+}
+
 function escapeHTML(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -95,6 +125,11 @@ function formatNumber(value, empty = "—") {
 
 function formatDecimal(value, empty = "—") {
   return Number.isFinite(value) ? decimalFormatter.format(value) : empty;
+}
+
+function formatBytes(value, empty = "—") {
+  if (!Number.isFinite(value)) return empty;
+  return `${decimalFormatter.format(value / 1_000_000)} MB`;
 }
 
 function statusClass(status) {
@@ -127,7 +162,7 @@ function readURLState() {
   state.page = Math.max(1, Number.parseInt(params.get("page") || "1", 10) || 1);
 }
 
-function writeURLState({ push = false, paper = null } = {}) {
+function writeURLState({ push = false } = {}) {
   const params = new URLSearchParams();
   const values = {
     q: elements.search.value.trim(),
@@ -143,10 +178,9 @@ function writeURLState({ push = false, paper = null } = {}) {
   for (const [key, value] of Object.entries(values)) {
     if (value) params.set(key, value);
   }
-  if (paper) params.set("paper", paper);
-
-  const target = `${window.location.pathname}${params.size ? `?${params}` : ""}`;
+  const target = `/${params.size ? `?${params}` : ""}`;
   window.history[push ? "pushState" : "replaceState"]({}, "", target);
+  setCanonical("/");
 }
 
 function renderMetrics() {
@@ -290,8 +324,7 @@ function definitionRow(term, value) {
 function renderDetail(recordId, { push = false } = {}) {
   const paper = state.papers.find((entry) => entry.record_id === recordId);
   if (!paper) {
-    writeURLState();
-    renderCatalog();
+    renderMissingPaper(recordId);
     return;
   }
 
@@ -347,8 +380,13 @@ function renderDetail(recordId, { push = false } = {}) {
           ${definitionRow("机器模型", escapeHTML(paper.machine_model || "尚未生成机器草稿"))}
           ${definitionRow("人工审校者", reviewNames)}
           ${definitionRow("公开译文", paper.publication_translation_url
-            ? `<a href="${safeURL(paper.publication_translation_url)}">查看译文</a>`
+            ? `<a href="${safeURL(paper.publication_translation_url)}" target="_blank" rel="noreferrer">下载中文试译版 PDF ↗</a>`
             : "尚未公开")}
+          ${definitionRow("译本版本", escapeHTML(paper.translation_version || "—"))}
+          ${definitionRow("文件大小", formatBytes(paper.publication_translation_size_bytes))}
+          ${definitionRow("发布校验", paper.publication_translation_sha256
+            ? `<code title="${escapeHTML(paper.publication_translation_sha256)}">SHA-256 ${escapeHTML(paper.publication_translation_sha256.slice(0, 12))}…</code>`
+            : "—")}
         </dl>
       </section>
       <section class="detail-block">
@@ -385,8 +423,23 @@ function renderDetail(recordId, { push = false } = {}) {
 
   elements.catalog.hidden = true;
   elements.detail.hidden = false;
-  writeURLState({ push, paper: paper.record_id });
+  const path = paperPath(paper.record_id);
+  window.history[push ? "pushState" : "replaceState"]({}, "", path);
+  setCanonical(path);
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderMissingPaper(recordId) {
+  elements.catalog.hidden = true;
+  elements.detail.hidden = false;
+  elements.detail.innerHTML = `
+    <div class="error-card">
+      <p class="eyebrow">PAPER / NOT FOUND</p>
+      <h1 id="detail-title">这篇论文尚未收录</h1>
+      <p>目录中找不到 ${escapeHTML(recordId || "该编号")}。请检查链接，或返回目录重新检索。</p>
+      <a class="button button-primary" href="/">返回论文目录</a>
+    </div>`;
+  setCanonical(window.location.pathname);
 }
 
 function handleFilterChange() {
@@ -397,8 +450,8 @@ function handleFilterChange() {
 async function initialize() {
   try {
     const [papersResponse, statsResponse] = await Promise.all([
-      fetch("data/papers.json"),
-      fetch("data/stats.json"),
+      fetch("/data/papers.json"),
+      fetch("/data/stats.json"),
     ]);
     if (!papersResponse.ok || !statsResponse.ok) throw new Error("public data request failed");
     [state.papers, state.stats] = await Promise.all([papersResponse.json(), statsResponse.json()]);
@@ -410,7 +463,7 @@ async function initialize() {
     readURLState();
     renderMetrics();
 
-    const recordId = new URLSearchParams(window.location.search).get("paper");
+    const recordId = recordIdFromLocation(window.location);
     if (recordId) renderDetail(recordId);
     else renderCatalog();
   } catch (error) {
@@ -448,14 +501,13 @@ elements.pagination.addEventListener("click", (event) => {
 elements.detail.addEventListener("click", (event) => {
   if (event.target.closest("#detail-back")) {
     renderCatalog();
-    window.history.replaceState({}, "", window.location.href.replace(/([?&])paper=[^&]*&?/, "$1").replace(/[?&]$/, ""));
     elements.catalog.scrollIntoView({ block: "start" });
   }
 });
 
 window.addEventListener("popstate", () => {
   readURLState();
-  const recordId = new URLSearchParams(window.location.search).get("paper");
+  const recordId = recordIdFromLocation(window.location);
   if (recordId) renderDetail(recordId);
   else renderCatalog();
 });

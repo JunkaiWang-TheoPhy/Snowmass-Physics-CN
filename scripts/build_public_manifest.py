@@ -22,6 +22,7 @@ DEFAULT_RIGHTS = ROOT / "output/snowmass2021/rights/snowmass2021_rights_manifest
 DEFAULT_CATALOG = ROOT / "output/snowmass2021/snowmass2021_whitepapers.json"
 DEFAULT_ANALYSIS = ROOT / "output/snowmass2021/analysis/enriched_papers.json"
 DEFAULT_LENGTHS = ROOT / "output/snowmass2021/analysis/length_records.json"
+DEFAULT_TRANSLATIONS = ROOT / "translations/snowmass-publications.json"
 DEFAULT_OUT_DIR = ROOT / "site/data"
 
 
@@ -107,6 +108,7 @@ def _safe_public_record(
     catalog: dict[str, Any],
     analysis: dict[str, Any],
     lengths: dict[str, Any],
+    translation: dict[str, Any],
 ) -> dict[str, Any]:
     state = _rights_public_state(rights)
     record_id = rights["record_id"]
@@ -125,12 +127,16 @@ def _safe_public_record(
         "source_license_url": rights.get("source_license_url"),
         "permits_adaptation": rights.get("permits_adaptation"),
         "license_decision": rights.get("license_decision"),
-        "translation_status": rights.get("translation_status", "not-started"),
-        "translation_license": rights.get("translation_license"),
-        "machine_model": rights.get("machine_model"),
-        "human_reviewers": rights.get("human_reviewers") or [],
+        "translation_status": translation.get("translation_status") or rights.get("translation_status", "not-started"),
+        "translation_license": translation.get("translation_license") or rights.get("translation_license"),
+        "machine_model": translation.get("machine_model") or rights.get("machine_model"),
+        "human_reviewers": translation.get("human_reviewers") or rights.get("human_reviewers") or [],
         **state,
-        "publication_translation_url": None,
+        "publication_translation_url": translation.get("publication_translation_url"),
+        "publication_translation_sha256": translation.get("publication_translation_sha256"),
+        "publication_translation_size_bytes": translation.get("publication_translation_size_bytes"),
+        "translation_version": translation.get("translation_version"),
+        "translation_published_at": translation.get("translation_published_at"),
         "public_updated_at": rights.get("license_checked_at"),
         "publication_year": analysis.get("publication_year"),
         "citation_count": _as_number(analysis.get("citation_count")),
@@ -210,12 +216,14 @@ def build_manifest(
     catalog_path: Path = DEFAULT_CATALOG,
     analysis_path: Path = DEFAULT_ANALYSIS,
     lengths_path: Path = DEFAULT_LENGTHS,
+    translations_path: Path = DEFAULT_TRANSLATIONS,
     out_dir: Path = DEFAULT_OUT_DIR,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rights_records = _read_json(rights_path)
     catalog_records = _by_record_id(_read_json(catalog_path))
     analysis_records = _by_record_id(_read_json(analysis_path))
     length_records = _by_record_id(_read_json(lengths_path))
+    translation_records = _by_record_id(_read_json(translations_path)) if translations_path.is_file() else {}
 
     source_dates: list[str] = []
     records: list[dict[str, Any]] = []
@@ -228,6 +236,7 @@ def build_manifest(
             catalog_records.get(key, {}),
             analysis_records.get(key, {}),
             length_records.get(key, {}),
+            translation_records.get(key, {}),
         ))
 
     records.sort(key=lambda item: (item["title"].casefold(), item["record_id"].casefold()))
@@ -250,6 +259,7 @@ def main() -> None:
     parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--analysis", type=Path, default=DEFAULT_ANALYSIS)
     parser.add_argument("--lengths", type=Path, default=DEFAULT_LENGTHS)
+    parser.add_argument("--translations", type=Path, default=DEFAULT_TRANSLATIONS)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args()
     records, stats = build_manifest(
@@ -257,6 +267,7 @@ def main() -> None:
         catalog_path=args.catalog,
         analysis_path=args.analysis,
         lengths_path=args.lengths,
+        translations_path=args.translations,
         out_dir=args.out_dir,
     )
     print(json.dumps({

@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 from typing import Any
 from urllib.parse import urlparse
 
@@ -23,12 +24,12 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MOUNTAIN_SVG_PATH = ROOT / "site" / "assets" / "snowmass-mountain.png"
 DEFAULT_QR_IMAGE_PATH = ROOT / "site" / "assets" / "snowmass-site-qr.png"
+QR_GENERATOR_PATH = ROOT / "scripts" / "make_snowmass_qr.swift"
 SYSTEM_CJK_FONT = Path("/System/Library/Fonts/STHeiti Medium.ttc")
 
 PROJECT_NAME = "Snowmass White Paper Chinese Translation Collaboration"
 CONTRIBUTOR_LABEL = "中文翻译贡献者：WangTheoPhys*"
-WEBSITE_URL = "https://snowmass-physics-cn.netlify.app/"
-WEBSITE_LABEL = "Website (Temporary): snowmass-physics-cn.netlify.app"
+WEBSITE_ORIGIN = "https://snowmass-physics-cn.netlify.app"
 DISCLAIMER_TEXT = "本译文由中文翻译协作项目制作，不代表原作者审定或认可；如有歧义，以英文原文为准。"
 CONTACT_TEXT = "*Contact: WangTheoPhys@outlook.com"
 LICENSE_CONDITION_LABELS = {
@@ -67,7 +68,7 @@ def package_translation_pdf(
     if not source_pdf.is_file():
         raise FileNotFoundError(f"source PDF not found: {source_pdf}")
     if not qr_image.is_file():
-        raise FileNotFoundError(f"QR image not found: {qr_image}")
+        raise FileNotFoundError(f"QR fallback image not found: {qr_image}")
     if not mountain_asset.is_file():
         raise FileNotFoundError(f"mountain cover asset not found: {mountain_asset}")
     if not SYSTEM_CJK_FONT.is_file():
@@ -80,19 +81,25 @@ def package_translation_pdf(
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     packaged_on_text = _normalize_packaged_on(packaged_on)
-    _render_cover_pdf(
-        record=record,
-        chinese_title=chinese_title.strip(),
-        cover_pdf_path=cover_pdf,
-        version=version,
-        packaged_on=packaged_on_text,
-        qr_image_path=qr_image,
-        mountain_svg_path=mountain_asset,
-    )
+    paper_qr_image = output_pdf.with_name(f".{output_pdf.stem}.paper-qr.png")
+    _generate_paper_qr(_translation_page_url(record), paper_qr_image)
+    try:
+        _render_cover_pdf(
+            record=record,
+            chinese_title=chinese_title.strip(),
+            cover_pdf_path=cover_pdf,
+            version=version,
+            packaged_on=packaged_on_text,
+            qr_image_path=paper_qr_image,
+            mountain_svg_path=mountain_asset,
+        )
+    finally:
+        paper_qr_image.unlink(missing_ok=True)
     _prepend_cover_pdf(cover_pdf, source_pdf, output_pdf)
 
     receipt = {
         "record_id": record.get("record_id"),
+        "translation_page_url": _translation_page_url(record),
         "version": version,
         "packaged_on": packaged_on_text,
         "source_pdf_path": _portable_artifact_reference(source_pdf),
@@ -116,6 +123,40 @@ def _normalize_packaged_on(value: str | dt.date | dt.datetime) -> str:
     if isinstance(value, dt.date):
         return value.isoformat()
     return str(value)
+
+
+def _translation_page_url(record: dict[str, Any]) -> str:
+    """Return the stable public page for a manifest record."""
+
+    arxiv_id = _derive_arxiv_identifier(record)
+    if arxiv_id:
+        slug = arxiv_id
+    else:
+        source_url = str(record.get("source_url", ""))
+        cds_match = re.search(r"cds\.cern\.ch/record/(\d+)", source_url)
+        hal_match = re.search(r"hal-(\d+)", source_url)
+        if cds_match:
+            slug = f"cds-{cds_match.group(1)}"
+        elif hal_match:
+            slug = f"hal-{hal_match.group(1)}"
+        else:
+            raise ValueError("record does not have a supported permanent paper-page identifier")
+    return f"{WEBSITE_ORIGIN}/paper/{slug}/"
+
+
+def _generate_paper_qr(url: str, output_path: Path) -> None:
+    """Generate a QR code containing the paper permalink without network access."""
+
+    if not QR_GENERATOR_PATH.is_file():
+        raise FileNotFoundError(f"QR generator not found: {QR_GENERATOR_PATH}")
+    subprocess.run(
+        ["/usr/bin/swift", str(QR_GENERATOR_PATH), url, str(output_path)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    if not output_path.is_file():
+        raise RuntimeError("QR generator did not create an image")
 
 
 def _render_cover_pdf(
@@ -152,6 +193,8 @@ def _render_cover_pdf(
     license_name = str(record.get("source_license", "未提供"))
     license_url = str(record.get("source_license_url", "")).strip()
     conditions = _format_conditions(record.get("publication_conditions"))
+    translation_page_url = _translation_page_url(record)
+    translation_page_label = translation_page_url.removeprefix("https://")
 
     left_column_right = 364
     metadata_top = max(y, 396.0)
@@ -177,13 +220,14 @@ def _render_cover_pdf(
     metadata_y = _write_link_line(
         page,
         (48, metadata_y, left_column_right, metadata_y + 18),
-        f"DOI: {doi_value}" if doi_value else "DOI: 未提供",
+        f"DOI: {doi_value}" if doi_value else "DOI: 未提供 / Not Provided",
         doi_url,
         10,
         link_color if doi_url else muted_color,
     ) + 8
     metadata_y = _write_textbox(page, (48, metadata_y, left_column_right, metadata_y + 18), CONTRIBUTOR_LABEL, 11, text_color) + 8
-    metadata_y = _write_link_line(page, (48, metadata_y, left_column_right, metadata_y + 24), WEBSITE_LABEL, WEBSITE_URL, 11, link_color) + 8
+    metadata_y = _write_textbox(page, (48, metadata_y, left_column_right, metadata_y + 18), "TRANSLATION PAGE / 本论文译文页", 10, muted_color) + 4
+    metadata_y = _write_link_line(page, (48, metadata_y, 398, metadata_y + 22), translation_page_label, translation_page_url, 9.5, link_color) + 8
     metadata_y = _write_textbox(
         page,
         (48, metadata_y, left_column_right, metadata_y + 18),
@@ -193,7 +237,7 @@ def _render_cover_pdf(
     )
 
     page.insert_image(qr_rect, filename=str(qr_image_path), keep_proportion=True)
-    page.insert_link({"kind": fitz.LINK_URI, "from": qr_rect, "uri": WEBSITE_URL})
+    page.insert_link({"kind": fitz.LINK_URI, "from": qr_rect, "uri": translation_page_url})
 
     footer_y = max(metadata_y + 24, qr_rect.y1 + 24)
     footer_y = _write_textbox(page, (48, footer_y, 547, footer_y + 48), DISCLAIMER_TEXT, 11, text_color) + 10
