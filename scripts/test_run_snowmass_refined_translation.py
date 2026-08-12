@@ -555,7 +555,7 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
     def test_chunk_barrier_retries_qc_failure_but_not_uncertain_request(self) -> None:
         module = load_module()
-        chunk = {"id": "chunk0001"}
+        chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
         calls: list[int] = []
 
         def flaky(_chunk, attempt):
@@ -588,6 +588,54 @@ class RefinedOrchestratorTests(unittest.TestCase):
                 record_id="arxiv:allowed",
             )
         self.assertEqual(uncertain_calls, [0])
+
+    def test_retry_context_reports_literal_parenthesis_and_term_differences(self) -> None:
+        module = load_module()
+        chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
+        source = self.article / "chunk0001.md"
+        source.write_text(
+            "Cyclotron result (1 TeV) remains valid.\n",
+            encoding="utf-8",
+        )
+        rejected = self.article / "rejected.md"
+        rejected.write_text(
+            "Cyclotron 结果（2 TeV 仍然有效。\n",
+            encoding="utf-8",
+        )
+        status_dir = self.article / "chunk_status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "stages": {
+                        "translate": {
+                            "status": "failed",
+                            "error": (
+                                "QC failed: numbers_mismatch, units_mismatch, "
+                                "parentheses_mismatch, locked_terms_mismatch"
+                            ),
+                            "rejected_candidate_file": "rejected.md",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        context = module._qc_retry_context(
+            self.article,
+            chunk,
+            "WHOLE PAPER ANALYSIS 999",
+            1,
+            terms=[{"source": "Cyclotron", "target": "回旋加速器"}],
+        )
+
+        self.assertNotIn("WHOLE PAPER ANALYSIS", context)
+        self.assertIn("missing numeric literals: 1", context)
+        self.assertIn("added numeric literals: 2", context)
+        self.assertIn("source unit literals: 1TeV", context)
+        self.assertIn("source parenthesis residue: open=0, closing=0", context)
+        self.assertIn("required locked terms: Cyclotron => 回旋加速器", context)
 
 
 if __name__ == "__main__":

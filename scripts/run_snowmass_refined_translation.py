@@ -17,6 +17,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_snowmass_translation as runner
+from snowmass_document_units import compare_numeric_literals
+from snowmass_translation_qc import _extract_unit_values, _parenthesis_residue
 
 
 SCHEMA_VERSION = 1
@@ -644,24 +646,59 @@ def _qc_retry_context(
     chunk: dict[str, Any],
     base_context: str,
     attempt: int,
+    *,
+    terms: list[dict[str, Any]] | None = None,
 ) -> str:
     if attempt == 0:
         return base_context
     status_path = article_dir / "chunk_status" / f"{chunk['id']}.json"
     errors: list[str] = []
+    rejected_candidate: Path | None = None
     if status_path.is_file():
         chunk_status = _load_json(status_path)
         for stage_name, stage in chunk_status.get("stages", {}).items():
             if isinstance(stage, dict) and stage.get("status") == "failed" and stage.get("error"):
                 errors.append(f"{stage_name}: {stage['error']}")
+                rejected_relative = stage.get("rejected_candidate_file")
+                if isinstance(rejected_relative, str) and rejected_relative:
+                    rejected_candidate = article_dir / rejected_relative
     failure = "; ".join(errors[-2:]) or "deterministic structure or fidelity QC failed"
+    diagnostics: list[str] = []
+    source_path = runner.article_artifact_path(article_dir, str(chunk["source_file"]))
+    source = source_path.read_text(encoding="utf-8")
+    candidate = (
+        rejected_candidate.read_text(encoding="utf-8")
+        if rejected_candidate is not None and rejected_candidate.is_file()
+        else ""
+    )
+    if candidate and "numbers_mismatch" in failure:
+        numeric = compare_numeric_literals(source, candidate)
+        if numeric.missing_values:
+            diagnostics.append("missing numeric literals: " + ", ".join(numeric.missing_values))
+        if numeric.added_values:
+            diagnostics.append("added numeric literals: " + ", ".join(numeric.added_values))
+    if "units_mismatch" in failure:
+        units = _extract_unit_values(source)
+        diagnostics.append("source unit literals: " + (", ".join(units) or "none"))
+    if "parentheses_mismatch" in failure:
+        opening, closing = _parenthesis_residue(source)
+        diagnostics.append(f"source parenthesis residue: open={opening}, closing={closing}")
+    if "locked_terms_mismatch" in failure and terms:
+        required = [
+            f"{term.get('source')} => {term.get('target')}"
+            for term in runner.select_glossary_terms(source, terms)
+            if term.get("source") and term.get("target")
+        ]
+        if required:
+            diagnostics.append("required locked terms: " + "; ".join(required))
+    detail = ("\n" + "\n".join(diagnostics)) if diagnostics else ""
     return (
-        base_context
-        + f"\n\n# QC-CORRECTION RETRY {attempt}\n"
-        + f"The previous output for {chunk['id']} was rejected ({failure}). "
-        + "Translate only the target segment again. Correct the reported defect; copy every "
+        f"# QC-CORRECTION RETRY {attempt}\n"
+        + f"The previous output for {chunk['id']} was rejected ({failure})."
+        + detail
+        + "\nTranslate only the target segment again. Correct the reported defect; copy every "
         + "placeholder, Arabic numeral, unit, citation, URL, proper name, and locked term exactly "
-        + "as required. Never import a number or phrase from read-only neighbor context."
+        + "as required. Never import a number or phrase from read-only context."
     )
 
 
@@ -817,7 +854,9 @@ Identify the paper's argument, domain-specific meanings, preferred terminology, 
             run_id,
             budget_guard,
             stages=("translate", "terminology"),
-            paper_context=_qc_retry_context(article_dir, chunk, prompt, attempt),
+            paper_context=_qc_retry_context(
+                article_dir, chunk, prompt, attempt, terms=terms
+            ),
         ),
     )
     draft, draft_signature = _verified_merge(article_dir, record_id, chunks, "terminology")
@@ -876,6 +915,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
                     article_dir, str(chunk["id"]), critique
                 ),
                 attempt,
+                terms=terms,
             ),
             initial_text_path=runner.stage_output_path(
                 article_dir,
@@ -913,6 +953,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
                 chunk,
                 _critique_context_for_chunk(critique, str(chunk["id"])),
                 attempt,
+                terms=terms,
             ),
             initial_text_path=runner.stage_output_path(
                 article_dir,
