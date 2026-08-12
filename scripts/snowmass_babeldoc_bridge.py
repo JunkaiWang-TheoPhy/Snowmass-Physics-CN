@@ -12,13 +12,17 @@ from pathlib import Path
 import re
 import shutil
 from typing import Any, Iterable
+import unicodedata
 
 
 BABELDOC_VERSION = "0.6.4"
-IR_PIPELINE_VERSION = 4
+IR_PIPELINE_VERSION = 5
 # Corrupt/pathological IR guard only. Model-facing structure density is handled
 # separately by resumable subrequest segmentation in the translation runner.
 MAX_STRUCTURE_COUNT = 512
+TRANSLATE_POLICY = "translate"
+VERBATIM_FIGURE_TEXT_POLICY = "verbatim_figure_text"
+TRANSLATION_POLICIES = frozenset({TRANSLATE_POLICY, VERBATIM_FIGURE_TEXT_POLICY})
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,7 @@ class DocumentUnit:
     layout_label: str
     text: str
     structure_count: int
+    translation_policy: str = TRANSLATE_POLICY
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,14 @@ class RefillTranslation:
 class RefillResult:
     output_xml_path: Path
     refilled_unit_count: int
+    figure_text_verbatim_count: int = 0
+
+
+@dataclass(frozen=True)
+class FigureRegion:
+    page_number: int
+    xobj_id: int
+    box: tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -61,6 +74,8 @@ class RenderedPdfResult:
     reference_numbers: dict[str, Any] | None = None
     canonical_header_occurrences: int = 0
     section_heading_occurrences: int = 0
+    figure_regions_verified: bool = True
+    figure_region_count: int = 0
 
 
 _BABELDOC_PLACEHOLDER = re.compile(
@@ -99,8 +114,112 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     os.replace(temporary, destination)
 
 
+def resolve_figure_text_chunk_ids(
+    article_dir: Path, manifest: dict[str, Any]
+) -> set[str]:
+    """Identify figure-owned chunks from policy metadata or legacy JSON IR."""
+
+    chunks = list(manifest.get("chunks", []))
+    selected = {
+        str(chunk["id"])
+        for chunk in chunks
+        if chunk.get("translation_policy") == VERBATIM_FIGURE_TEXT_POLICY
+    }
+    ir_name = manifest.get("babeldoc_ir_json_file")
+    if not isinstance(ir_name, str) or not ir_name:
+        return selected
+    ir_path = Path(article_dir) / ir_name
+    if not ir_path.is_file():
+        raise RuntimeError(f"BabelDOC JSON IR is missing: {ir_path}")
+    document = json.loads(ir_path.read_text(encoding="utf-8"))
+    pages = document.get("page")
+    if not isinstance(pages, list):
+        raise RuntimeError(f"BabelDOC JSON IR has no page list: {ir_path}")
+    for chunk in chunks:
+        try:
+            paragraph = pages[int(chunk["page_number"]) - 1]["pdf_paragraph"][
+                int(chunk["paragraph_index"])
+            ]
+        except (IndexError, KeyError, TypeError) as exc:
+            raise RuntimeError(
+                f"BabelDOC figure-text identity is invalid for {chunk.get('id')}"
+            ) from exc
+        if int(paragraph.get("xobj_id") or 0) != 0:
+            selected.add(str(chunk["id"]))
+    return selected
+
+
 def _normalized_page_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _normalized_figure_text(value: str) -> str:
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
+
+
+def figure_regions_from_document(document: Any) -> list[FigureRegion]:
+    """Collect XObject bounds that own translatable figure text paragraphs."""
+
+    regions: list[FigureRegion] = []
+    for page_number, page in enumerate(document.page, 1):
+        text_xobj_ids = {
+            int(paragraph.xobj_id or 0)
+            for paragraph in page.pdf_paragraph
+            if int(paragraph.xobj_id or 0) != 0
+        }
+        xobjects = {int(xobj.xobj_id): xobj for xobj in page.pdf_xobject}
+        for xobj_id in sorted(text_xobj_ids):
+            xobj = xobjects.get(xobj_id)
+            if xobj is None or xobj.box is None:
+                raise RuntimeError(
+                    f"Figure text XObject has no bounding box: {page_number}/{xobj_id}"
+                )
+            regions.append(
+                FigureRegion(
+                    page_number=page_number,
+                    xobj_id=xobj_id,
+                    box=(
+                        float(xobj.box.x),
+                        float(xobj.box.y),
+                        float(xobj.box.x2),
+                        float(xobj.box.y2),
+                    ),
+                )
+            )
+    return regions
+
+
+def verify_verbatim_figure_regions(
+    *,
+    source_pdf: Path,
+    mono_pdf: Path,
+    regions: Iterable[FigureRegion],
+) -> dict[str, Any]:
+    """Compare source and rendered text inside every figure-owned XObject bound."""
+
+    import pymupdf
+
+    checked = list(regions)
+    with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono:
+        if source.page_count != mono.page_count:
+            raise RuntimeError("Cannot verify figure regions across unequal page counts")
+        for region in checked:
+            if region.page_number < 1 or region.page_number > source.page_count:
+                raise RuntimeError(
+                    f"Figure region page is outside the source PDF: {region.page_number}"
+                )
+            source_page = source[region.page_number - 1]
+            mono_page = mono[region.page_number - 1]
+            x, y, x2, y2 = region.box
+            clip = pymupdf.Rect(x, source_page.rect.height - y2, x2, source_page.rect.height - y)
+            source_text = _normalized_figure_text(source_page.get_text(clip=clip))
+            rendered_text = _normalized_figure_text(mono_page.get_text(clip=clip))
+            if not source_text or source_text != rendered_text:
+                raise RuntimeError(
+                    "Figure region text self-check failed: "
+                    f"page={region.page_number} xobj={region.xobj_id}"
+                )
+    return {"verified": True, "region_count": len(checked)}
 
 
 def restore_verbatim_pages(
@@ -367,6 +486,10 @@ def _validate_units(units: Iterable[DocumentUnit]) -> list[DocumentUnit]:
             raise ValueError(f"unit {index} has invalid paragraph_index {unit.paragraph_index}")
         if unit.structure_count < 0:
             raise ValueError(f"unit {index} has invalid structure_count {unit.structure_count}")
+        if unit.translation_policy not in TRANSLATION_POLICIES:
+            raise ValueError(
+                f"unit {index} has invalid translation_policy {unit.translation_policy!r}"
+            )
         if not unit.text.strip():
             raise ValueError(f"unit {index} has blank text")
     return validated
@@ -470,6 +593,7 @@ def write_translation_workspace(
                 "paragraph_index": unit.paragraph_index,
                 "layout_label": unit.layout_label,
                 "structure_count": unit.structure_count,
+                "translation_policy": unit.translation_policy,
             }
         )
         unit_records.append({"chunk_id": chunk_id, "unit_id": unit_id, **asdict(unit)})
@@ -564,6 +688,17 @@ def placeholder_sequence_matches(source: str, translated: str) -> bool:
     return _placeholder_sequence(source) == _placeholder_sequence(translated)
 
 
+def require_verbatim_figure_text(
+    xobj_id: int | None, source: str, translated: str
+) -> None:
+    """Fail closed when text owned by a PDF figure XObject was translated."""
+
+    if int(xobj_id or 0) != 0 and _with_terminal_newline(source) != _with_terminal_newline(
+        translated
+    ):
+        raise RuntimeError("Figure-internal text must remain verbatim")
+
+
 def normalize_document_ir_numeric_tokens(value: Any) -> None:
     """Repair xsdata's list[object] XML round-trip for CTM float tokens in place."""
 
@@ -637,6 +772,7 @@ def refill_document_units(
         docs = converter.read_xml(str(ir_xml_path))
         normalize_document_ir_numeric_tokens(docs)
         il_translator = ILTranslator(_babeldoc_placeholder_translator(), config)
+        figure_text_verbatim_count = 0
         for item in requested:
             if item.page_number < 1 or item.page_number > len(docs.page):
                 raise IndexError(f"BabelDOC page out of range: {item.page_number}")
@@ -664,6 +800,13 @@ def refill_document_units(
                 raise RuntimeError(
                     f"BabelDOC source changed before refill: {item.page_number}/{item.paragraph_index}"
                 )
+            require_verbatim_figure_text(
+                paragraph.xobj_id,
+                item.source_text,
+                item.translated_text,
+            )
+            if int(paragraph.xobj_id or 0) != 0:
+                figure_text_verbatim_count += 1
             if not placeholder_sequence_matches(source_text, item.translated_text):
                 raise RuntimeError(
                     "BabelDOC placeholder identity or order changed in translation: "
@@ -679,7 +822,11 @@ def refill_document_units(
         temporary = output_xml.with_name(output_xml.name + ".tmp")
         converter.write_xml(docs, str(temporary))
         os.replace(temporary, output_xml)
-        return RefillResult(output_xml, len(requested))
+        return RefillResult(
+            output_xml,
+            len(requested),
+            figure_text_verbatim_count=figure_text_verbatim_count,
+        )
     finally:
         config.cleanup_temp_files()
 
@@ -748,6 +895,7 @@ def render_translated_document(
 
         docs = XMLConverter().read_xml(str(ir_xml_path))
         normalize_document_ir_numeric_tokens(docs)
+        figure_regions = figure_regions_from_document(docs)
         class SnowmassTypesetting(Typesetting):
             """Correct BabelDOC 0.6.4's current-unit double count in word lookahead."""
 
@@ -783,6 +931,11 @@ def render_translated_document(
             canonical_header=verbatim_header_translation,
             section_heading_translations=verbatim_section_heading_translations,
         )
+        figure_report = verify_verbatim_figure_regions(
+            source_pdf=source_pdf,
+            mono_pdf=mono_pdf,
+            regions=figure_regions,
+        )
         return RenderedPdfResult(
             mono_pdf,
             dual_pdf,
@@ -795,6 +948,8 @@ def render_translated_document(
             section_heading_occurrences=int(
                 verbatim_report.get("section_heading_occurrences", 0)
             ),
+            figure_regions_verified=bool(figure_report["verified"]),
+            figure_region_count=int(figure_report["region_count"]),
         )
     finally:
         if doc_pdf is not None:
@@ -896,6 +1051,11 @@ def extract_document_units(
                         layout_label=str(paragraph.layout_label or ""),
                         text=text,
                         structure_count=structure_count,
+                        translation_policy=(
+                            VERBATIM_FIGURE_TEXT_POLICY
+                            if int(paragraph.xobj_id or 0) != 0
+                            else TRANSLATE_POLICY
+                        ),
                     )
                 )
         return ExtractionResult(

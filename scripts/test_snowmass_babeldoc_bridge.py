@@ -72,6 +72,14 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             bridge.placeholder_sequence_matches("A {v1} B {v2}", "甲 {v2} 乙 {v1}")
         )
 
+    def test_figure_text_gate_rejects_any_translation(self) -> None:
+        bridge = load_bridge()
+
+        bridge.require_verbatim_figure_text(0, "Euclid\n", "欧几里得\n")
+        bridge.require_verbatim_figure_text(17, "Euclid\n", "Euclid\n")
+        with self.assertRaisesRegex(RuntimeError, "Figure-internal text must remain verbatim"):
+            bridge.require_verbatim_figure_text(17, "Euclid\n", "欧几里得\n")
+
     def test_exported_units_are_consumable_by_translate_book_run_state(self) -> None:
         bridge = load_bridge()
         article = self.root / "papers" / "arxiv_allowed"
@@ -155,6 +163,31 @@ class BabelDocWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(first["source_pdf_sha256"], second["source_pdf_sha256"])
         self.assertEqual(first["chunks"], second["chunks"])
+
+    def test_workspace_marks_figure_internal_text_as_verbatim(self) -> None:
+        bridge = load_bridge()
+        article = self.root / "papers" / "arxiv_allowed"
+        figure_label = bridge.DocumentUnit(
+            1,
+            4,
+            "fallback_line",
+            "Euclid\n",
+            0,
+            translation_policy="verbatim_figure_text",
+        )
+
+        manifest = bridge.write_translation_workspace(
+            article,
+            record_id="arxiv:allowed",
+            source_pdf=self.pdf,
+            units=[figure_label],
+            allowed_record_ids={"arxiv:allowed"},
+        )
+
+        self.assertEqual(
+            manifest["chunks"][0]["translation_policy"],
+            "verbatim_figure_text",
+        )
 
     def test_workspace_preserves_chunk_ids_when_a_new_unit_is_inserted(self) -> None:
         bridge = load_bridge()
@@ -407,6 +440,43 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             text = document[1].get_text()
             self.assertEqual(text.count("REFERENCE ONE"), 2)
             self.assertNotIn("DUAL BROKEN ONE", text)
+
+    def test_figure_region_self_check_rejects_rendered_text_drift(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "figure-source.pdf"
+        matching = self.root / "figure-matching.pdf"
+        drifted = self.root / "figure-drifted.pdf"
+
+        def write(path: Path, label: str) -> None:
+            document = pymupdf.open()
+            page = document.new_page(width=300, height=400)
+            page.insert_text((30, 100), label, fontsize=12)
+            document.save(path)
+            document.close()
+
+        write(source, "Euclid")
+        write(matching, "Euclid")
+        write(drifted, "Planck")
+        region = bridge.FigureRegion(
+            page_number=1,
+            xobj_id=7,
+            box=(20, 280, 200, 330),
+        )
+
+        report = bridge.verify_verbatim_figure_regions(
+            source_pdf=source,
+            mono_pdf=matching,
+            regions=[region],
+        )
+        self.assertEqual(report, {"verified": True, "region_count": 1})
+        with self.assertRaisesRegex(RuntimeError, "Figure region text self-check failed"):
+            bridge.verify_verbatim_figure_regions(
+                source_pdf=source,
+                mono_pdf=drifted,
+                regions=[region],
+            )
 
     def test_render_result_records_verbatim_page_self_check(self) -> None:
         bridge = load_bridge()

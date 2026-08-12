@@ -30,6 +30,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from snowmass_translation_qc import StageDecision, stage_decision, validate_chunk
+import snowmass_babeldoc_bridge as babeldoc_bridge
 from snowmass_document_units import (
     StructureMismatchError as TypedStructureMismatchError,
     protect_translation_unit,
@@ -2025,6 +2026,14 @@ def process_chunk(
     return {"record_id": task["record_id"], "chunk_id": chunk_id, "status": "complete"}
 
 
+def figure_text_chunk_ids(
+    article_dir: Path, manifest: dict[str, Any]
+) -> set[str]:
+    """Identify figure-owned text from new policy metadata or legacy JSON IR."""
+
+    return babeldoc_bridge.resolve_figure_text_chunk_ids(article_dir, manifest)
+
+
 def collect_tasks(
     root: Path,
     max_articles: int,
@@ -2048,8 +2057,22 @@ def collect_tasks(
         if max_articles and selected_articles >= max_articles:
             break
         selected_articles += 1
+        figure_ids = figure_text_chunk_ids(article_dir, manifest)
         for chunk in sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0)):
-            tasks.append({"article_dir": article_dir, "record_id": record_id, "chunk": chunk})
+            figure_passthrough = str(chunk["id"]) in figure_ids
+            tasks.append(
+                {
+                    "article_dir": article_dir,
+                    "record_id": record_id,
+                    "chunk": chunk,
+                    "passthrough": figure_passthrough,
+                    "passthrough_reason": (
+                        "figure_internal_text_passthrough"
+                        if figure_passthrough
+                        else None
+                    ),
+                }
+            )
     return tasks[:max_chunks] if max_chunks else tasks
 
 

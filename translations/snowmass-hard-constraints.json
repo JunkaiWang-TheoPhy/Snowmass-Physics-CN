@@ -1,5 +1,13 @@
 {
   "schema_version": 1,
+  "document_object_policies": {
+    "figure_internal_text": {
+      "classification": "babeldoc_xobj_id_nonzero",
+      "translation_policy": "verbatim_source",
+      "caption_policy": "translate_normally",
+      "reason": "Keep axes, legends, annotations, experiment names, symbols, and units internally consistent with the source figure."
+    }
+  },
   "records": {
     "arxiv:2203.07506": {
       "exact_translations": [

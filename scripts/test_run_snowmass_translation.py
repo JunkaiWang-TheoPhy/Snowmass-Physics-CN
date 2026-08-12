@@ -82,12 +82,29 @@ class RightsGateTests(unittest.TestCase):
                 (article / "manifest.json").write_text(
                     json.dumps(
                         {
+                            "babeldoc_ir_json_file": "babeldoc_ir.json",
                             "chunks": [
                                 {
                                     "id": "chunk0001",
                                     "order": 1,
                                     "source_file": "chunk0001.md",
                                     "output_file": "output_chunk0001.md",
+                                    "page_number": 1,
+                                    "paragraph_index": 0,
+                                }
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (article / "babeldoc_ir.json").write_text(
+                    json.dumps(
+                        {
+                            "page": [
+                                {
+                                    "pdf_paragraph": [
+                                        {"xobj_id": 3 if record_id == "arxiv:allowed" else 0}
+                                    ]
                                 }
                             ]
                         }
@@ -110,6 +127,10 @@ class RightsGateTests(unittest.TestCase):
             self.assertEqual(
                 [(task["record_id"], task["chunk"]["id"]) for task in tasks],
                 [("arxiv:allowed", "chunk0001")],
+            )
+            self.assertTrue(tasks[0]["passthrough"])
+            self.assertEqual(
+                tasks[0]["passthrough_reason"], "figure_internal_text_passthrough"
             )
 
     def test_explicit_glossary_path_overrides_root_default(self) -> None:

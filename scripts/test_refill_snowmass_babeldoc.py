@@ -341,6 +341,62 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(report["first_use_terms"], 2)
         self.assertTrue((self.article / "publication_chunks" / "chunk0003.md").is_file())
 
+    def test_publication_preflight_restores_figure_text_but_translates_caption(self) -> None:
+        module = load_module()
+        chunks = [
+            {
+                "id": "chunk0001",
+                "order": 1,
+                "page_number": 1,
+                "paragraph_index": 0,
+                "source_file": "chunk0001.md",
+                "output_file": "output_chunk0001.md",
+            },
+            {
+                "id": "chunk0002",
+                "order": 2,
+                "page_number": 1,
+                "paragraph_index": 1,
+                "source_file": "chunk0002.md",
+                "output_file": "output_chunk0002.md",
+            },
+        ]
+        (self.article / "babeldoc_ir.json").write_text(
+            json.dumps(
+                {
+                    "page": [
+                        {
+                            "pdf_paragraph": [
+                                {"xobj_id": 17, "unicode": "Euclid"},
+                                {"xobj_id": 0, "unicode": "Figure 5: Forecast."},
+                            ]
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        manifest = {"babeldoc_ir_json_file": "babeldoc_ir.json", "chunks": chunks}
+        translations = [
+            module.BRIDGE.RefillTranslation(1, 0, "Euclid\n", "欧几里得\n"),
+            module.BRIDGE.RefillTranslation(1, 1, "Figure 5: Forecast.\n", "图5：预测。\n"),
+        ]
+
+        figure_ids = module._figure_text_chunk_ids(self.article, manifest)
+        prepared, report = module.prepare_publication_translations(
+            self.article,
+            manifest,
+            translations,
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[],
+            figure_text_chunk_ids=figure_ids,
+        )
+
+        self.assertEqual(figure_ids, {"chunk0001"})
+        self.assertEqual(prepared[0].translated_text, "Euclid\n")
+        self.assertEqual(prepared[1].translated_text, "图5：预测。\n")
+        self.assertEqual(report["figure_text_passthrough_units"], 1)
+
     def test_publication_preflight_fails_when_exact_source_is_missing(self) -> None:
         module = load_module()
         translation = module.BRIDGE.RefillTranslation(1, 0, "Other source\n", "其他文本\n")
