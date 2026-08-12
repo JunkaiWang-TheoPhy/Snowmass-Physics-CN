@@ -573,6 +573,18 @@ class StructureProtectionTests(unittest.TestCase):
             self.assertNotIn(literal, protected.text)
         self.assertEqual(len(protected.mapping), 7)
 
+    def test_protect_structures_round_trips_babeldoc_style_placeholders(self) -> None:
+        text = "{v1}First style{v2}second style{v37}"
+
+        protected = self.pipeline.protect_structures(text)
+
+        self.assertNotIn("{v1}", protected.text)
+        self.assertEqual(list(protected.mapping.values()), ["{v1}", "{v2}", "{v37}"])
+        self.assertEqual(
+            self.pipeline.validate_and_restore(protected.text, protected.mapping),
+            text,
+        )
+
     def test_protect_structures_keeps_url_separate_from_immediately_following_math(self) -> None:
         text = "See https://example.org/model$^{#3}$ next."
 

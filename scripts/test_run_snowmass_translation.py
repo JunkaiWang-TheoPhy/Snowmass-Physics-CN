@@ -551,8 +551,296 @@ class RequestKeyAndCheckpointTests(unittest.TestCase):
 
             self.assertFalse(RUNNER.checkpoint_is_valid(status, output, "expected-key"))
 
+    def test_completed_qc_valid_checkpoint_survives_prompt_contract_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "stage1_chunk0001.md"
+            output.write_text("既有有效译文。\n", encoding="utf-8")
+            status = {
+                "status": "complete",
+                "request_key": "old-prompt-key",
+                "output_hash": hashlib.sha256(
+                    "既有有效译文。\n".encode("utf-8")
+                ).hexdigest(),
+                "qc": {"ok": True, "failures": []},
+            }
+
+            self.assertTrue(
+                RUNNER.checkpoint_is_reusable_after_contract_change(status, output)
+            )
+
 
 class ProcessChunkTests(unittest.TestCase):
+    def test_refinement_input_does_not_expose_original_literals_or_unrelated_text(self) -> None:
+        source = (
+            "Submitted for Snowmass 2021. "
+            "A later sentence contains 2800 detectors."
+        )
+        current = (
+            '{"protocol":"snowmass-anchor-template-v1",'
+            '"source_template":"提交至 Snowmass <ANCHOR_0000>。"}'
+        )
+
+        request = RUNNER.stage_input("revision", source, current, "")
+
+        self.assertNotIn("2021", request)
+        self.assertNotIn("2800", request)
+        self.assertNotIn("A later sentence", request)
+        self.assertIn(current, request)
+
+    def test_plain_refinement_input_retains_original_source_context(self) -> None:
+        request = RUNNER.stage_input(
+            "revision",
+            "Original source needed for fidelity.",
+            "当前译文。",
+            "",
+        )
+
+        self.assertIn("Original source needed for fidelity.", request)
+
+    def test_structure_slot_requests_enable_official_json_output_mode(self) -> None:
+        structured = RUNNER.build_request_payload(
+            "Return JSON. STRUCTURE-SLOT PROTOCOL", "{}", 128
+        )
+        fallback = RUNNER.build_request_payload(
+            "Return JSON. STRUCTURE-ANCHOR FALLBACK PROTOCOL", "{}", 128
+        )
+        plain = RUNNER.build_request_payload("Translate", "text", 128)
+
+        self.assertEqual(structured["text"]["format"], {"type": "json_object"})
+        self.assertEqual(fallback["text"]["format"], {"type": "json_object"})
+        self.assertEqual(plain["text"]["format"], {"type": "text"})
+
+    def test_structure_dense_input_splits_losslessly_at_bounded_density(self) -> None:
+        module = RUNNER
+        protected = " ".join(
+            f"part{i} [[SM_{i:04d}_{i:010x}]]" for i in range(66)
+        )
+
+        segments = module.split_protected_model_input(protected, 4)
+
+        self.assertEqual("".join(segments), protected)
+        self.assertEqual(len(segments), 17)
+        self.assertTrue(
+            all(len(module._MODEL_SENTINEL_RE.findall(item)) <= 4 for item in segments)
+        )
+
+    def test_structure_only_segments_are_copied_without_model_calls(self) -> None:
+        source = "$a$ $b$ $c$ $d$ $e$\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("structure-only segments must not call the model")
+
+        result = RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            stages=("translate",),
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            (self.article_dir / "stage1_chunk0001.md").read_text(encoding="utf-8"),
+            source,
+        )
+
+    def test_structure_slots_never_expose_anchors_and_restore_deterministically(self) -> None:
+        source = "Before [[SM_0001_0000000001]] middle [[SMU_0002_NUMBER_0000000002]] after"
+
+        payload, anchors, parts = RUNNER.build_structure_slot_input(source)
+
+        self.assertNotIn("[[SM_", payload)
+        request = json.loads(payload)
+        self.assertIn("<ANCHOR_0000>", request["source_context"])
+        response = json.dumps(
+            {
+                "translations": {
+                    item["id"]: f"译:{item['text']}" for item in request["slots"]
+                }
+            },
+            ensure_ascii=False,
+        )
+        restored = RUNNER.restore_structure_slot_output(response, anchors, parts)
+        self.assertEqual(RUNNER._MODEL_SENTINEL_RE.findall(restored), list(anchors))
+        self.assertIn("译:Before ", restored)
+
+    def test_structure_slots_reject_missing_text_identity(self) -> None:
+        payload, anchors, parts = RUNNER.build_structure_slot_input(
+            "Before [[SM_0001_0000000001]] after"
+        )
+        self.assertTrue(json.loads(payload)["slots"])
+
+        with self.assertRaises(RUNNER.StructureMismatchError):
+            RUNNER.restore_structure_slot_output(
+                '{"translations":{"T0000":"译文"}}', anchors, parts
+            )
+
+    def test_structure_slots_accept_only_extra_closing_brace_suffix(self) -> None:
+        _, anchors, parts = RUNNER.build_structure_slot_input(
+            "Before [[SM_0001_0000000001]] after"
+        )
+        response = '{"translations":{"T0000":"前","T0001":"后"}}}'
+
+        restored = RUNNER.restore_structure_slot_output(response, anchors, parts)
+
+        self.assertEqual(
+            RUNNER._MODEL_SENTINEL_RE.findall(restored), list(anchors)
+        )
+
+    def test_structure_slots_reject_suspiciously_truncated_text_island(self) -> None:
+        _, anchors, parts = RUNNER.build_structure_slot_input(
+            "Constraints on neutrino masses and light relics "
+            "[[SM_0001_0000000001]] are discussed here"
+        )
+        response = json.dumps(
+            {"translations": {"T0000": "约束", "T0001": "在此讨论"}},
+            ensure_ascii=False,
+        )
+
+        with self.assertRaisesRegex(
+            RUNNER.StructureMismatchError, "suspiciously short"
+        ):
+            RUNNER.restore_structure_slot_output(response, anchors, parts)
+
+    def test_anchor_fallback_hides_real_nodes_and_allows_syntax_repositioning(self) -> None:
+        source = "given parameters [[SM_0001_0000000001]], calculate the matrix"
+        payload, anchors, markers = RUNNER.build_structure_anchor_input(source)
+        self.assertNotIn("[[SM_", payload)
+        response = json.dumps(
+            {"translation": f"在给定参数{markers[0]}的情况下，计算矩阵"},
+            ensure_ascii=False,
+        )
+
+        restored = RUNNER.restore_structure_anchor_output(response, anchors, markers)
+
+        self.assertEqual(
+            restored, "在给定参数[[SM_0001_0000000001]]的情况下，计算矩阵"
+        )
+
+    def test_anchor_fallback_allows_a_valid_anchor_permutation(self) -> None:
+        source = (
+            "bin [[SM_0001_0000000001]] at redshift "
+            "[[SM_0002_0000000002]]"
+        )
+        _, anchors, markers = RUNNER.build_structure_anchor_input(source)
+        response = json.dumps(
+            {"translation": f"红移{markers[1]}处的区间{markers[0]}"},
+            ensure_ascii=False,
+        )
+
+        restored = RUNNER.restore_structure_anchor_output(response, anchors, markers)
+
+        self.assertEqual(
+            restored,
+            "红移[[SM_0002_0000000002]]处的区间[[SM_0001_0000000001]]",
+        )
+
+    def test_academic_polish_uses_anchor_protocol_for_chinese_word_order(self) -> None:
+        source = "参数 $x$ 与 $y$。\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage3_chunk0001.md"
+        initial.write_text(source, encoding="utf-8")
+        observed_instructions: list[str] = []
+
+        class AnchorClient:
+            def complete(
+                self, instructions: str, input_text: str, max_output_tokens: int
+            ) -> tuple[dict[str, object], float]:
+                observed_instructions.append(instructions)
+                markers = re.findall(r"<ANCHOR_[0-9]{4}>", input_text)
+                return completed_response(
+                    json.dumps(
+                        {"translation": f"参数{markers[1]}与{markers[0]}。"},
+                        ensure_ascii=False,
+                    )
+                ), 0.1
+
+        result = RUNNER.process_chunk(
+            self.task,
+            AnchorClient(),
+            [],
+            stages=("academic",),
+            initial_text_path=initial,
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertIn("STRUCTURE-ANCHOR FALLBACK PROTOCOL", observed_instructions[0])
+        self.assertNotIn("STRUCTURE-SLOT PROTOCOL", observed_instructions[0])
+
+    def test_failed_style_stage_falls_back_to_qc_valid_prior_text_without_api(self) -> None:
+        source = "PUMA has 50% occupancy.\n"
+        prior = "PUMA的占用率为50%。\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage3_chunk0001.md"
+        initial.write_text(prior, encoding="utf-8")
+        status_dir = self.article_dir / "chunk_status"
+        status_dir.mkdir()
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "chunk_id": "chunk0001",
+                    "stages": {
+                        "academic": {
+                            "status": "failed",
+                            "error": "Structure-slot response changed text-slot identities",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("failed optional style stage must use the valid prior text")
+
+        result = RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            stages=("academic",),
+            initial_text_path=initial,
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            (self.article_dir / "output_chunk0001.md").read_text(encoding="utf-8"),
+            prior,
+        )
+        status = json.loads((status_dir / "chunk0001.json").read_text(encoding="utf-8"))
+        self.assertEqual(status["stages"]["academic"]["status"], "complete")
+        self.assertTrue(status["stages"]["academic"]["fallback_to_prior_stage"])
+
+    def test_style_candidate_qc_failure_falls_back_in_same_run(self) -> None:
+        source = "PUMA has 50% occupancy.\n"
+        prior = "PUMA的占用率为50%。\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage3_chunk0001.md"
+        initial.write_text(prior, encoding="utf-8")
+
+        class BadCandidateClient:
+            def complete(
+                self, instructions: str, input_text: str, max_output_tokens: int
+            ) -> tuple[dict[str, object], float]:
+                return completed_response("PUMA的占用率为60%。\n"), 0.1
+
+        result = RUNNER.process_chunk(
+            self.task,
+            BadCandidateClient(),
+            [],
+            stages=("academic",),
+            initial_text_path=initial,
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            (self.article_dir / "output_chunk0001.md").read_text(encoding="utf-8"),
+            prior,
+        )
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -588,6 +876,372 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(translate["output_hash"], hashlib.sha256("阶段产物\n".encode("utf-8")).hexdigest())
         self.assertEqual(translate["raw_response"]["status"], "completed")
 
+    def test_refinement_request_does_not_attach_neighbor_source_context(self) -> None:
+        (self.article_dir / "chunk0002.md").write_text(
+            "Neighbor-only evidence contains 999 detectors.\n", encoding="utf-8"
+        )
+        initial = self.article_dir / "stage2_chunk0001.md"
+        self.task["chunk"]["source_hash"] = "source-hash-with-number"
+        (self.article_dir / "chunk0001.md").write_text(
+            "Original source paragraph 2021.\n", encoding="utf-8"
+        )
+        initial.write_text("当前译文 2021。\n", encoding="utf-8")
+        observed_inputs: list[str] = []
+
+        class FakeClient:
+            def complete(
+                self, instructions: str, input_text: str, max_output_tokens: int
+            ) -> tuple[dict[str, object], float]:
+                observed_inputs.append(input_text)
+                marker = re.search(r"<ANCHOR_[0-9]{4}>", input_text)
+                if marker is None:
+                    raise AssertionError("anchor fallback request omitted its abstract marker")
+                return completed_response(
+                    json.dumps(
+                        {"translation": f"修订后的当前译文 {marker.group(0)}。"},
+                        ensure_ascii=False,
+                    )
+                ), 0.1
+
+        RUNNER.process_chunk(
+            self.task,
+            FakeClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=initial,
+            paper_context="# QC-CORRECTION RETRY 2",
+        )
+
+        self.assertEqual(len(observed_inputs), 1)
+        self.assertNotIn("Neighbor-only evidence", observed_inputs[0])
+        self.assertNotIn("999", observed_inputs[0])
+
+    def test_failed_segmented_refinement_retry_omits_whole_source_context(self) -> None:
+        (self.article_dir / "chunk0001.md").write_text(
+            "Whole original source contains trailing 999 evidence.\n", encoding="utf-8"
+        )
+        initial = self.article_dir / "stage_revision_chunk0001.md"
+        initial.write_text(
+            "前导句。\n后文{v1}甲{v2}乙{v3}丙{v4}丁{v5}。\n",
+            encoding="utf-8",
+        )
+        status_dir = self.article_dir / "chunk_status"
+        status_dir.mkdir()
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "chunk_id": "chunk0001",
+                    "stages": {
+                        "anti_ai": {
+                            "status": "failed",
+                            "error": "QC failed: numbers_mismatch",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        observed_inputs: list[str] = []
+
+        class StopAfterCaptureClient:
+            def complete(
+                self, instructions: str, input_text: str, max_output_tokens: int
+            ) -> tuple[dict[str, object], float]:
+                observed_inputs.append(input_text)
+                raise RuntimeError("stop after capture")
+
+        with self.assertRaisesRegex(RuntimeError, "stop after capture"):
+            RUNNER.process_chunk(
+                self.task,
+                StopAfterCaptureClient(),
+                [],
+                stages=("anti_ai",),
+                initial_text_path=initial,
+            )
+
+        self.assertEqual(len(observed_inputs), 1)
+        self.assertNotIn("Whole original source", observed_inputs[0])
+        self.assertNotIn("999", observed_inputs[0])
+
+    def test_completed_stage_does_not_reactivate_stale_bounded_retry_flag(self) -> None:
+        (self.article_dir / "chunk0001.md").write_text(
+            "Whole original source remains valid context.\n", encoding="utf-8"
+        )
+        initial = self.article_dir / "stage_revision_chunk0001.md"
+        initial.write_text(
+            "前导句。\n后文{v1}甲{v2}乙{v3}丙{v4}丁{v5}。\n",
+            encoding="utf-8",
+        )
+        status_dir = self.article_dir / "chunk_status"
+        status_dir.mkdir()
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "chunk_id": "chunk0001",
+                    "stages": {
+                        "anti_ai": {
+                            "status": "complete",
+                            "bounded_segmented_retry": True,
+                            "request_key": "stale-key",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        observed_inputs: list[str] = []
+
+        class StopAfterCaptureClient:
+            def complete(
+                self, instructions: str, input_text: str, max_output_tokens: int
+            ) -> tuple[dict[str, object], float]:
+                observed_inputs.append(input_text)
+                raise RuntimeError("stop after capture")
+
+        with self.assertRaisesRegex(RuntimeError, "stop after capture"):
+            RUNNER.process_chunk(
+                self.task,
+                StopAfterCaptureClient(),
+                [],
+                stages=("anti_ai",),
+                initial_text_path=initial,
+            )
+
+        self.assertEqual(len(observed_inputs), 1)
+        self.assertIn("Whole original source remains valid context", observed_inputs[0])
+
+    def test_failed_retry_recovers_still_valid_prior_stage_output(self) -> None:
+        (self.article_dir / "chunk0001.md").write_text(
+            "Dark energy constrains expansion.\n", encoding="utf-8"
+        )
+        initial = self.article_dir / "stage1_chunk0001.md"
+        initial.write_text("dark energy 约束膨胀。\n", encoding="utf-8")
+        prior_output = self.article_dir / "stage2_chunk0001.md"
+        prior_output.write_text("暗能量约束膨胀。\n", encoding="utf-8")
+        status_dir = self.article_dir / "chunk_status"
+        status_dir.mkdir()
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "chunk_id": "chunk0001",
+                    "stages": {
+                        "terminology": {
+                            "status": "failed",
+                            "request_key": "failed-key",
+                            "error": "QC failed: locked_terms_mismatch",
+                            "output_file": "stage2_chunk0001.md",
+                            "rejected_candidate_file": "rejected_candidates/failed.md",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        calls = 0
+
+        class FakeClient:
+            def complete(
+                self, instructions: str, input_text: str, max_output_tokens: int
+            ) -> tuple[dict[str, object], float]:
+                nonlocal calls
+                calls += 1
+                return completed_response("暗能量约束膨胀。\n"), 0.1
+
+        result = RUNNER.process_chunk(
+            self.task,
+            FakeClient(),
+            [{"source": "dark energy", "target": "暗能量"}],
+            stages=("terminology",),
+            initial_text_path=initial,
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(calls, 0)
+        self.assertEqual(prior_output.read_text(encoding="utf-8"), "暗能量约束膨胀。\n")
+
+    def test_reference_passthrough_writes_all_stages_without_model_calls(self) -> None:
+        self.task["passthrough"] = True
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("reference section must remain verbatim")
+
+        result = RUNNER.process_chunk(self.task, NoCallClient(), [])
+
+        self.assertEqual(result["status"], "complete")
+        for filename in (
+            "stage1_chunk0001.md",
+            "stage2_chunk0001.md",
+            "stage3_chunk0001.md",
+            "output_chunk0001.md",
+        ):
+            self.assertEqual(
+                (self.article_dir / filename).read_text(encoding="utf-8"),
+                "Original source paragraph.\n",
+            )
+        status = json.loads(
+            (self.article_dir / "chunk_status/chunk0001.json").read_text(encoding="utf-8")
+        )
+        self.assertTrue(
+            all(
+                stage["decision"]["reason"] == "reference_section_passthrough"
+                for stage in status["stages"].values()
+            )
+        )
+
+    def test_structure_dense_stage_uses_resumable_bounded_subrequests(self) -> None:
+        source = " ".join(
+            f"part $x_{{{index}}}$" for index in range(66)
+        ) + "\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+
+        class DenseClient:
+            calls = 0
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                self.calls += 1
+                self.assert_no_anchor = not RUNNER._MODEL_SENTINEL_RE.search(input_text)
+                payload = json.loads(input_text.split("\n\n", 1)[0])
+                translated = {
+                    item["id"]: item["text"] for item in payload["slots"]
+                }
+                return completed_response(
+                    json.dumps({"translations": translated}, ensure_ascii=False)
+                ), 0.1
+
+        client = DenseClient()
+        result = RUNNER.process_chunk(
+            self.task,
+            client,
+            [],
+            run_id="dense-run",
+            stages=("translate",),
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(client.calls, 17)
+        self.assertTrue(client.assert_no_anchor)
+        status = json.loads(
+            (self.article_dir / "chunk_status" / "chunk0001.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        translate = status["stages"]["translate"]
+        self.assertEqual(translate["structure_segment_count"], 17)
+        self.assertEqual(len(translate["subrequests"]), 17)
+        self.assertTrue(
+            all(item["status"] == "complete" for item in translate["subrequests"])
+        )
+        translated = (self.article_dir / "stage1_chunk0001.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(re.findall(r"\$[^$]+\$", translated), re.findall(r"\$[^$]+\$", source))
+
+        # Simulate interruption after all paid subrequests completed but before
+        # the merged stage artifact became durable.
+        (self.article_dir / "stage1_chunk0001.md").unlink()
+        translate["status"] = "running"
+        status["status"] = "running"
+        (self.article_dir / "chunk_status" / "chunk0001.json").write_text(
+            json.dumps(status), encoding="utf-8"
+        )
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("valid dense checkpoint must not replay API calls")
+
+        resumed = RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            run_id="resume-run",
+            stages=("translate",),
+        )
+        self.assertEqual(resumed["status"], "complete")
+
+    def test_process_chunk_can_stop_at_refined_draft_barrier_with_paper_context(self) -> None:
+        class DraftClient:
+            calls = 0
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                self.calls += 1
+                if "PAPER ANALYSIS CONTEXT" not in input_text:
+                    raise AssertionError("paper-level refined context was not injected")
+                return completed_response("初稿段落"), 0.1
+
+        client = DraftClient()
+        result = RUNNER.process_chunk(
+            self.task,
+            client,
+            [],
+            stages=("translate", "terminology"),
+            paper_context="PAPER ANALYSIS CONTEXT",
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(
+            (self.article_dir / "stage2_chunk0001.md").read_text(encoding="utf-8"),
+            "初稿段落\n",
+        )
+        self.assertFalse((self.article_dir / "output_chunk0001.md").exists())
+
+    def test_process_chunk_revision_uses_terminology_draft_and_local_critique(self) -> None:
+        terminology = self.article_dir / "stage2_chunk0001.md"
+        terminology.write_text("术语统一稿。\n", encoding="utf-8")
+
+        class RevisionClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
+                if "术语统一稿" not in input_text or "chunk0001: 修正句法" not in input_text:
+                    raise AssertionError("revision did not receive its draft and critique slice")
+                return completed_response("修订稿。"), 0.1
+
+        result = RUNNER.process_chunk(
+            self.task,
+            RevisionClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=terminology,
+            paper_context="chunk0001: 修正句法",
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            (self.article_dir / "stage_revision_chunk0001.md").read_text(encoding="utf-8"),
+            "修订稿。\n",
+        )
+
+    def test_revision_without_actionable_chunk_critique_is_qc_passthrough(self) -> None:
+        terminology = self.article_dir / "stage2_chunk0001.md"
+        terminology.write_text("术语统一稿。\n", encoding="utf-8")
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("no-op revision must not call the API")
+
+        result = RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=terminology,
+            paper_context="NO_ACTIONABLE_CHUNK_CRITIQUE: chunk0001",
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            (self.article_dir / "stage_revision_chunk0001.md").read_text(
+                encoding="utf-8"
+            ),
+            "术语统一稿。\n",
+        )
+
     def test_process_chunk_protects_and_restores_math_citations_and_urls_around_api_call(self) -> None:
         source = "Equation $E=mc^2$ follows \\cite{einstein}; see https://example.org/paper.\n"
         (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
@@ -595,8 +1249,11 @@ class ProcessChunkTests(unittest.TestCase):
         class ProtectingClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
                 self.assertions(input_text)
-                sentinels = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)
-                return completed_response("方程 " + " 依次参见 ".join(sentinels)), 0.1
+                payload = json.loads(input_text.split("\n\n", 1)[0])
+                translations = {
+                    item["id"]: "方程及相关说明" for item in payload["slots"]
+                }
+                return completed_response(json.dumps({"translations": translations})), 0.1
 
             @staticmethod
             def assertions(input_text: str) -> None:
@@ -621,8 +1278,11 @@ class ProcessChunkTests(unittest.TestCase):
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
                 if "2800" in input_text or r"\url{https://example.org/a}" in input_text:
                     raise AssertionError("numbers and balanced TeX URLs must be protected")
-                tokens = re.findall(r"\[\[(?:SM|SMU)_[^\]]+\]\]", input_text)
-                return completed_response("样本包含 " + " ".join(tokens) + " 个事件。"), 0.1
+                payload = json.loads(input_text.split("\n\n", 1)[0])
+                translations = {
+                    item["id"]: "样本及来源。" for item in payload["slots"]
+                }
+                return completed_response(json.dumps({"translations": translations})), 0.1
 
         with mock.patch.object(RUNNER, "STAGES", ("translate",)):
             result = RUNNER.process_chunk(self.task, ProtectingClient(), [])
@@ -633,7 +1293,7 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertIn(r"\url{https://example.org/a}", output)
         self.assertNotIn("[[SM", output)
 
-    def test_process_chunk_rejects_model_output_that_drops_protected_structure(self) -> None:
+    def test_process_chunk_rejects_model_output_that_drops_text_slot(self) -> None:
         (self.article_dir / "chunk0001.md").write_text("Equation $E=mc^2$.\n", encoding="utf-8")
 
         class DroppingClient:
@@ -647,13 +1307,13 @@ class ProcessChunkTests(unittest.TestCase):
             RUNNER.process_chunk(self.task, DroppingClient(), [])
 
         status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
-        diagnostics = status["stages"]["translate"]["structure_diagnostics"]
-        rejected = self.article_dir / status["stages"]["translate"]["rejected_candidate_file"]
-        self.assertEqual(len(diagnostics["expected_sentinels"]), 1)
-        self.assertEqual(diagnostics["observed_sentinels"], [])
-        self.assertEqual(diagnostics["missing_sentinels"], diagnostics["expected_sentinels"])
-        self.assertEqual(rejected.read_text(encoding="utf-8"), "方程。\n")
-        self.assertTrue(status["stages"]["translate"]["rejected_candidate_protected"])
+        translate = status["stages"]["translate"]
+        self.assertEqual(translate["status"], "failed")
+        self.assertIn("valid JSON", translate["error"])
+        self.assertEqual(
+            translate["subrequests"][0]["structure_slot_protocol"],
+            RUNNER.STRUCTURE_SLOT_PROTOCOL,
+        )
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
 
     def test_stage_instructions_make_sentinel_contract_explicit(self) -> None:
@@ -718,8 +1378,11 @@ class ProcessChunkTests(unittest.TestCase):
 
         class InitialClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
-                number = re.search(r"\[\[SMU_[^\]]+\]\]", input_text).group(0)
-                return completed_response(f"数值 {number}。"), 0.1
+                payload = json.loads(input_text.split("\n\n", 1)[0])
+                translations = {
+                    item["id"]: "数值。" for item in payload["slots"]
+                }
+                return completed_response(json.dumps({"translations": translations})), 0.1
 
         rejected_qc = mock.Mock()
         rejected_qc.ok = False
@@ -743,7 +1406,9 @@ class ProcessChunkTests(unittest.TestCase):
         translate = status["stages"]["translate"]
         self.assertEqual(result["status"], "complete")
         self.assertTrue(translate["recovered_from_rejected_candidate"])
-        self.assertEqual((self.article_dir / "stage1_chunk0001.md").read_text(encoding="utf-8"), "数值 14。\n")
+        recovered = (self.article_dir / "stage1_chunk0001.md").read_text(encoding="utf-8")
+        self.assertIn("14", recovered)
+        self.assertNotIn("[[SMU_", recovered)
 
     def test_process_chunk_marks_ambiguous_transport_failure_uncertain_without_output(self) -> None:
         class FakeClient:

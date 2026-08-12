@@ -90,6 +90,8 @@ def workspace_is_current(article_dir: Path, source_pdf: Path, record_id: str) ->
             return False
         if manifest.get("babeldoc_version") != BRIDGE.BABELDOC_VERSION:
             return False
+        if manifest.get("ir_pipeline_version") != BRIDGE.IR_PIPELINE_VERSION:
+            return False
         if manifest.get("source_pdf_sha256") != _sha256(source_pdf):
             return False
         for file_key, hash_key in (

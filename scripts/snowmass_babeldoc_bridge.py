@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, is_dataclass
 import hashlib
 from importlib import metadata
 import json
@@ -15,7 +15,10 @@ from typing import Any, Iterable
 
 
 BABELDOC_VERSION = "0.6.4"
-MAX_STRUCTURE_COUNT = 40
+IR_PIPELINE_VERSION = 3
+# Corrupt/pathological IR guard only. Model-facing structure density is handled
+# separately by resumable subrequest segmentation in the translation runner.
+MAX_STRUCTURE_COUNT = 512
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,12 @@ class RefillTranslation:
 class RefillResult:
     output_xml_path: Path
     refilled_unit_count: int
+
+
+@dataclass(frozen=True)
+class RenderedPdfResult:
+    mono_pdf_path: Path
+    dual_pdf_path: Path
 
 
 _BABELDOC_PLACEHOLDER = re.compile(
@@ -99,6 +108,51 @@ def _validate_units(units: Iterable[DocumentUnit]) -> list[DocumentUnit]:
     return validated
 
 
+def _existing_chunk_ids(
+    article_dir: Path, record_id: str
+) -> tuple[dict[tuple[int, int], str], int]:
+    manifest_path = article_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return {}, 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("record_id") != record_id:
+        raise RuntimeError("Existing workspace belongs to a different record")
+    identities: dict[tuple[int, int], str] = {}
+    highest = 0
+    for chunk in manifest.get("chunks", []):
+        chunk_id = str(chunk.get("id", ""))
+        match = re.fullmatch(r"chunk(\d+)", chunk_id)
+        if match is None:
+            raise RuntimeError(f"Existing workspace has invalid chunk id: {chunk_id}")
+        identity = (int(chunk["page_number"]), int(chunk["paragraph_index"]))
+        if identity in identities:
+            raise RuntimeError(f"Existing workspace has duplicate unit identity: {identity}")
+        identities[identity] = chunk_id
+        highest = max(highest, int(match.group(1)))
+    return identities, highest
+
+
+def pre_translate_document_paragraph(
+    il_translator: Any,
+    paragraph: Any,
+    tracker: Any,
+    page_font_map: dict[str, Any],
+    xobj_font_map: dict[int, dict[str, Any]],
+) -> tuple[Any, Any]:
+    """Include short table fragments without lowering the global text threshold."""
+
+    config = il_translator.translation_config
+    original_minimum = config.min_text_length
+    if paragraph.layout_label == "fallback_line":
+        config.min_text_length = 1
+    try:
+        return il_translator.pre_translate_paragraph(
+            paragraph, tracker, page_font_map, xobj_font_map
+        )
+    finally:
+        config.min_text_length = original_minimum
+
+
 def write_translation_workspace(
     article_dir: Path,
     *,
@@ -125,10 +179,16 @@ def write_translation_workspace(
         if not ir_json_path.is_file() or not ir_xml_path.is_file():
             raise FileNotFoundError("BabelDOC JSON or XML IR is missing")
 
+    existing_ids, highest_chunk_number = _existing_chunk_ids(article_dir, record_id)
+    next_chunk_number = highest_chunk_number + 1
     chunks: list[dict[str, Any]] = []
     unit_records: list[dict[str, Any]] = []
     for order, unit in enumerate(validated, 1):
-        chunk_id = f"chunk{order:04d}"
+        identity = (unit.page_number, unit.paragraph_index)
+        chunk_id = existing_ids.get(identity)
+        if chunk_id is None:
+            chunk_id = f"chunk{next_chunk_number:04d}"
+            next_chunk_number += 1
         source_file = f"{chunk_id}.md"
         output_file = f"output_{chunk_id}.md"
         source_hash = _sha256_bytes(unit.text.encode("utf-8"))
@@ -155,6 +215,7 @@ def write_translation_workspace(
         "record_id": record_id,
         "input_mode": "babeldoc_ir",
         "babeldoc_version": BABELDOC_VERSION,
+        "ir_pipeline_version": IR_PIPELINE_VERSION,
         "source_pdf_path": str(source_pdf.resolve()),
         "source_pdf_sha256": _sha256_file(source_pdf),
         "chunks": chunks,
@@ -187,6 +248,7 @@ def write_translation_workspace(
             "record_id": record_id,
             "input_mode": "babeldoc_ir",
             "babeldoc_version": BABELDOC_VERSION,
+            "ir_pipeline_version": IR_PIPELINE_VERSION,
             "unit_count": len(validated),
             "source_pdf_sha256": manifest["source_pdf_sha256"],
         },
@@ -238,6 +300,36 @@ def placeholder_sequence_matches(source: str, translated: str) -> bool:
     return _placeholder_sequence(source) == _placeholder_sequence(translated)
 
 
+def normalize_document_ir_numeric_tokens(value: Any) -> None:
+    """Repair xsdata's list[object] XML round-trip for CTM float tokens in place."""
+
+    visited: set[int] = set()
+
+    def visit(item: Any) -> None:
+        if item is None or isinstance(item, (str, bytes, int, float, bool)):
+            return
+        identity = id(item)
+        if identity in visited:
+            return
+        visited.add(identity)
+        if isinstance(item, list):
+            for child in item:
+                visit(child)
+            return
+        if not is_dataclass(item):
+            return
+        for descriptor in fields(item):
+            child = getattr(item, descriptor.name)
+            if descriptor.name in {"ctm", "relocation_transform"} and isinstance(
+                child, list
+            ):
+                setattr(item, descriptor.name, [float(token) for token in child])
+            else:
+                visit(child)
+
+    visit(value)
+
+
 def refill_document_units(
     ir_xml_path: Path,
     *,
@@ -270,7 +362,7 @@ def refill_document_units(
     if len(identities) != len(set(identities)):
         raise ValueError("Duplicate BabelDOC paragraph identity in refill translations")
 
-    config = build_parse_only_config(source_pdf, working_dir=Path(working_dir), debug=True)
+    config = build_parse_only_config(source_pdf, working_dir=Path(working_dir), debug=False)
     config.lang_in = "en"
     config.lang_out = "zh"
     config.disable_rich_text_translate = True
@@ -279,6 +371,7 @@ def refill_document_units(
     try:
         converter = XMLConverter()
         docs = converter.read_xml(str(ir_xml_path))
+        normalize_document_ir_numeric_tokens(docs)
         il_translator = ILTranslator(_babeldoc_placeholder_translator(), config)
         for item in requested:
             if item.page_number < 1 or item.page_number > len(docs.page):
@@ -296,11 +389,8 @@ def refill_document_units(
                 for font in xobj.pdf_font:
                     xobj_font_map[xobj.xobj_id][font.font_id] = font
             tracker = ParagraphTranslateTracker()
-            source_text, translate_input = il_translator.pre_translate_paragraph(
-                paragraph,
-                tracker,
-                page_font_map,
-                xobj_font_map,
+            source_text, translate_input = pre_translate_document_paragraph(
+                il_translator, paragraph, tracker, page_font_map, xobj_font_map
             )
             if source_text is None or translate_input is None:
                 raise RuntimeError(
@@ -327,6 +417,101 @@ def refill_document_units(
         os.replace(temporary, output_xml)
         return RefillResult(output_xml, len(requested))
     finally:
+        config.cleanup_temp_files()
+
+
+def render_translated_document(
+    ir_xml_path: Path,
+    *,
+    source_pdf: Path,
+    working_dir: Path,
+    output_dir: Path,
+) -> RenderedPdfResult:
+    """Typeset translated BabelDOC XML IR into stable mono and dual PDFs."""
+
+    installed_version = metadata.version("babeldoc")
+    if installed_version != BABELDOC_VERSION:
+        raise RuntimeError(
+            f"BabelDOC version mismatch: expected {BABELDOC_VERSION}, got {installed_version}"
+        )
+    from babeldoc.format.pdf.document_il.backend.pdf_creater import PDFCreater
+    from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
+    from babeldoc.format.pdf.document_il.xml_converter import XMLConverter
+    from babeldoc.format.pdf.high_level import fix_filter
+    from babeldoc.format.pdf.high_level import fix_media_box
+    from babeldoc.format.pdf.high_level import fix_null_page_content
+    from babeldoc.format.pdf.high_level import fix_null_xref
+    from babeldoc.format.pdf.high_level import open_pdf_with_save_fallback
+    from babeldoc.format.pdf.high_level import save_pdf_with_same_path_fallback
+    from babeldoc.format.pdf.parse_shared import build_parse_only_config
+    from babeldoc.format.pdf.translation_config import WatermarkOutputMode
+
+    ir_xml_path = Path(ir_xml_path)
+    source_pdf = Path(source_pdf)
+    output_dir = Path(output_dir)
+    if not ir_xml_path.is_file():
+        raise FileNotFoundError(ir_xml_path)
+    if not source_pdf.is_file():
+        raise FileNotFoundError(source_pdf)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    config = build_parse_only_config(
+        source_pdf,
+        working_dir=Path(working_dir),
+        debug=False,
+    )
+    config.lang_in = "en"
+    config.lang_out = "zh"
+    config.output_dir = output_dir
+    config.no_mono = False
+    config.no_dual = False
+    config.use_alternating_pages_dual = False
+    config.watermark_output_mode = WatermarkOutputMode.NoWatermark
+    config.progress_monitor.disable = True
+
+    prepared_pdf = Path(config.get_working_file_path("render_input.pdf"))
+    doc_pdf = None
+    try:
+        doc_pdf = open_pdf_with_save_fallback(source_pdf, prepared_pdf)
+        fix_null_page_content(doc_pdf)
+        fix_filter(doc_pdf)
+        fix_null_xref(doc_pdf)
+        mediabox_data = fix_media_box(doc_pdf)
+        doc_pdf = save_pdf_with_same_path_fallback(doc_pdf, prepared_pdf)
+
+        docs = XMLConverter().read_xml(str(ir_xml_path))
+        normalize_document_ir_numeric_tokens(docs)
+        class SnowmassTypesetting(Typesetting):
+            """Correct BabelDOC 0.6.4's current-unit double count in word lookahead."""
+
+            def _get_width_before_next_break_point(
+                self, typesetting_units: list[Any], scale: float
+            ) -> float:
+                if not typesetting_units or typesetting_units[0].can_break_line:
+                    return 0
+                total_width = 0.0
+                # The caller already adds the current unit width. BabelDOC 0.6.4
+                # starts this sum at the current unit too, which can leave the
+                # first Latin letter on a CJK line and wrap the rest of the word.
+                for unit in typesetting_units[1:]:
+                    if unit.can_break_line:
+                        break
+                    total_width += unit.width
+                return total_width * scale
+
+        SnowmassTypesetting(config).typesetting_document(docs)
+        result = PDFCreater(prepared_pdf, docs, config, mediabox_data).write(config)
+        if result.mono_pdf_path is None or result.dual_pdf_path is None:
+            raise RuntimeError("BabelDOC did not produce both mono and dual PDF outputs")
+
+        mono_pdf = output_dir / "translated_mono.pdf"
+        dual_pdf = output_dir / "translated_dual.pdf"
+        _atomic_copy(Path(result.mono_pdf_path), mono_pdf)
+        _atomic_copy(Path(result.dual_pdf_path), dual_pdf)
+        return RenderedPdfResult(mono_pdf, dual_pdf)
+    finally:
+        if doc_pdf is not None:
+            doc_pdf.close()
         config.cleanup_temp_files()
 
 
@@ -363,7 +548,7 @@ def extract_document_units(
     config = build_parse_only_config(
         source_pdf,
         working_dir=working_dir,
-        debug=True,
+        debug=False,
     )
     config.lang_in = "en"
     config.lang_out = "zh"
@@ -403,11 +588,8 @@ def extract_document_units(
                     xobj_font_map[xobj.xobj_id][font.font_id] = font
             for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
                 tracker = ParagraphTranslateTracker()
-                text, translate_input = il_translator.pre_translate_paragraph(
-                    paragraph,
-                    tracker,
-                    page_font_map,
-                    xobj_font_map,
+                text, translate_input = pre_translate_document_paragraph(
+                    il_translator, paragraph, tracker, page_font_map, xobj_font_map
                 )
                 if not text or not translate_input:
                     continue

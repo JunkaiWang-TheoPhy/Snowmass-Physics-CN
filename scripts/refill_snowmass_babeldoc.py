@@ -15,7 +15,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
-REFILL_SCHEMA_VERSION = 2
+REFILL_SCHEMA_VERSION = 3
 
 
 def _load_bridge():
@@ -127,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     signature_payload = {
         "refill_schema_version": REFILL_SCHEMA_VERSION,
         "babeldoc_version": BRIDGE.BABELDOC_VERSION,
+        "ir_pipeline_version": BRIDGE.IR_PIPELINE_VERSION,
         "record_id": record_id,
         "source_pdf_sha256": _sha256(source_pdf),
         "ir_xml_sha256": _sha256(ir_xml),
@@ -136,13 +137,24 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(signature_payload, sort_keys=True).encode("utf-8")
     ).hexdigest()
     output_xml = args.article_dir / "babeldoc_translated_ir.xml"
+    render_dir = args.article_dir / "rendered"
+    mono_pdf = render_dir / "translated_mono.pdf"
+    dual_pdf = render_dir / "translated_dual.pdf"
     status_path = args.article_dir / "refill_status.json"
-    if status_path.is_file() and output_xml.is_file():
+    if (
+        status_path.is_file()
+        and output_xml.is_file()
+        and mono_pdf.is_file()
+        and dual_pdf.is_file()
+    ):
         status = json.loads(status_path.read_text(encoding="utf-8"))
         if (
             status.get("status") == "complete"
+            and status.get("refill_schema_version") == REFILL_SCHEMA_VERSION
             and status.get("input_signature") == signature
             and status.get("output_xml_sha256") == _sha256(output_xml)
+            and status.get("mono_pdf_sha256") == _sha256(mono_pdf)
+            and status.get("dual_pdf_sha256") == _sha256(dual_pdf)
         ):
             return 0
 
@@ -153,18 +165,29 @@ def main(argv: list[str] | None = None) -> int:
         output_xml=output_xml,
         translations=translations,
     )
+    rendered = BRIDGE.render_translated_document(
+        output_xml,
+        source_pdf=source_pdf,
+        working_dir=args.article_dir / ".babeldoc-render-work",
+        output_dir=render_dir,
+    )
     _atomic_json(
         status_path,
         {
             "schema_version": 1,
             "refill_schema_version": REFILL_SCHEMA_VERSION,
             "babeldoc_version": BRIDGE.BABELDOC_VERSION,
+            "ir_pipeline_version": BRIDGE.IR_PIPELINE_VERSION,
             "status": "complete",
             "record_id": record_id,
             "input_signature": signature,
             "refilled_unit_count": result.refilled_unit_count,
             "output_xml_file": output_xml.name,
             "output_xml_sha256": _sha256(output_xml),
+            "mono_pdf_file": str(rendered.mono_pdf_path.relative_to(args.article_dir)),
+            "mono_pdf_sha256": _sha256(rendered.mono_pdf_path),
+            "dual_pdf_file": str(rendered.dual_pdf_path.relative_to(args.article_dir)),
+            "dual_pdf_sha256": _sha256(rendered.dual_pdf_path),
             "chunks": chunk_hashes,
         },
     )

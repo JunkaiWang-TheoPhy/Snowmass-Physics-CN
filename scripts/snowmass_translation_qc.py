@@ -30,6 +30,9 @@ _ANTI_AI_MARKERS = (
     "需要指出的是",
     "不难看出",
 )
+_PLAIN_NUMERIC_PROTECTED_RE = re.compile(
+    r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?%?"
+)
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,18 @@ def _same_multiset(left: tuple[str, ...] | list[str], right: tuple[str, ...] | l
     return Counter(left) == Counter(right)
 
 
+def _semantic_protected_literals(text: str) -> tuple[str, ...]:
+    """Exclude number/unit literals already checked by boundary-robust numeric QC."""
+
+    return tuple(
+        literal
+        for literal in protected_literals(text)
+        if not _PLAIN_NUMERIC_PROTECTED_RE.fullmatch(literal)
+        and not _UNIT_VALUE_RE.fullmatch(literal)
+        and not re.fullmatch(r"\d+D", literal)
+    )
+
+
 def validate_chunk(source: str, translated: str, mapping: dict[str, str], glossary: list[dict[str, Any]]) -> QCReport:
     failures: list[str] = []
 
@@ -136,7 +151,10 @@ def validate_chunk(source: str, translated: str, mapping: dict[str, str], glossa
         failures.append("urls_mismatch")
     if not _same_multiset(tuple(_CITATION_RE.findall(source)), tuple(_CITATION_RE.findall(translated))):
         failures.append("citations_mismatch")
-    if not _same_multiset(protected_literals(source), protected_literals(translated)):
+    if not _same_multiset(
+        _semantic_protected_literals(source),
+        _semantic_protected_literals(translated),
+    ):
         failures.append("protected_literals_mismatch")
     if not _sentinel_sequence_is_valid(translated, mapping):
         failures.append("sentinels_mismatch")

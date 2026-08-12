@@ -91,16 +91,33 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
             self.assertEqual(kwargs["translations"][0].translated_text, "译文 14。\n")
             return module.BRIDGE.RefillResult(kwargs["output_xml"], 1)
 
-        with mock.patch.object(module.BRIDGE, "refill_document_units", side_effect=fake_refill) as refill:
+        def fake_render(ir_xml, **kwargs):
+            kwargs["output_dir"].mkdir(parents=True, exist_ok=True)
+            mono = kwargs["output_dir"] / "translated_mono.pdf"
+            dual = kwargs["output_dir"] / "translated_dual.pdf"
+            mono.write_bytes(b"%PDF-mono\n")
+            dual.write_bytes(b"%PDF-dual\n")
+            return module.BRIDGE.RenderedPdfResult(mono, dual)
+
+        with (
+            mock.patch.object(module.BRIDGE, "refill_document_units", side_effect=fake_refill) as refill,
+            mock.patch.object(module.BRIDGE, "render_translated_document", side_effect=fake_render) as render,
+        ):
             self.assertEqual(module.main(["--article-dir", str(self.article), "--rights-manifest", str(self.rights)]), 0)
             self.assertEqual(module.main(["--article-dir", str(self.article), "--rights-manifest", str(self.rights)]), 0)
 
         self.assertEqual(refill.call_count, 1)
+        self.assertEqual(render.call_count, 1)
         status = json.loads((self.article / "refill_status.json").read_text(encoding="utf-8"))
+        self.assertEqual(status["ir_pipeline_version"], module.BRIDGE.IR_PIPELINE_VERSION)
         self.assertEqual(status["status"], "complete")
         self.assertEqual(status["refilled_unit_count"], 1)
         self.assertEqual(status["refill_schema_version"], module.REFILL_SCHEMA_VERSION)
         self.assertEqual(status["babeldoc_version"], "0.6.4")
+        self.assertTrue((self.article / "rendered" / "translated_mono.pdf").is_file())
+        self.assertTrue((self.article / "rendered" / "translated_dual.pdf").is_file())
+        self.assertIn("mono_pdf_sha256", status)
+        self.assertIn("dual_pdf_sha256", status)
 
     def test_rights_gate_rejects_article_before_refill(self) -> None:
         module = load_module()

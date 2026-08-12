@@ -11,6 +11,7 @@ import json
 import math
 import os
 import random
+import re
 import ssl
 import subprocess
 import sys
@@ -28,7 +29,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from snowmass_translation_qc import stage_decision, validate_chunk
+from snowmass_translation_qc import StageDecision, stage_decision, validate_chunk
 from snowmass_document_units import (
     StructureMismatchError as TypedStructureMismatchError,
     protect_translation_unit,
@@ -47,6 +48,20 @@ RIGHTS_MANIFEST = Path("site/data/papers.json")
 API_URL = "https://api.deepseek.com/responses"
 MODEL = "deepseek-v4-flash"
 STAGES = ("translate", "terminology", "anti_ai", "academic")
+OPTIONAL_STYLE_STAGES = frozenset({"anti_ai", "academic"})
+MODEL_STRUCTURE_SEGMENT_LIMIT = 4
+STRUCTURE_SLOT_PROTOCOL = "snowmass-text-slots-v1"
+STRUCTURE_ANCHOR_PROTOCOL = "snowmass-anchor-template-v1"
+_TRANSLATABLE_SLOT_RE = re.compile(r"[A-Za-z\u3400-\u9fff]")
+_SOURCE_LEXICAL_RE = re.compile(r"[A-Za-z]")
+_TARGET_LEXICAL_RE = re.compile(r"[A-Za-z\u3400-\u9fff]")
+_CONTEXT_ANCHOR_RE = re.compile(r"<ANCHOR_[0-9]{4}>")
+_ACADEMIC_PUNCTUATION_TABLE = str.maketrans({".": "。", ",": "，", ";": "；", ":": "："})
+_MODEL_SENTINEL_RE = re.compile(
+    r"\[\[(?:SM_[0-9]{4}_[0-9a-f]{5,10}|SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10})\]\]"
+)
+_SAFE_SEGMENT_BOUNDARY_RE = re.compile(r"(?:\n+|(?<=[.!?;:。！？；：])\s+)")
+_USAGE_LEDGER_LOCK = threading.Lock()
 RETRYABLE_HTTP_CODES = {408, 409, 429, 500, 502, 503, 504}
 # Official DeepSeek V4 Flash rates, USD per million tokens:
 # https://api-docs.deepseek.com/quick_start/pricing/
@@ -111,6 +126,24 @@ def atomic_json(path: Path, value: Any) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+def append_cost_ledger(article_dir: Path, event: dict[str, Any]) -> None:
+    """Append one immutable billing event using one locked O_APPEND write."""
+
+    record = {"schema_version": 1, "recorded_at": now(), **event}
+    payload = (json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    ledger = article_dir / "api_cost_ledger.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    with _USAGE_LEDGER_LOCK:
+        descriptor = os.open(ledger, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            os.write(descriptor, payload)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def atomic_text(path: Path, text: str) -> None:
@@ -214,14 +247,17 @@ class BudgetGuard:
         self,
         max_cost_rmb: float,
         usd_cny_rate: float = DEFAULT_USD_CNY_RATE,
+        initial_spent_rmb: float = 0.0,
     ) -> None:
         if not math.isfinite(max_cost_rmb) or max_cost_rmb < 0:
             raise ValueError("max_cost_rmb must be finite and non-negative")
         if not math.isfinite(usd_cny_rate) or usd_cny_rate <= 0:
             raise ValueError("usd_cny_rate must be finite and positive")
+        if not math.isfinite(initial_spent_rmb) or initial_spent_rmb < 0:
+            raise ValueError("initial_spent_rmb must be finite and non-negative")
         self.max_cost_rmb = float(max_cost_rmb)
         self.usd_cny_rate = float(usd_cny_rate)
-        self._spent_rmb = 0.0
+        self._spent_rmb = float(initial_spent_rmb)
         self._reservations: dict[str, float] = {}
         self._lock = threading.Lock()
 
@@ -257,9 +293,11 @@ class BudgetGuard:
             estimate = self._reservations.pop(reservation)
             self._spent_rmb += actual if actual > 0 else estimate
 
-    def commit_estimate(self, reservation: str) -> None:
+    def commit_estimate(self, reservation: str) -> float:
         with self._lock:
-            self._spent_rmb += self._reservations.pop(reservation)
+            estimate = self._reservations.pop(reservation)
+            self._spent_rmb += estimate
+            return estimate
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -356,7 +394,208 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def split_protected_model_input(
+    text: str,
+    max_structure_tokens: int = MODEL_STRUCTURE_SEGMENT_LIMIT,
+) -> tuple[str, ...]:
+    """Split without changing bytes so each model request has bounded structure density."""
+
+    if max_structure_tokens < 1:
+        raise ValueError("max_structure_tokens must be positive")
+    remaining = text
+    segments: list[str] = []
+    while True:
+        tokens = list(_MODEL_SENTINEL_RE.finditer(remaining))
+        if len(tokens) <= max_structure_tokens:
+            if remaining:
+                segments.append(remaining)
+            break
+        hard_split = tokens[max_structure_tokens].start()
+        safe_splits = [
+            match.end()
+            for match in _SAFE_SEGMENT_BOUNDARY_RE.finditer(remaining, 0, hard_split)
+            if match.end() > 0
+        ]
+        split_at = safe_splits[-1] if safe_splits else hard_split
+        if split_at <= 0:
+            raise RuntimeError("Unable to split structure-dense protected text safely")
+        segments.append(remaining[:split_at])
+        remaining = remaining[split_at:]
+    if "".join(segments) != text:
+        raise AssertionError("Structure segmentation changed protected text")
+    if any(
+        len(_MODEL_SENTINEL_RE.findall(segment)) > max_structure_tokens
+        for segment in segments
+    ):
+        raise AssertionError("Structure segmentation exceeded its per-request limit")
+    return tuple(segments)
+
+
+def build_structure_slot_input(text: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Remove protected anchors from model input and expose only keyed text islands."""
+
+    anchors = tuple(_MODEL_SENTINEL_RE.findall(text))
+    parts = tuple(_MODEL_SENTINEL_RE.split(text))
+    if len(parts) != len(anchors) + 1:
+        raise AssertionError("Structure slot split is not lossless")
+    slots = [
+        {"id": f"T{index:04d}", "text": part}
+        for index, part in enumerate(parts)
+        if _TRANSLATABLE_SLOT_RE.search(part)
+    ]
+    context: list[str] = []
+    for index, part in enumerate(parts):
+        context.append(part)
+        if index < len(anchors):
+            context.append(f"<ANCHOR_{index:04d}>")
+    payload = json.dumps(
+        {
+            "protocol": STRUCTURE_SLOT_PROTOCOL,
+            "source_context": "".join(context),
+            "slots": slots,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if _MODEL_SENTINEL_RE.search(payload):
+        raise AssertionError("Protected anchors leaked into model input")
+    return payload, anchors, parts
+
+
+def restore_structure_slot_output(
+    response_text: str,
+    anchors: tuple[str, ...],
+    source_parts: tuple[str, ...],
+) -> str:
+    """Validate keyed translations and deterministically restore protected anchors."""
+
+    candidate = response_text.strip()
+    if candidate.startswith("```"):
+        candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.I)
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        try:
+            parsed, parsed_end = json.JSONDecoder().raw_decode(candidate)
+        except json.JSONDecodeError:
+            raise StructureMismatchError("Structure-slot response is not valid JSON") from exc
+        # V4 Flash occasionally appends one or more unmatched closing braces even
+        # in JSON mode. Accept only that narrow, content-free suffix.
+        if candidate[parsed_end:].strip().strip("}"):
+            raise StructureMismatchError("Structure-slot response is not valid JSON") from exc
+    translations = parsed.get("translations") if isinstance(parsed, dict) else None
+    if not isinstance(translations, dict):
+        raise StructureMismatchError("Structure-slot response lacks a translations object")
+    expected_ids = {
+        f"T{index:04d}"
+        for index, part in enumerate(source_parts)
+        if _TRANSLATABLE_SLOT_RE.search(part)
+    }
+    if set(translations) != expected_ids:
+        raise StructureMismatchError("Structure-slot response changed text-slot identities")
+    for slot_id, value in translations.items():
+        if (
+            not isinstance(value, str)
+            or _MODEL_SENTINEL_RE.search(value)
+            or _CONTEXT_ANCHOR_RE.search(value)
+        ):
+            raise StructureMismatchError(f"Invalid structure-slot value for {slot_id}")
+    source_lexical = sum(
+        len(_SOURCE_LEXICAL_RE.findall(part)) for part in source_parts
+    )
+    target_lexical = sum(
+        len(_TARGET_LEXICAL_RE.findall(value)) for value in translations.values()
+    )
+    for index, source_part in enumerate(source_parts):
+        slot_id = f"T{index:04d}"
+        if (
+            len(_SOURCE_LEXICAL_RE.findall(source_part)) >= 12
+            and not _TARGET_LEXICAL_RE.search(translations.get(slot_id, ""))
+        ):
+            raise StructureMismatchError(
+                f"Structure-slot response omitted substantive slot {slot_id}"
+            )
+    if source_lexical >= 20 and target_lexical < math.ceil(source_lexical * 0.22):
+        raise StructureMismatchError(
+            "Structure-slot response is suspiciously short for the complete segment"
+        )
+    translated_parts = [
+        translations.get(
+            f"T{index:04d}",
+            part.translate(_ACADEMIC_PUNCTUATION_TABLE),
+        )
+        for index, part in enumerate(source_parts)
+    ]
+    rebuilt: list[str] = []
+    for index, part in enumerate(translated_parts):
+        rebuilt.append(part)
+        if index < len(anchors):
+            rebuilt.append(anchors[index])
+    result = "".join(rebuilt)
+    if tuple(_MODEL_SENTINEL_RE.findall(result)) != anchors:
+        raise AssertionError("Deterministic structure-slot restoration changed anchors")
+    return result
+
+
+def build_structure_anchor_input(text: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Replace real protected nodes with abstract anchors for syntax-flexible fallback."""
+
+    anchors = tuple(_MODEL_SENTINEL_RE.findall(text))
+    markers = tuple(f"<ANCHOR_{index:04d}>" for index in range(len(anchors)))
+    pieces = _MODEL_SENTINEL_RE.split(text)
+    template: list[str] = []
+    for index, piece in enumerate(pieces):
+        template.append(piece)
+        if index < len(markers):
+            template.append(markers[index])
+    payload = json.dumps(
+        {"protocol": STRUCTURE_ANCHOR_PROTOCOL, "source_template": "".join(template)},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if _MODEL_SENTINEL_RE.search(payload):
+        raise AssertionError("Protected anchors leaked into anchor-template input")
+    return payload, anchors, markers
+
+
+def restore_structure_anchor_output(
+    response_text: str,
+    anchors: tuple[str, ...],
+    markers: tuple[str, ...],
+) -> str:
+    candidate = response_text.strip()
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        try:
+            parsed, parsed_end = json.JSONDecoder().raw_decode(candidate)
+        except json.JSONDecodeError:
+            raise StructureMismatchError("Anchor-template response is not valid JSON") from exc
+        if candidate[parsed_end:].strip().strip("}"):
+            raise StructureMismatchError("Anchor-template response is not valid JSON") from exc
+    translation = parsed.get("translation") if isinstance(parsed, dict) else None
+    if not isinstance(translation, str):
+        raise StructureMismatchError("Anchor-template response lacks translation text")
+    observed = tuple(_CONTEXT_ANCHOR_RE.findall(translation))
+    if Counter(observed) != Counter(markers):
+        raise StructureMismatchError("Anchor-template response changed anchor identity or count")
+    if _MODEL_SENTINEL_RE.search(translation):
+        raise StructureMismatchError("Anchor-template response exposed a protected node")
+    restored = translation
+    for marker, anchor in zip(markers, anchors):
+        restored = restored.replace(marker, anchor, 1)
+    return restored
+
+
 def build_request_payload(instructions: str, input_text: str, max_output_tokens: int) -> dict[str, Any]:
+    output_format = (
+        {"type": "json_object"}
+        if (
+            "STRUCTURE-SLOT PROTOCOL" in instructions
+            or "STRUCTURE-ANCHOR FALLBACK PROTOCOL" in instructions
+        )
+        else {"type": "text"}
+    )
     return {
         "model": MODEL,
         "instructions": instructions,
@@ -364,7 +603,7 @@ def build_request_payload(instructions: str, input_text: str, max_output_tokens:
         "reasoning": {"effort": "none"},
         "max_output_tokens": max_output_tokens,
         "temperature": 0.15,
-        "text": {"format": {"type": "text"}},
+        "text": {"format": output_format},
     }
 
 
@@ -522,11 +761,29 @@ def checkpoint_is_valid(status: dict[str, Any], output_path: Path, expected_key:
     return text_hash(output_path.read_text(encoding="utf-8")) == output_hash
 
 
+def checkpoint_is_reusable_after_contract_change(
+    status: dict[str, Any], output_path: Path
+) -> bool:
+    """Recognize an intact, QC-accepted artifact independently of prompt hashing."""
+
+    if status.get("status") != "complete":
+        return False
+    qc = status.get("qc")
+    if not isinstance(qc, dict) or qc.get("ok") is not True:
+        return False
+    output_hash = status.get("output_hash")
+    if not isinstance(output_hash, str) or not output_hash or not nonempty(output_path):
+        return False
+    return text_hash(output_path.read_text(encoding="utf-8")) == output_hash
+
+
 def stage_output_path(article_dir: Path, chunk_id: str, final_output_file: str, stage: str) -> Path:
     if stage == "translate":
         return article_dir / f"stage1_{chunk_id}.md"
     if stage == "terminology":
         return article_dir / f"stage2_{chunk_id}.md"
+    if stage == "revision":
+        return article_dir / f"stage_revision_{chunk_id}.md"
     if stage == "anti_ai":
         return article_dir / f"stage3_{chunk_id}.md"
     return article_dir / final_output_file
@@ -602,6 +859,73 @@ def recover_rejected_candidate(
     return candidate
 
 
+def recover_prior_valid_output(
+    source: str,
+    output_path: Path,
+    stage_status: dict[str, Any],
+    expected_key: str,
+    qc_terms: list[dict[str, Any]],
+) -> str | None:
+    """Keep the last accepted artifact when a later retry candidate failed QC."""
+
+    if stage_status.get("status") != "failed":
+        return None
+    if not stage_status.get("rejected_candidate_file") or not nonempty(output_path):
+        return None
+    candidate = output_path.read_text(encoding="utf-8")
+    qc_report = validate_chunk(source, candidate, {}, qc_terms)
+    if not qc_report.ok:
+        return None
+    prior_error = stage_status.pop("error", None)
+    stage_status.update(
+        {
+            "status": "complete",
+            "request_key": expected_key,
+            "finished_at": now(),
+            "output_hash": text_hash(candidate),
+            "qc": qc_report.to_dict(),
+            "recovered_prior_valid_output": True,
+        }
+    )
+    if prior_error:
+        stage_status["recovery_previous_error"] = prior_error
+    return candidate
+
+
+def complete_style_fallback(
+    *,
+    source: str,
+    prior_text: str,
+    output_path: Path,
+    stage_status: dict[str, Any],
+    qc_terms: list[dict[str, Any]],
+    reason: str,
+) -> bool:
+    """Complete an optional style pass with its QC-valid input after a bad candidate."""
+
+    qc_report = validate_chunk(source, prior_text, {}, qc_terms)
+    if not qc_report.ok:
+        return False
+    previous_status = stage_status.get("status")
+    previous_error = stage_status.get("error")
+    atomic_text(output_path, prior_text)
+    stage_status.update(
+        {
+            "status": "complete",
+            "finished_at": now(),
+            "output_hash": text_hash(prior_text),
+            "qc": qc_report.to_dict(),
+            "fallback_to_prior_stage": True,
+            "fallback_reason": reason,
+            "fallback_previous_status": previous_status,
+        }
+    )
+    stage_status.pop("error", None)
+    if previous_error:
+        stage_status["fallback_previous_error"] = previous_error
+    return True
+
+
 class DeepSeekClient:
     def __init__(self, api_key: str, max_retries: int = 5) -> None:
         self.api_key = api_key
@@ -671,19 +995,36 @@ Locked terminology:
         return common + """
 This is the AI-mannerism cleanup pass. Remove formulaic AI phrasing, empty transitions, repetitive summaries, canned conclusions, excessive parallelism, and unnatural connective words. Keep the author's technical register and sentence logic. Do not shorten, summarize, embellish, or change terminology.
 """
+    if stage == "revision":
+        return common + """
+This is the refined revision pass. Apply every relevant issue from the supplied paper critique to this paragraph. Correct accuracy, terminology, sentence structure, and native academic expression. Do not apply critique tagged to another chunk and do not add unrequested content.
+"""
     return common + """
 This is the final Chinese naturalization and academic-polish pass. Make the Chinese read like careful human academic prose: precise, restrained, coherent, and idiomatic. Preserve the source's level of certainty and all technical content. Do not add interpretation or omit detail.
 """
 
 
-def stage_input(stage: str, source: str, current: str, glossary: str) -> str:
+def stage_input(
+    stage: str,
+    source: str,
+    current: str,
+    glossary: str,
+    *,
+    include_source: bool = True,
+) -> str:
     if stage == "translate":
         return source
     label = {
         "terminology": "DRAFT TRANSLATION",
+        "revision": "TERMINOLOGY-CORRECTED DRAFT",
         "anti_ai": "TERMINOLOGY-CORRECTED TRANSLATION",
         "academic": "AI-MANNERISM-CLEANED TRANSLATION",
     }[stage]
+    if not include_source or STRUCTURE_ANCHOR_PROTOCOL in current:
+        # Anchor fallback is a narrowly scoped repair request. Re-supplying the
+        # whole raw source can expose protected literals and invite the model to
+        # translate text outside the current structure segment.
+        return f"{label}:\n---\n{current}\n---\n\nLOCKED TERMINOLOGY:\n{glossary}\n"
     return f"ORIGINAL SOURCE:\n---\n{source}\n---\n\n{label}:\n---\n{current}\n---\n\nLOCKED TERMINOLOGY:\n{glossary}\n"
 
 
@@ -720,7 +1061,7 @@ def protect_stage_text(text: str):
     """Compose legacy TeX protection with typed paragraph literal protection."""
 
     structural = protect_structures(text)
-    typed = protect_translation_unit(structural.text, max_nodes=40)
+    typed = protect_translation_unit(structural.text, max_nodes=512)
     return typed.text, structural.mapping, typed.nodes
 
 
@@ -760,6 +1101,9 @@ def process_chunk(
     terms: list[dict[str, Any]],
     run_id: str | None = None,
     budget_guard: BudgetGuard | None = None,
+    stages: tuple[str, ...] | None = None,
+    paper_context: str = "",
+    initial_text_path: Path | None = None,
 ) -> dict[str, Any]:
     article_dir = task["article_dir"]
     chunk = task["chunk"]
@@ -782,38 +1126,220 @@ def process_chunk(
     except json.JSONDecodeError:
         status = {"schema_version": 1, "record_id": task["record_id"], "chunk_id": chunk_id, "stages": {}}
 
-    current = source
-    for stage in STAGES:
+    if initial_text_path is not None:
+        initial_text_path = Path(initial_text_path)
+        if not nonempty(initial_text_path):
+            raise RuntimeError(f"Initial refined-stage input is missing or blank: {initial_text_path}")
+        current = initial_text_path.read_text(encoding="utf-8")
+    else:
+        current = source
+    stage_sequence = stages if stages is not None else STAGES
+    for stage in stage_sequence:
         output_path = stage_output_path(article_dir, chunk_id, chunk["output_file"], stage)
+        stage_status = status.setdefault("stages", {}).setdefault(stage, {})
         instructions = stage_instructions(stage, glossary)
         protected_current, mapping, typed_nodes = protect_stage_text(current)
-        input_text = (
-            protected_current
-            if stage == "translate"
-            else stage_input(stage, source, protected_current, glossary)
+        protected_segments = split_protected_model_input(protected_current)
+        input_texts: list[str] = []
+        request_instructions: list[str] = []
+        slot_protocols: list[tuple[tuple[str, ...], tuple[str, ...]] | None] = []
+        anchor_protocols: list[tuple[tuple[str, ...], tuple[str, ...]] | None] = []
+        segment_passthroughs: list[bool] = []
+        max_outputs: list[int] = []
+        use_anchor_fallback = (
+            "suspiciously short" in str(stage_status.get("error") or "")
+            or "# QC-CORRECTION RETRY 2" in paper_context
         )
-        if neighbor_context:
-            input_text += (
-                "\n\nREAD-ONLY NEIGHBOR CONTEXT — use only for disambiguation; "
-                "do not translate or reproduce it:\n"
-                + neighbor_context
+        bounded_segmented_retry = (
+            len(protected_segments) > 1
+            and stage_status.get("status") in {"failed", "uncertain", "running"}
+            and (
+                bool(stage_status.get("bounded_segmented_retry"))
+                or bool(stage_status.get("error"))
             )
-        # Keep long non-streaming responses below the local proxy's practical
-        # response size while leaving enough headroom for Chinese output.
-        max_output = max(4096, min(20000, int(max(len(current), 4000) * 0.8)))
-        expected_key = request_key(
-            stage=stage,
-            model=MODEL,
-            instructions=instructions,
-            input_text=input_text,
-            max_output_tokens=max_output,
         )
-        stage_status = status.setdefault("stages", {}).setdefault(stage, {})
+        if bounded_segmented_retry:
+            stage_status["bounded_segmented_retry"] = True
+        for segment_index, protected_segment in enumerate(protected_segments, 1):
+            segment_instructions = instructions
+            slot_protocol: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+            anchor_protocol: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+            segment_passthrough = False
+            if _MODEL_SENTINEL_RE.search(protected_segment):
+                _, structure_anchors, structure_parts = build_structure_slot_input(
+                    protected_segment
+                )
+                has_translatable_slots = any(
+                    _TRANSLATABLE_SLOT_RE.search(part) for part in structure_parts
+                )
+                if not has_translatable_slots:
+                    model_segment = protected_segment
+                    segment_instructions = "STRUCTURE-ONLY PASSTHROUGH"
+                    segment_passthrough = True
+                elif use_anchor_fallback or stage in OPTIONAL_STYLE_STAGES:
+                    model_segment, anchors, markers = build_structure_anchor_input(
+                        protected_segment
+                    )
+                    anchor_protocol = (anchors, markers)
+                    segment_instructions += (
+                        "\n\nSTRUCTURE-ANCHOR FALLBACK PROTOCOL: The input JSON contains a "
+                        "source_template with synthetic <ANCHOR_0000> markers replacing protected "
+                        "structures. Translate the complete template faithfully and return exactly "
+                        'one JSON object {"translation":"..."}. Every supplied anchor marker must '
+                        "appear exactly once. They may be reordered within the sentence as Chinese "
+                        "syntax requires. Do not output commentary or any "
+                        "real formula, number, URL, or protected node."
+                    )
+                else:
+                    model_segment, anchors, source_parts = build_structure_slot_input(
+                        protected_segment
+                    )
+                    slot_protocol = (anchors, source_parts)
+                    segment_instructions += (
+                        "\n\nSTRUCTURE-SLOT PROTOCOL: The input is a JSON object whose slots are "
+                        "independent text islands surrounding protected document structures. "
+                        "Use source_context to understand complete sentence syntax; its synthetic "
+                        "<ANCHOR_0000> markers show immutable structure boundaries and must not "
+                        "appear in output. Translate/revise every supplied slot completely without "
+                        "summarizing, merging, or reordering IDs. "
+                        "Return exactly one JSON object of the form "
+                        '{"translations":{"T0000":"..."}} with exactly the supplied IDs. '
+                        "Do not output Markdown fences, commentary, source fields, or any protected "
+                        "structure."
+                    )
+            else:
+                model_segment = protected_segment
+            input_text = (
+                model_segment
+                if stage == "translate"
+                else stage_input(
+                    stage,
+                    source,
+                    model_segment,
+                    glossary,
+                    include_source=not bounded_segmented_retry,
+                )
+            )
+            if len(protected_segments) > 1:
+                input_text += (
+                    f"\n\nSTRUCTURE-DENSITY SEGMENT {segment_index}/{len(protected_segments)}. "
+                    "Output only the complete translation/revision of this segment. "
+                    "Do not reproduce source or context from another segment."
+                )
+            compact_source = len(source.strip()) <= 12
+            retry_marker = "# QC-CORRECTION RETRY"
+            is_retry_request = retry_marker in paper_context
+            context_for_request = (
+                paper_context[paper_context.index(retry_marker) :]
+                if is_retry_request
+                else paper_context
+            )
+            if compact_source and not is_retry_request:
+                context_for_request = ""
+            if context_for_request:
+                input_text += (
+                    "\n\nREAD-ONLY PAPER ANALYSIS CONTEXT — apply it to this paragraph; "
+                    "do not reproduce it:\n" + context_for_request
+                )
+            if (
+                anchor_protocol is None
+                and not bounded_segmented_retry
+                and neighbor_context
+                and not compact_source
+                and not is_retry_request
+            ):
+                input_text += (
+                    "\n\nREAD-ONLY NEIGHBOR CONTEXT — use only for disambiguation; "
+                    "do not translate or reproduce it:\n"
+                    + neighbor_context
+                )
+            input_texts.append(input_text)
+            request_instructions.append(segment_instructions)
+            slot_protocols.append(slot_protocol)
+            anchor_protocols.append(anchor_protocol)
+            segment_passthroughs.append(segment_passthrough)
+            # Keep long non-streaming responses below the local proxy's practical
+            # response size while leaving enough headroom for Chinese output.
+            max_outputs.append(
+                max(4096, min(20000, int(max(len(protected_segment), 4000) * 0.8)))
+            )
+        segment_request_keys = [
+            request_key(
+                stage=stage,
+                model=MODEL,
+                instructions=segment_instructions,
+                input_text=input_text,
+                max_output_tokens=max_output,
+            )
+            for segment_instructions, input_text, max_output in zip(
+                request_instructions, input_texts, max_outputs
+            )
+        ]
+        expected_key = (
+            segment_request_keys[0]
+            if len(segment_request_keys) == 1
+            else text_hash(
+                json.dumps(
+                    {
+                        "segmentation_schema_version": 1,
+                        "stage": stage,
+                        "segment_request_keys": segment_request_keys,
+                    },
+                    sort_keys=True,
+                )
+            )
+        )
+        input_text = input_texts[0]
+        max_output = max_outputs[0]
+        passthrough = bool(task.get("passthrough"))
+        qc_terms = [] if stage == "translate" or passthrough else selected_terms
         if checkpoint_is_valid(stage_status, output_path, expected_key):
             current = output_path.read_text(encoding="utf-8")
             continue
+        if checkpoint_is_reusable_after_contract_change(stage_status, output_path):
+            candidate = output_path.read_text(encoding="utf-8")
+            live_qc = validate_chunk(source, candidate, {}, qc_terms)
+            if live_qc.ok:
+                previous_key = stage_status.get("request_key")
+                stage_status.update(
+                    {
+                        "request_key": expected_key,
+                        "qc": live_qc.to_dict(),
+                        "reused_after_request_contract_change": True,
+                    }
+                )
+                if previous_key:
+                    stage_status["previous_request_key"] = previous_key
+                current = candidate
+                atomic_json(status_path, status)
+                continue
+        if (
+            stage in OPTIONAL_STYLE_STAGES
+            and stage_status.get("status") in {"failed", "uncertain", "running"}
+            and complete_style_fallback(
+                source=source,
+                prior_text=current,
+                output_path=output_path,
+                stage_status=stage_status,
+                qc_terms=qc_terms,
+                reason="prior attempt did not produce a QC-valid optional style candidate",
+            )
+        ):
+            atomic_json(status_path, status)
+            current = output_path.read_text(encoding="utf-8")
+            continue
 
-        qc_terms = [] if stage == "translate" else selected_terms
+        recovered = recover_prior_valid_output(
+            source,
+            output_path,
+            stage_status,
+            expected_key,
+            qc_terms,
+        )
+        if recovered is not None:
+            current = recovered
+            atomic_json(status_path, status)
+            continue
         recovered = recover_rejected_candidate(
             article_dir,
             source,
@@ -828,7 +1354,18 @@ def process_chunk(
             continue
 
         decision = stage_decision(stage, current, selected_terms)
+        if stage == "revision" and "NO_ACTIONABLE_CHUNK_CRITIQUE" in paper_context:
+            decision = StageDecision(False, "revision_no_actionable_chunk_critique")
+        if passthrough:
+            decision = StageDecision(
+                False,
+                str(task.get("passthrough_reason") or "reference_section_passthrough"),
+            )
         started = now()
+        allow_subrequest_resume = (
+            stage_status.get("status") in {"running", "uncertain", "failed"}
+            and stage_status.get("request_key") == expected_key
+        )
         stage_status.update(
             {
                 "started_at": started,
@@ -837,6 +1374,16 @@ def process_chunk(
                 "decision": decision.to_dict(),
             }
         )
+        if stage == "revision":
+            stage_status["paper_context_scope"] = (
+                "no_actionable"
+                if "NO_ACTIONABLE_CHUNK_CRITIQUE" in paper_context
+                else (
+                    "chunk_local"
+                    if "# Actionable critique for this chunk only" in paper_context
+                    else "paper_full"
+                )
+            )
         for stale_field in (
             "finished_at",
             "error",
@@ -854,8 +1401,12 @@ def process_chunk(
             "rejected_candidate_protected",
             "recovered_from_rejected_candidate",
             "recovery_previous_error",
+            "invalid_structure_slot_file",
+            "invalid_structure_slot_hash",
         ):
             stage_status.pop(stale_field, None)
+        if not allow_subrequest_resume:
+            stage_status.pop("subrequests", None)
 
         if not decision.should_call_model:
             qc_report = validate_chunk(source, current, {}, qc_terms)
@@ -887,67 +1438,481 @@ def process_chunk(
         stage_status.update(
             {
                 "status": "running",
-                "max_output_tokens": max_output,
+                "max_output_tokens": max_output if len(max_outputs) == 1 else max_outputs,
+                "structure_segment_count": len(protected_segments),
             }
         )
         if run_id is not None:
             stage_status["run_id"] = run_id
         atomic_json(status_path, status)
-        reservation: str | None = None
-        try:
-            if budget_guard is not None:
-                reservation = budget_guard.reserve(instructions + "\n" + input_text, max_output)
-            response, latency_seconds = client.complete(instructions, input_text, max_output)
-        except BudgetExceededError as exc:
-            stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
-            status["status"] = "failed"
-            status["updated_at"] = now()
-            atomic_json(status_path, status)
-            raise
-        except AmbiguousTransportError as exc:
-            if reservation is not None:
-                budget_guard.commit_estimate(reservation)
-            stage_status.update({"status": "uncertain", "finished_at": now(), "error": str(exc)})
-            status["status"] = "uncertain"
-            status["updated_at"] = now()
-            atomic_json(status_path, status)
-            return {"record_id": task["record_id"], "chunk_id": chunk_id, "status": "uncertain"}
-        except RuntimeError as exc:
-            if reservation is not None:
-                budget_guard.commit_estimate(reservation)
-            stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
-            status["status"] = "failed"
-            status["updated_at"] = now()
-            atomic_json(status_path, status)
-            raise
-        except Exception as exc:
-            if reservation is not None:
-                budget_guard.commit_estimate(reservation)
-            stage_status.update({"status": "failed", "finished_at": now(), "error": repr(exc)})
-            status["status"] = "failed"
-            status["updated_at"] = now()
-            atomic_json(status_path, status)
-            raise
+        parsed_text = ""
+        parsed_usage = {
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 0,
+        }
+        parsed_response_ids: list[str] = []
+        latency_seconds = 0.0
+        subrequests = stage_status.get("subrequests")
+        if not isinstance(subrequests, list) or len(subrequests) != len(input_texts):
+            subrequests = [{} for _ in input_texts]
+            stage_status["subrequests"] = subrequests
+        protected_parts: list[str] = []
+        style_fallback = False
+        for segment_index, (
+            protected_segment,
+            segment_instructions,
+            segment_input,
+            segment_max_output,
+            segment_key,
+            slot_protocol,
+            anchor_protocol,
+            segment_passthrough,
+        ) in enumerate(
+            zip(
+                protected_segments,
+                request_instructions,
+                input_texts,
+                max_outputs,
+                segment_request_keys,
+                slot_protocols,
+                anchor_protocols,
+                segment_passthroughs,
+            ),
+            1,
+        ):
+            sub_status = subrequests[segment_index - 1]
+            sub_output = (
+                article_dir
+                / "stage_subrequests"
+                / f"{chunk_id}_{stage}_{segment_index:04d}.protected.md"
+            )
+            if segment_passthrough:
+                atomic_text(sub_output, protected_segment)
+                sub_status.clear()
+                sub_status.update(
+                    {
+                        "status": "complete",
+                        "started_at": now(),
+                        "finished_at": now(),
+                        "request_key": segment_key,
+                        "output_file": sub_output.relative_to(article_dir).as_posix(),
+                        "output_hash": text_hash(protected_segment),
+                        "decision": {
+                            "action": "copy_prior_text",
+                            "reason": "structure_only_segment_passthrough",
+                        },
+                    }
+                )
+                atomic_json(status_path, status)
+                protected_parts.append(protected_segment)
+                continue
+            invalid_relative = sub_status.get("invalid_structure_slot_file")
+            if (
+                (slot_protocol is not None or anchor_protocol is not None)
+                and sub_status.get("status") == "failed"
+                and sub_status.get("request_key") == segment_key
+                and isinstance(invalid_relative, str)
+                and invalid_relative
+            ):
+                invalid_path = article_dir / invalid_relative
+                try:
+                    invalid_text = invalid_path.read_text(encoding="utf-8")
+                    invalid_hash_ok = text_hash(invalid_text) == sub_status.get(
+                        "invalid_structure_slot_hash"
+                    )
+                    if not invalid_hash_ok:
+                        raise StructureMismatchError("Invalid-output checkpoint hash mismatch")
+                    if slot_protocol is not None:
+                        anchors, source_parts = slot_protocol
+                        recovered_segment = restore_structure_slot_output(
+                            invalid_text, anchors, source_parts
+                        )
+                    else:
+                        assert anchor_protocol is not None
+                        anchors, markers = anchor_protocol
+                        recovered_segment = restore_structure_anchor_output(
+                            invalid_text, anchors, markers
+                        )
+                except (OSError, StructureMismatchError):
+                    pass
+                else:
+                    atomic_text(sub_output, recovered_segment)
+                    sub_status.update(
+                        {
+                            "status": "complete",
+                            "finished_at": now(),
+                            "output_hash": text_hash(recovered_segment),
+                            "recovered_from_invalid_structure_slot": True,
+                        }
+                    )
+                    atomic_json(status_path, status)
+            if (
+                sub_status.get("status") == "complete"
+                and sub_status.get("request_key") == segment_key
+                and isinstance(sub_status.get("output_hash"), str)
+                and nonempty(sub_output)
+                and text_hash(sub_output.read_text(encoding="utf-8"))
+                == sub_status.get("output_hash")
+            ):
+                protected_parts.append(sub_output.read_text(encoding="utf-8"))
+                prior_usage = sub_status.get("usage")
+                if isinstance(prior_usage, dict) and sub_status.get("run_id") == run_id:
+                    for key in parsed_usage:
+                        parsed_usage[key] += _token_count(prior_usage.get(key))
+                    latency_seconds += float(prior_usage.get("latency_seconds") or 0)
+                parsed_response_ids.append(str(sub_status.get("response_id", "")))
+                continue
+            if (
+                sub_status.get("status") == "running"
+                and sub_status.get("request_key") == segment_key
+            ):
+                if not task.get("retry_uncertain"):
+                    sub_status.update(
+                        {
+                            "status": "uncertain",
+                            "finished_at": now(),
+                            "error": "stale running paid request requires explicit retry authorization",
+                        }
+                    )
+                    stage_status.update(
+                        {
+                            "status": "uncertain",
+                            "finished_at": now(),
+                            "error": sub_status["error"],
+                        }
+                    )
+                    status["status"] = "uncertain"
+                    status["updated_at"] = now()
+                    atomic_json(status_path, status)
+                    return {
+                        "record_id": task["record_id"],
+                        "chunk_id": chunk_id,
+                        "status": "uncertain",
+                    }
+                if budget_guard is not None:
+                    conservative_cost_rmb = float(
+                        sub_status.get("conservative_cost_rmb") or 0
+                    )
+                    if conservative_cost_rmb <= 0:
+                        stale_reservation = budget_guard.reserve(
+                            segment_instructions + "\n" + segment_input,
+                            segment_max_output,
+                        )
+                        conservative_cost_rmb = budget_guard.commit_estimate(
+                            stale_reservation
+                        )
+                        append_cost_ledger(
+                            article_dir,
+                            {
+                                "event_id": uuid.uuid4().hex,
+                                "kind": "uncertain_replay_reservation",
+                                "stage": stage,
+                                "chunk_id": chunk_id,
+                                "request_key": segment_key,
+                                "cost_rmb": conservative_cost_rmb,
+                            },
+                        )
+                else:
+                    conservative_cost_rmb = 0.0
+                stage_status.setdefault("uncertain_replays", []).append(
+                    {
+                        "segment": segment_index,
+                        "authorized_at": now(),
+                        "request_key": segment_key,
+                        "conservative_budget_committed": budget_guard is not None,
+                        "conservative_cost_rmb": conservative_cost_rmb,
+                    }
+                )
 
-        if reservation is not None:
-            budget_guard.settle(reservation, coarse_response_usage(response))
+            sub_status.clear()
+            sub_status.update(
+                {
+                    "status": "running",
+                    "started_at": now(),
+                    "request_key": segment_key,
+                    "output_file": sub_output.relative_to(article_dir).as_posix(),
+                    "max_output_tokens": segment_max_output,
+                }
+            )
+            if run_id is not None:
+                sub_status["run_id"] = run_id
+            atomic_json(status_path, status)
+            reservation: str | None = None
+            try:
+                if budget_guard is not None:
+                    reservation = budget_guard.reserve(
+                        segment_instructions + "\n" + segment_input, segment_max_output
+                    )
+                response, segment_latency = client.complete(
+                    segment_instructions, segment_input, segment_max_output
+                )
+            except BudgetExceededError as exc:
+                sub_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
+                stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
+                status["status"] = "failed"
+                status["updated_at"] = now()
+                atomic_json(status_path, status)
+                raise
+            except AmbiguousTransportError as exc:
+                if reservation is not None:
+                    conservative_cost_rmb = budget_guard.commit_estimate(reservation)
+                else:
+                    conservative_cost_rmb = 0.0
+                if conservative_cost_rmb > 0:
+                    append_cost_ledger(
+                        article_dir,
+                        {
+                            "event_id": uuid.uuid4().hex,
+                            "kind": "ambiguous_transport_reservation",
+                            "stage": stage,
+                            "chunk_id": chunk_id,
+                            "request_key": segment_key,
+                            "cost_rmb": conservative_cost_rmb,
+                        },
+                    )
+                sub_status.update(
+                    {
+                        "status": "uncertain",
+                        "finished_at": now(),
+                        "error": str(exc),
+                        "conservative_cost_rmb": conservative_cost_rmb,
+                    }
+                )
+                stage_status.update({"status": "uncertain", "finished_at": now(), "error": str(exc)})
+                status["status"] = "uncertain"
+                status["updated_at"] = now()
+                atomic_json(status_path, status)
+                return {"record_id": task["record_id"], "chunk_id": chunk_id, "status": "uncertain"}
+            except Exception as exc:
+                if reservation is not None:
+                    conservative_cost_rmb = budget_guard.commit_estimate(reservation)
+                else:
+                    conservative_cost_rmb = 0.0
+                if conservative_cost_rmb > 0:
+                    append_cost_ledger(
+                        article_dir,
+                        {
+                            "event_id": uuid.uuid4().hex,
+                            "kind": "failed_transport_reservation",
+                            "stage": stage,
+                            "chunk_id": chunk_id,
+                            "request_key": segment_key,
+                            "cost_rmb": conservative_cost_rmb,
+                        },
+                    )
+                sub_status.update(
+                    {
+                        "status": "failed",
+                        "finished_at": now(),
+                        "error": repr(exc),
+                        "conservative_cost_rmb": conservative_cost_rmb,
+                    }
+                )
+                stage_status.update({"status": "failed", "finished_at": now(), "error": repr(exc)})
+                status["status"] = "failed"
+                status["updated_at"] = now()
+                atomic_json(status_path, status)
+                raise
 
-        stage_status["raw_response"] = response_metadata(response)
-        stage_status["response_id"] = str(response.get("id", "")) if isinstance(response, dict) else ""
-        stage_status["usage"] = coarse_response_usage(response)
+            if reservation is not None:
+                budget_guard.settle(reservation, coarse_response_usage(response))
+            billed_usage = coarse_response_usage(response)
+            append_cost_ledger(
+                article_dir,
+                {
+                    "event_id": str(response.get("id") or uuid.uuid4().hex),
+                    "kind": "settled_response",
+                    "stage": stage,
+                    "chunk_id": chunk_id,
+                    "request_key": segment_key,
+                    "usage": billed_usage,
+                    "cost_rmb": estimate_cost_rmb(
+                        billed_usage,
+                        budget_guard.usd_cny_rate
+                        if budget_guard is not None
+                        else DEFAULT_USD_CNY_RATE,
+                    ),
+                },
+            )
+            sub_status["raw_response"] = response_metadata(response)
+            stage_status["raw_response"] = sub_status["raw_response"]
+            stage_status["response_id"] = (
+                str(response.get("id", "")) if isinstance(response, dict) else ""
+            )
+            atomic_json(status_path, status)
+            try:
+                parsed = validate_response(response, MODEL)
+            except ResponseValidationError as exc:
+                sub_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
+                stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
+                status["status"] = "failed"
+                status["updated_at"] = now()
+                atomic_json(status_path, status)
+                raise
+            parsed_segment_text = parsed.text
+            if slot_protocol is not None:
+                anchors, source_parts = slot_protocol
+                try:
+                    parsed_segment_text = restore_structure_slot_output(
+                        parsed.text, anchors, source_parts
+                    )
+                except StructureMismatchError as exc:
+                    invalid_output = sub_output.with_suffix(".invalid.md")
+                    atomic_text(invalid_output, parsed.text)
+                    sub_status.update(
+                        {
+                            "status": "failed",
+                            "finished_at": now(),
+                            "error": str(exc),
+                            "structure_slot_protocol": STRUCTURE_SLOT_PROTOCOL,
+                            "invalid_structure_slot_file": invalid_output.relative_to(
+                                article_dir
+                            ).as_posix(),
+                            "invalid_structure_slot_hash": text_hash(parsed.text),
+                        }
+                    )
+                    stage_status.update(
+                        {"status": "failed", "finished_at": now(), "error": str(exc)}
+                    )
+                    status["status"] = "failed"
+                    status["updated_at"] = now()
+                    atomic_json(status_path, status)
+                    if stage in OPTIONAL_STYLE_STAGES and complete_style_fallback(
+                        source=source,
+                        prior_text=current,
+                        output_path=output_path,
+                        stage_status=stage_status,
+                        qc_terms=qc_terms,
+                        reason=str(exc),
+                    ):
+                        style_fallback = True
+                        break
+                    raise
+            elif anchor_protocol is not None:
+                anchors, markers = anchor_protocol
+                try:
+                    parsed_segment_text = restore_structure_anchor_output(
+                        parsed.text, anchors, markers
+                    )
+                except StructureMismatchError as exc:
+                    invalid_output = sub_output.with_suffix(".invalid.md")
+                    atomic_text(invalid_output, parsed.text)
+                    sub_status.update(
+                        {
+                            "status": "failed",
+                            "finished_at": now(),
+                            "error": str(exc),
+                            "structure_slot_protocol": STRUCTURE_ANCHOR_PROTOCOL,
+                            "invalid_structure_slot_file": invalid_output.relative_to(
+                                article_dir
+                            ).as_posix(),
+                            "invalid_structure_slot_hash": text_hash(parsed.text),
+                        }
+                    )
+                    stage_status.update(
+                        {"status": "failed", "finished_at": now(), "error": str(exc)}
+                    )
+                    status["status"] = "failed"
+                    status["updated_at"] = now()
+                    atomic_json(status_path, status)
+                    if stage in OPTIONAL_STYLE_STAGES and complete_style_fallback(
+                        source=source,
+                        prior_text=current,
+                        output_path=output_path,
+                        stage_status=stage_status,
+                        qc_terms=qc_terms,
+                        reason=str(exc),
+                    ):
+                        style_fallback = True
+                        break
+                    raise
+            expected_segment_sentinels = tuple(_MODEL_SENTINEL_RE.findall(protected_segment))
+            observed_segment_sentinels = tuple(_MODEL_SENTINEL_RE.findall(parsed_segment_text))
+            segment_structure_valid = (
+                Counter(observed_segment_sentinels) == Counter(expected_segment_sentinels)
+                if anchor_protocol is not None
+                else observed_segment_sentinels == expected_segment_sentinels
+            )
+            if len(protected_segments) > 1 and not segment_structure_valid:
+                error = StructureMismatchError(
+                    f"Structure segment {segment_index}/{len(protected_segments)} changed "
+                    "placeholder identity or order"
+                )
+                sub_status.update(
+                    {
+                        "status": "failed",
+                        "finished_at": now(),
+                        "error": str(error),
+                        "expected_sentinels": list(expected_segment_sentinels),
+                        "observed_sentinels": list(observed_segment_sentinels),
+                    }
+                )
+                stage_status.update({"status": "failed", "finished_at": now(), "error": str(error)})
+                status["status"] = "failed"
+                status["updated_at"] = now()
+                atomic_json(status_path, status)
+                if stage in OPTIONAL_STYLE_STAGES and complete_style_fallback(
+                    source=source,
+                    prior_text=current,
+                    output_path=output_path,
+                    stage_status=stage_status,
+                    qc_terms=qc_terms,
+                    reason=str(error),
+                ):
+                    style_fallback = True
+                    break
+                raise error
+
+            atomic_text(sub_output, parsed_segment_text)
+            usage = dict(parsed.usage)
+            usage["latency_seconds"] = segment_latency
+            sub_status.update(
+                {
+                    "status": "complete",
+                    "finished_at": now(),
+                    "response_id": parsed.response_id,
+                    "usage": usage,
+                    "output_hash": text_hash(parsed_segment_text),
+                    "structure_slot_protocol": (
+                        STRUCTURE_SLOT_PROTOCOL
+                        if slot_protocol is not None
+                        else (
+                            STRUCTURE_ANCHOR_PROTOCOL
+                            if anchor_protocol is not None
+                            else None
+                        )
+                    ),
+                }
+            )
+            atomic_json(status_path, status)
+            protected_parts.append(parsed_segment_text)
+            parsed_response_ids.append(parsed.response_id)
+            for key in parsed_usage:
+                parsed_usage[key] += _token_count(parsed.usage.get(key))
+            latency_seconds += segment_latency
+
+        if style_fallback:
+            atomic_json(status_path, status)
+            current = output_path.read_text(encoding="utf-8")
+            continue
+
+        parsed_text = "".join(protected_parts)
+        parsed_output_hash = text_hash(parsed_text)
+        stage_status["raw_response"] = (
+            subrequests[0].get("raw_response", {})
+            if len(protected_segments) == 1
+            else {"segmented": True, "segments": len(protected_segments)}
+        )
+        stage_status["response_id"] = ",".join(filter(None, parsed_response_ids))
+        stage_status["usage"] = dict(parsed_usage)
+        stage_status["usage"]["latency_seconds"] = latency_seconds
         atomic_json(status_path, status)
 
         try:
-            parsed = validate_response(response, MODEL)
-        except ResponseValidationError as exc:
-            stage_status.update({"status": "failed", "finished_at": now(), "error": str(exc)})
-            status["status"] = "failed"
-            status["updated_at"] = now()
-            atomic_json(status_path, status)
-            raise
-
-        try:
-            restored_text = restore_stage_text(parsed.text, mapping, typed_nodes)
+            restored_text = restore_stage_text(parsed_text, mapping, typed_nodes)
         except StructureMismatchError as exc:
             stage_status.update(
                 persist_rejected_candidate(
@@ -955,13 +1920,13 @@ def process_chunk(
                     chunk_id,
                     stage,
                     expected_key,
-                    parsed.text,
+                    parsed_text,
                     protected=True,
                 )
             )
             expected_sentinels = list(mapping) + [node.token for node in typed_nodes]
-            observed_sentinels = list(sentinel_sequence(parsed.text)) + [
-                node.token for node in typed_nodes if node.token in parsed.text
+            observed_sentinels = list(sentinel_sequence(parsed_text)) + [
+                node.token for node in typed_nodes if node.token in parsed_text
             ]
             expected_counts = Counter(expected_sentinels)
             observed_counts = Counter(observed_sentinels)
@@ -1002,18 +1967,29 @@ def process_chunk(
             status["status"] = "failed"
             status["updated_at"] = now()
             atomic_json(status_path, status)
+            if stage in OPTIONAL_STYLE_STAGES and complete_style_fallback(
+                source=source,
+                prior_text=current,
+                output_path=output_path,
+                stage_status=stage_status,
+                qc_terms=qc_terms,
+                reason=f"QC failed: {', '.join(qc_report.failures)}",
+            ):
+                atomic_json(status_path, status)
+                current = output_path.read_text(encoding="utf-8")
+                continue
             raise RuntimeError(stage_status["error"])
 
         atomic_text(output_path, restored_text)
-        usage = dict(parsed.usage)
+        usage = dict(parsed_usage)
         usage["latency_seconds"] = latency_seconds
         stage_status.update(
             {
                 "status": "complete",
                 "finished_at": now(),
-                "response_id": parsed.response_id,
+                "response_id": ",".join(filter(None, parsed_response_ids)),
                 "usage": usage,
-                "response_output_hash": parsed.output_hash,
+                "response_output_hash": parsed_output_hash,
                 "output_hash": text_hash(restored_text),
             }
         )
@@ -1021,7 +1997,7 @@ def process_chunk(
         current = restored_text
 
     meta_path = article_dir / f"{chunk['output_file'][:-3]}.meta.json"
-    if not meta_path.exists():
+    if "academic" in stage_sequence and not meta_path.exists():
         atomic_json(
             meta_path,
             {

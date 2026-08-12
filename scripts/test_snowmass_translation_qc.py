@@ -53,6 +53,29 @@ def completed_response(text: str, *, model: str = RUNNER.MODEL) -> dict[str, obj
     }
 
 
+def structure_slot_payload(input_text: str) -> dict[str, object]:
+    start = input_text.index('{"protocol":"snowmass-text-slots-v1"')
+    payload, _ = json.JSONDecoder().raw_decode(input_text[start:])
+    return payload
+
+
+def slot_response(input_text: str, values: list[str]) -> dict[str, object]:
+    payload = structure_slot_payload(input_text)
+    slots = payload["slots"]
+    if len(slots) != len(values):
+        raise AssertionError(f"expected {len(values)} slot values, got {len(slots)}")
+    return completed_response(
+        json.dumps(
+            {
+                "translations": {
+                    slot["id"]: value for slot, value in zip(slots, values)
+                }
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 class ValidateChunkTests(unittest.TestCase):
     def setUp(self) -> None:
         self.glossary = [
@@ -92,6 +115,17 @@ class ValidateChunkTests(unittest.TestCase):
 
         self.assertTrue(report.ok)
         self.assertNotIn("numbers_mismatch", report.failures)
+
+    def test_validate_chunk_handles_pdf_glued_decimal_after_chinese_reflow(self) -> None:
+        report = QC.validate_chunk(
+            source="receiver with0.2 - 1.1GHz bandwidth",
+            translated="接收机配备0.2–1.1GHz带宽",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("protected_literals_mismatch", report.failures)
 
     def test_validate_chunk_rejects_changed_unit(self) -> None:
         report = QC.validate_chunk(
@@ -296,13 +330,23 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
 
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
                 self.calls += 1
-                sentinels = re.findall(r"\[\[(?:SM|SMU)_[^\]]+\]\]", input_text)
-                protected_unit = sentinels[0]
-                protected_reference = sentinels[1]
-                protected_url = sentinels[-1]
                 if self.calls == 1:
-                    return completed_response(f"探测器达到 {protected_unit}，见 [{protected_reference}] 和 {protected_url}。\n"), 0.1
-                return completed_response(f"该探测器达到 {protected_unit}，见 [{protected_reference}] 和 {protected_url}。\n"), 0.2
+                    values = ["探测器达到 ", "，见 [", "] 和 "]
+                    return slot_response(input_text, values), 0.1
+                markers = re.findall(r"<ANCHOR_[0-9]{4}>", input_text)
+                if len(markers) != 3:
+                    raise AssertionError(f"expected 3 anchor markers, got {markers}")
+                return completed_response(
+                    json.dumps(
+                        {
+                            "translation": (
+                                f"该探测器达到 {markers[0]}，见 "
+                                f"[{markers[1]}] 和 {markers[2]}。\n"
+                            )
+                        },
+                        ensure_ascii=False,
+                    )
+                ), 0.2
 
         client = FakeClient()
         result = RUNNER.process_chunk(self.task, client, [{"source": "Energy Frontier", "target": "能量前沿"}])
@@ -329,10 +373,10 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
 
         class FakeClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
-                protected_url = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)[-1]
-                return completed_response(f"探测器记录了 15 个事件，见 [12] 和 {protected_url}。\n"), 0.1
+                values = ["探测器记录了15个事件，原值为 ", "，见 [", "] 和 "]
+                return slot_response(input_text, values), 0.1
 
-        with self.assertRaises(RUNNER.StructureMismatchError):
+        with self.assertRaises(RuntimeError):
             RUNNER.process_chunk(self.task, FakeClient(), [])
 
         status = json.loads((self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8"))
@@ -340,11 +384,11 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
         rejected = self.article_dir / translate["rejected_candidate_file"]
 
         self.assertEqual(translate["status"], "failed")
-        self.assertIn("Expected protected node", translate["error"])
+        self.assertIn("numbers_mismatch", translate["error"])
         rejected_text = rejected.read_text(encoding="utf-8")
-        self.assertIn("探测器记录了 15 个事件", rejected_text)
-        self.assertRegex(rejected_text, r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]")
-        self.assertTrue(translate["rejected_candidate_protected"])
+        self.assertIn("15", rejected_text)
+        self.assertIn("14", rejected_text)
+        self.assertFalse(translate["rejected_candidate_protected"])
         self.assertFalse((self.article_dir / "stage1_chunk0001.md").exists())
 
     def test_terminology_stage_rejects_extra_raw_reference_copied_from_source(self) -> None:
@@ -359,10 +403,12 @@ class ProcessChunkQCIntegrationTests(unittest.TestCase):
 
             def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, object], float]:
                 self.calls += 1
-                sentinel = re.findall(r"\[\[SM_[0-9]{4}_[0-9a-f]{10}\]\]", input_text)[-1]
                 if self.calls == 1:
-                    return completed_response(f"Energy Frontier 结果见 {sentinel}。\n"), 0.1
-                return completed_response(f"能量前沿结果见 {sentinel}，另见 \\ref{{sec:intro}}。\n"), 0.1
+                    return slot_response(input_text, ["Energy Frontier 结果见 "]), 0.1
+                return slot_response(
+                    input_text,
+                    ["能量前沿结果见，另见 \\ref{sec:intro} "],
+                ), 0.1
 
         with self.assertRaises(RuntimeError):
             RUNNER.process_chunk(

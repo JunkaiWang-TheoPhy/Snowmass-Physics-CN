@@ -46,22 +46,21 @@ class NumericComparison:
 
 _COMMENT_MARKER_RE = re.compile(r"\\(?P<edge>begin|end)\s*\{comment\}")
 _NUMBER_RE = re.compile(
-    r"(?<![A-Za-z0-9_])"
     r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)"
     r"(?:\.\d+)?(?:[eE][-+]?\d+)?%?"
-    r"(?![A-Za-z0-9_])"
 )
 _COMPARE_NUMBER_RE = re.compile(
-    r"(?<![A-Za-z0-9_])"
     r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)"
     r"(?:\.\d+)?(?:[eE][-+]?\d+)?%?s?"
-    r"(?![A-Za-z0-9_])"
 )
 _BARE_URL_RE = re.compile(
     r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
 )
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _TOKEN_RE = re.compile(r"\[\[SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10}\]\]")
+_EXISTING_PROTECTED_TOKEN_RE = re.compile(
+    r"\[\[(?:SM_[0-9]{4}_[0-9a-f]{5,10}|SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10})\]\]"
+)
 
 
 def _remove_comment_environments(text: str) -> str:
@@ -153,10 +152,12 @@ def _candidate_spans(text: str) -> list[tuple[int, int, str]]:
         candidates.append((match.start(), match.end(), "number", 3))
 
     accepted: list[tuple[int, int, str]] = []
+    occupied = [(match.start(), match.end()) for match in _EXISTING_PROTECTED_TOKEN_RE.finditer(text)]
     for start, end, kind, _priority in sorted(candidates, key=lambda item: (item[0], item[3], -item[1])):
-        if any(start < accepted_end and end > accepted_start for accepted_start, accepted_end, _ in accepted):
+        if any(start < occupied_end and end > occupied_start for occupied_start, occupied_end in occupied):
             continue
         accepted.append((start, end, kind))
+        occupied.append((start, end))
     return sorted(accepted)
 
 

@@ -71,6 +71,21 @@ class TypedProtectionTests(unittest.TestCase):
             ],
         )
 
+    def test_numbers_glued_to_pdf_text_are_still_protected_without_nesting_sentinels(self) -> None:
+        units = load_units()
+        sentinel = "[[SM_0001_0123456789]]"
+
+        protected = units.protect_translation_unit(
+            f"with0.2 GHz, NY11973, PUMA-32K and {sentinel}"
+        )
+
+        self.assertEqual(
+            [node.value for node in protected.nodes],
+            ["0.2", "11973", "-32"],
+        )
+        self.assertIn(sentinel, protected.text)
+        self.assertEqual(units.restore_translation_unit(protected.text, protected.nodes), f"with0.2 GHz, NY11973, PUMA-32K and {sentinel}")
+
     def test_structure_dense_unit_is_rejected_before_model_submission(self) -> None:
         units = load_units()
         source = " ".join(str(index) for index in range(41))
@@ -80,6 +95,13 @@ class TypedProtectionTests(unittest.TestCase):
 
 
 class NumericComparisonTests(unittest.TestCase):
+    def test_pdf_glued_number_has_same_value_after_chinese_spacing_changes(self) -> None:
+        units = load_units()
+
+        result = units.compare_numeric_literals("with0.2 GHz at NY11973", "配备0.2 GHz，位于纽约11973")
+
+        self.assertTrue(result.values_equal)
+
     def test_thousands_separator_change_is_format_drift_not_value_loss(self) -> None:
         units = load_units()
 

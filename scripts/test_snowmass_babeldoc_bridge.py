@@ -109,6 +109,7 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in manifest["chunks"]], ["chunk0001", "chunk0002"])
         self.assertEqual(manifest["input_mode"], "babeldoc_ir")
         self.assertEqual(manifest["babeldoc_version"], "0.6.4")
+        self.assertEqual(manifest["ir_pipeline_version"], bridge.IR_PIPELINE_VERSION)
         self.assertEqual(manifest["chunks"][1]["page_number"], 2)
         self.assertEqual(manifest["chunks"][1]["paragraph_index"], 5)
         self.assertEqual(manifest["chunks"][1]["structure_count"], 1)
@@ -155,6 +156,71 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         self.assertEqual(first["source_pdf_sha256"], second["source_pdf_sha256"])
         self.assertEqual(first["chunks"], second["chunks"])
 
+    def test_workspace_preserves_chunk_ids_when_a_new_unit_is_inserted(self) -> None:
+        bridge = load_bridge()
+        article = self.root / "papers" / "arxiv_allowed"
+        first_units = [
+            bridge.DocumentUnit(1, 0, "text", "First paragraph.\n", 0),
+            bridge.DocumentUnit(2, 0, "text", "Second paragraph.\n", 0),
+        ]
+        bridge.write_translation_workspace(
+            article,
+            record_id="arxiv:allowed",
+            source_pdf=self.pdf,
+            units=first_units,
+            allowed_record_ids={"arxiv:allowed"},
+        )
+
+        updated = bridge.write_translation_workspace(
+            article,
+            record_id="arxiv:allowed",
+            source_pdf=self.pdf,
+            units=[
+                first_units[0],
+                bridge.DocumentUnit(1, 1, "fallback_line", "type\n", 0),
+                first_units[1],
+            ],
+            allowed_record_ids={"arxiv:allowed"},
+        )
+
+        ids_by_identity = {
+            (chunk["page_number"], chunk["paragraph_index"]): chunk["id"]
+            for chunk in updated["chunks"]
+        }
+        self.assertEqual(ids_by_identity[(1, 0)], "chunk0001")
+        self.assertEqual(ids_by_identity[(2, 0)], "chunk0002")
+        self.assertEqual(ids_by_identity[(1, 1)], "chunk0003")
+        self.assertEqual(
+            [chunk["id"] for chunk in updated["chunks"]],
+            ["chunk0001", "chunk0003", "chunk0002"],
+        )
+
+    def test_short_fallback_line_uses_one_character_translation_threshold(self) -> None:
+        bridge = load_bridge()
+
+        class Config:
+            min_text_length = 5
+
+        class Paragraph:
+            layout_label = "fallback_line"
+
+        class Translator:
+            def __init__(self, config) -> None:
+                self.translation_config = config
+
+            def pre_translate_paragraph(self, paragraph, tracker, page_fonts, xobj_fonts):
+                if len("type") < self.translation_config.min_text_length:
+                    return None, None
+                return "type", object()
+
+        config = Config()
+        result = bridge.pre_translate_document_paragraph(
+            Translator(config), Paragraph(), object(), {}, {}
+        )
+
+        self.assertEqual(result[0], "type")
+        self.assertEqual(config.min_text_length, 5)
+
     def test_extracts_real_babeldoc_paragraph_ir_without_translation(self) -> None:
         bridge = load_bridge()
         if importlib.util.find_spec("babeldoc") is None:
@@ -180,11 +246,17 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         self.assertEqual(result.babeldoc_version, "0.6.4")
         self.assertTrue(all(1 <= unit.page_number <= 3 for unit in result.units))
         self.assertTrue(any(unit.structure_count > 0 for unit in result.units))
-        self.assertTrue(all(unit.structure_count <= 40 for unit in result.units))
+        self.assertTrue(
+            all(unit.structure_count <= bridge.MAX_STRUCTURE_COUNT for unit in result.units)
+        )
         self.assertTrue(any("Cosmology" in unit.text for unit in result.units))
 
         structured = next(unit for unit in result.units if unit.structure_count > 0)
         translated = "中文译文：" + structured.text
+        mixed_script = next(unit for unit in result.units if "Snowmass 2021" in unit.text)
+        mixed_script_translation = (
+            "提交至美国粒子物理未来社区研究会议论文集（Snowmass 2021）\n"
+        )
         refilled_xml = self.root / "translated_ir.xml"
         refill = bridge.refill_document_units(
             result.ir_xml_path,
@@ -192,6 +264,12 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             working_dir=self.root / "babeldoc-refill-work",
             output_xml=refilled_xml,
             translations=[
+                bridge.RefillTranslation(
+                    page_number=mixed_script.page_number,
+                    paragraph_index=mixed_script.paragraph_index,
+                    source_text=mixed_script.text,
+                    translated_text=mixed_script_translation,
+                ),
                 bridge.RefillTranslation(
                     page_number=structured.page_number,
                     paragraph_index=structured.paragraph_index,
@@ -201,7 +279,7 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(refill.refilled_unit_count, 1)
+        self.assertEqual(refill.refilled_unit_count, 2)
         self.assertTrue(refilled_xml.is_file())
         from babeldoc.format.pdf.document_il.xml_converter import XMLConverter
 
@@ -211,6 +289,28 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         ]
         self.assertTrue(paragraph.unicode.startswith("中文译文："))
         self.assertEqual(translated.count("{v"), paragraph.unicode.count("{v"))
+
+        rendered = bridge.render_translated_document(
+            refilled_xml,
+            source_pdf=fixture,
+            working_dir=self.root / "babeldoc-render-work",
+            output_dir=self.root / "rendered",
+        )
+        self.assertTrue(rendered.mono_pdf_path.is_file())
+        self.assertTrue(rendered.dual_pdf_path.is_file())
+
+        import pymupdf
+
+        with pymupdf.open(rendered.mono_pdf_path) as mono, pymupdf.open(
+            rendered.dual_pdf_path
+        ) as dual:
+            self.assertEqual(mono.page_count, 3)
+            self.assertEqual(dual.page_count, 3)
+            self.assertGreater(dual[0].rect.width, mono[0].rect.width)
+            rendered_text = "\n".join(page.get_text() for page in mono)
+            self.assertNotIn("plain text", rendered_text)
+            self.assertNotIn("abandon", rendered_text)
+            self.assertNotIn("S\nnowmass", rendered_text)
 
 
 if __name__ == "__main__":
