@@ -6,9 +6,9 @@
   PYTHON_VERSION = "3.12"
 
 [[redirects]]
-  from = "/paper/:record"
-  to = "/?paper=:record"
-  status = 302
+  from = "/paper/*"
+  to = "/paper/index.html"
+  status = 200
 
 [[headers]]
   for = "/*"

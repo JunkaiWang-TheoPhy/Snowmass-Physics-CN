@@ -6,6 +6,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SiteInterfaceTest(unittest.TestCase):
+    def test_independent_paper_route_is_data_driven_and_keeps_legacy_query_detail(self):
+        paper_html = (ROOT / "site/paper/index.html").read_text()
+        paper_script = (ROOT / "site/paper-page.js").read_text()
+        app_script = (ROOT / "site/app.js").read_text()
+        netlify = (ROOT / "netlify.toml").read_text()
+
+        self.assertIn('id="paper-page"', paper_html)
+        self.assertIn('../data/papers.json', paper_html)
+        self.assertIn('src="../paper-page.js"', paper_html)
+        self.assertIn("window.location.pathname", paper_script)
+        self.assertIn("publication_translation_url", paper_script)
+        self.assertIn('from = "/paper/*"', netlify)
+        self.assertIn('to = "/paper/index.html"', netlify)
+        self.assertIn('status = 200', netlify)
+        self.assertIn('params.get("paper")', app_script)
+
+    def test_catalog_cards_link_to_permanent_paper_pages(self):
+        script = (ROOT / "site/app.js").read_text()
+        self.assertIn('class="paper-detail-button"', script)
+        self.assertIn('href="${paperPermalink(paper)}"', script)
+        self.assertNotIn('<button class="paper-detail-button"', script)
+
     def test_catalog_hooks_and_rights_language_remain(self):
         html = (ROOT / "site/index.html").read_text()
         for hook in (
@@ -75,7 +97,9 @@ class SiteInterfaceTest(unittest.TestCase):
             ".participation-outreach",
         ):
             self.assertIn(selector, css)
-        self.assertIn(".participation-grid { grid-template-columns: 1fr;", css)
+        self.assertIn(".participation-grid {", css)
+        self.assertIn("flex-direction: column;", css)
+        self.assertIn(".participation-grid > .participation-card { width: 100%; }", css)
         self.assertIn(
             "background: conic-gradient(\n"
             "    var(--pine) 0 var(--allowed-angle),\n"

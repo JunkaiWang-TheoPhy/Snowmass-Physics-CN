@@ -144,6 +144,19 @@ const localized = (map, key) => map[key]?.[state.lang === "zh" ? 0 : 1] || key;
 
 function escapeHTML(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
 function safeURL(value) { try { const url = new URL(value, location.href); return ["http:", "https:"].includes(url.protocol) ? url.href : "#"; } catch { return "#"; } }
+
+function paperSlug(paper) {
+  const recordId = String(paper.record_id || "");
+  if (recordId.startsWith("arxiv:")) return recordId.slice(6);
+  const sourceURL = String(paper.source_url || "");
+  const cds = sourceURL.match(/cds\.cern\.ch\/record\/(\d+)/);
+  if (cds) return `cds-${cds[1]}`;
+  const hal = sourceURL.match(/hal-(\d+)/);
+  if (hal) return `hal-${hal[1]}`;
+  return encodeURIComponent(recordId);
+}
+
+function paperPermalink(paper) { return `paper/${paperSlug(paper)}/`; }
 function numberFormat(value, digits = 0) { return Number.isFinite(value) ? new Intl.NumberFormat(state.lang === "zh" ? "zh-CN" : "en-US", { maximumFractionDigits: digits }).format(value) : "—"; }
 function formatFrontiers(frontiers, separator) { return frontiers.map((code) => escapeHTML(localized(FRONTIER_LABELS, code))).join(separator); }
 function statusClass(status) { if (["license-cleared", "permission-granted", "published"].includes(status)) return "badge-cleared"; if (["needs-permission", "contacted", "response-pending", "unclear", "machine-draft", "human-review"].includes(status)) return "badge-pending"; if (["permission-denied", "withdrawn"].includes(status)) return "badge-blocked"; return ""; }
@@ -253,7 +266,7 @@ function renderPaperCard(paper) {
     ${bilingualTitle(paper)}<p class="paper-authors">${escapeHTML(paper.authors_as_listed || t("authorUnknown"))}</p><div class="badges" aria-label="${escapeHTML(t("currentStatus"))}">
     <span class="badge ${statusClass(paper.authorization_status)}">${escapeHTML(auth)}</span><span class="badge ${statusClass(paper.translation_status)}">${escapeHTML(translation)}</span><span class="badge ${publicationClass}">${escapeHTML(publication)}</span></div>
     <div class="paper-meta"><span>${formatFrontiers(paper.frontiers, " · ") || t("unclassified")}</span><span>${numberFormat(paper.page_count)} ${t("pages")}</span><span>${numberFormat(paper.citation_count)} ${t("citations")}</span></div>
-    <div class="paper-card-footer"><a href="${safeURL(paper.source_url)}" target="_blank" rel="noreferrer">${t("source")}</a><button class="paper-detail-button" type="button" data-paper="${escapeHTML(paper.record_id)}">${t("details")}</button></div></article>`;
+    <div class="paper-card-footer"><a href="${safeURL(paper.source_url)}" target="_blank" rel="noreferrer">${t("source")}</a><a class="paper-detail-button" href="${paperPermalink(paper)}">${t("details")}</a></div></article>`;
 }
 
 function renderPagination(totalPages) {
