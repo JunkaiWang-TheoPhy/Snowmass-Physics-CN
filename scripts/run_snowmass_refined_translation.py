@@ -512,6 +512,41 @@ def _merge_sharded_critiques(
     )
 
 
+def _bound_shard_critique(
+    output: str,
+    *,
+    maximum: int = CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS,
+) -> str:
+    """Deterministically cap already-routable findings in model-ranked order."""
+
+    if maximum <= 0:
+        raise ValueError("maximum must be positive")
+    section = ""
+    findings: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        normalized = line.strip()
+        heading = re.match(r"^##\s+(.+?)\s*$", normalized)
+        if heading:
+            section = heading.group(1)
+            continue
+        if section not in {"Accuracy", "Native Voice", "Notes & Adaptation"}:
+            continue
+        match = re.match(
+            r"^(?:[-*]\s*|\d+[.)]\s*)?(chunk\d{4}:\s*.+)$",
+            normalized,
+            flags=re.I,
+        )
+        if match:
+            findings.append((section, "- " + match.group(1)))
+    selected = findings[:maximum]
+    blocks: list[str] = []
+    for name in ("Accuracy", "Native Voice", "Notes & Adaptation"):
+        lines = [line for section_name, line in selected if section_name == name]
+        blocks.append(f"## {name}\n" + ("\n".join(lines) if lines else "- NO_ACTIONABLE_FINDINGS"))
+    blocks.append("## Summary\n- Deterministically bounded from model-ranked findings.")
+    return "\n\n".join(blocks) + "\n"
+
+
 def _validate_shard_critique(
     output: str,
     *,
@@ -525,7 +560,10 @@ def _validate_shard_critique(
         ("Accuracy", "Native Voice", "Notes & Adaptation", "Summary"),
         f"critique shard {shard_index}",
     )
-    _merge_sharded_critiques([output])
+    try:
+        _merge_sharded_critiques([output])
+    except RuntimeError as error:
+        raise RuntimeError(f"critique shard {shard_index}: {error}") from error
     referenced = set(re.findall(r"\bchunk\d{4}\b", output, flags=re.I))
     unexpected = sorted(item.lower() for item in referenced if item.lower() not in allowed_chunk_ids)
     if unexpected:
@@ -604,11 +642,39 @@ Ranges, lists, invented chunk IDs, quotations, explanations, and prose outside t
                 budget_guard=budget_guard,
                 retry_uncertain=retry_uncertain,
             )
-            _validate_shard_critique(
-                output,
-                shard_index=index,
-                allowed_chunk_ids=allowed_chunk_ids,
-            )
+            try:
+                _validate_shard_critique(
+                    output,
+                    shard_index=index,
+                    allowed_chunk_ids=allowed_chunk_ids,
+                )
+            except RuntimeError as repair_error:
+                if "exceeds" not in str(repair_error):
+                    raise
+                referenced = {
+                    item.lower()
+                    for item in re.findall(r"\bchunk\d{4}\b", output, flags=re.I)
+                }
+                unexpected = sorted(referenced - allowed_chunk_ids)
+                if unexpected:
+                    raise RuntimeError(
+                        f"critique shard {index} references chunks outside its aligned input: "
+                        + ", ".join(unexpected)
+                    ) from repair_error
+                output = _bound_shard_critique(output)
+                repair_path = article_dir / "critique_shard_repairs" / f"shard{index:04d}.md"
+                output = _write_text(repair_path, output)
+                repair_phase = status.setdefault("phases", {}).setdefault(
+                    f"critique_shard_repair_{index:04d}", {}
+                )
+                repair_phase["output_hash"] = runner.text_hash(output)
+                repair_phase["deterministically_bounded"] = True
+                _persist_status(status_path, status)
+                _validate_shard_critique(
+                    output,
+                    shard_index=index,
+                    allowed_chunk_ids=allowed_chunk_ids,
+                )
         shard_outputs.append(output)
     merged = _merge_sharded_critiques(shard_outputs)
     signature = runner.text_hash(

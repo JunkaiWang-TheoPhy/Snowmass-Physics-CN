@@ -383,6 +383,29 @@ class RefinedOrchestratorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "exceeds"):
             module._merge_sharded_critiques([output])
 
+    def test_shard_bound_deterministically_caps_model_overflow(self) -> None:
+        module = load_module()
+        lines = "\n".join(
+            f"- chunk{index:04d}: ranked issue {index}"
+            for index in range(1, module.CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS + 5)
+        )
+        output = (
+            "## Accuracy\n" + lines + "\n\n"
+            "## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+            "## Summary\n- done\n"
+        )
+
+        bounded = module._bound_shard_critique(output)
+
+        findings = re.findall(r"^- chunk\d{4}:", bounded, re.M)
+        self.assertEqual(
+            len(findings),
+            module.CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS,
+        )
+        self.assertIn("chunk0001:", bounded)
+        self.assertNotIn("chunk0013:", bounded)
+
     def test_revision_context_hash_changes_when_effective_critique_changes(self) -> None:
         module = load_module()
 
