@@ -2034,6 +2034,14 @@ def figure_text_chunk_ids(
     return babeldoc_bridge.resolve_figure_text_chunk_ids(article_dir, manifest)
 
 
+def table_text_chunk_ids(
+    article_dir: Path, manifest: dict[str, Any]
+) -> set[str]:
+    """Identify table-body text from page-layout geometry, never wording heuristics."""
+
+    return babeldoc_bridge.resolve_table_text_chunk_ids(article_dir, manifest)
+
+
 def collect_tasks(
     root: Path,
     max_articles: int,
@@ -2058,18 +2066,24 @@ def collect_tasks(
             break
         selected_articles += 1
         figure_ids = figure_text_chunk_ids(article_dir, manifest)
+        table_ids = table_text_chunk_ids(article_dir, manifest)
         for chunk in sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0)):
             figure_passthrough = str(chunk["id"]) in figure_ids
+            table_passthrough = str(chunk["id"]) in table_ids
             tasks.append(
                 {
                     "article_dir": article_dir,
                     "record_id": record_id,
                     "chunk": chunk,
-                    "passthrough": figure_passthrough,
+                    "passthrough": figure_passthrough or table_passthrough,
                     "passthrough_reason": (
                         "figure_internal_text_passthrough"
                         if figure_passthrough
-                        else None
+                        else (
+                            "table_internal_text_passthrough"
+                            if table_passthrough
+                            else None
+                        )
                     ),
                 }
             )

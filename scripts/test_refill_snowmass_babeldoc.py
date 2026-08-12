@@ -397,6 +397,30 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(prepared[1].translated_text, "图5：预测。\n")
         self.assertEqual(report["figure_text_passthrough_units"], 1)
 
+    def test_publication_preflight_restores_table_text_but_translates_caption(self) -> None:
+        module = load_module()
+        chunks = [
+            {"id": "chunk0001", "order": 1, "page_number": 1, "paragraph_index": 0},
+            {"id": "chunk0002", "order": 2, "page_number": 1, "paragraph_index": 1},
+        ]
+        translations = [
+            module.BRIDGE.RefillTranslation(1, 0, "Technical Maturity\n", "技术成熟度\n"),
+            module.BRIDGE.RefillTranslation(1, 1, "Table 1: Forecast.\n", "表1：预测。\n"),
+        ]
+
+        prepared, report = module.prepare_publication_translations(
+            self.article,
+            {"chunks": chunks},
+            translations,
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[],
+            table_text_chunk_ids={"chunk0001"},
+        )
+
+        self.assertEqual(prepared[0].translated_text, "Technical Maturity\n")
+        self.assertEqual(prepared[1].translated_text, "表1：预测。\n")
+        self.assertEqual(report["table_text_passthrough_units"], 1)
+
     def test_publication_preflight_fails_when_exact_source_is_missing(self) -> None:
         module = load_module()
         translation = module.BRIDGE.RefillTranslation(1, 0, "Other source\n", "其他文本\n")

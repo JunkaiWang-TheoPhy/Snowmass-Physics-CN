@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
 DEFAULT_GLOSSARY = ROOT / "translations/snowmass-global-glossary.json"
 DEFAULT_HARD_CONSTRAINTS = ROOT / "translations/snowmass-hard-constraints.json"
-REFILL_SCHEMA_VERSION = 7
+REFILL_SCHEMA_VERSION = 9
 
 
 def _load_bridge():
@@ -184,6 +184,7 @@ def prepare_publication_translations(
     constraints: dict[str, Any],
     glossary: list[dict[str, Any]],
     figure_text_chunk_ids: set[str] | None = None,
+    table_text_chunk_ids: set[str] | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     """Create deterministic publication-stage chunks and enforce hard constraints."""
 
@@ -193,9 +194,11 @@ def prepare_publication_translations(
     if len(chunks) != len(translations):
         raise RuntimeError("Publication chunks do not match refill translations")
     figure_text_chunk_ids = set(figure_text_chunk_ids or ())
+    table_text_chunk_ids = set(table_text_chunk_ids or ())
+    passthrough_chunk_ids = figure_text_chunk_ids | table_text_chunk_ids
     prepared_texts = [translation.translated_text for translation in translations]
     for index, (chunk, translation) in enumerate(zip(chunks, translations, strict=True)):
-        if str(chunk["id"]) in figure_text_chunk_ids:
+        if str(chunk["id"]) in passthrough_chunk_ids:
             prepared_texts[index] = translation.source_text
     exact_occurrences = 0
     for rule in constraints.get("exact_translations", []):
@@ -205,7 +208,7 @@ def prepare_publication_translations(
             raise RuntimeError("Exact translation rule is incomplete")
         matched = 0
         for index, translation in enumerate(translations):
-            if str(chunks[index]["id"]) in figure_text_chunk_ids:
+            if str(chunks[index]["id"]) in passthrough_chunk_ids:
                 continue
             if _normalized_phrase(translation.source_text) != _normalized_phrase(source):
                 continue
@@ -225,7 +228,7 @@ def prepare_publication_translations(
         if (
             not in_references
             and str(chunk.get("layout_label", "")) != "title"
-            and str(chunk["id"]) not in figure_text_chunk_ids
+            and str(chunk["id"]) not in passthrough_chunk_ids
         ):
             eligible_first_use_indices.append(index)
     first_use = _first_use_terms(
@@ -261,6 +264,7 @@ def prepare_publication_translations(
         "exact_translation_occurrences": exact_occurrences,
         "first_use_terms": len(first_use),
         "figure_text_passthrough_units": len(figure_text_chunk_ids),
+        "table_text_passthrough_units": len(table_text_chunk_ids),
         "publication_chunk_sha256": chunk_hashes,
     }
 
@@ -271,6 +275,14 @@ def _figure_text_chunk_ids(
     """Resolve vector-figure text from persisted IR, never from wording heuristics."""
 
     return BRIDGE.resolve_figure_text_chunk_ids(article_dir, manifest)
+
+
+def _table_text_chunk_ids(
+    article_dir: Path, manifest: dict[str, Any]
+) -> set[str]:
+    """Resolve table body text from persisted page-layout geometry."""
+
+    return BRIDGE.resolve_table_text_chunk_ids(article_dir, manifest)
 
 
 def _load_constraints(
@@ -414,6 +426,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     glossary = _load_glossary(args.glossary)
     figure_text_chunk_ids = _figure_text_chunk_ids(args.article_dir, manifest)
+    table_text_chunk_ids = _table_text_chunk_ids(args.article_dir, manifest)
     translations, publication_qc = prepare_publication_translations(
         args.article_dir,
         manifest,
@@ -421,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
         constraints=constraints,
         glossary=glossary,
         figure_text_chunk_ids=figure_text_chunk_ids,
+        table_text_chunk_ids=table_text_chunk_ids,
     )
     reference_pages = _reference_page_numbers(args.article_dir, manifest)
     verbatim_header = _verbatim_header_translation(
@@ -447,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         "verbatim_header_translation": verbatim_header,
         "verbatim_section_heading_translations": verbatim_section_headings,
         "figure_text_chunk_ids": sorted(figure_text_chunk_ids),
+        "table_text_chunk_ids": sorted(table_text_chunk_ids),
     }
     signature = hashlib.sha256(
         json.dumps(signature_payload, sort_keys=True).encode("utf-8")
@@ -501,8 +516,11 @@ def main(argv: list[str] | None = None) -> int:
             "input_signature": signature,
             "refilled_unit_count": result.refilled_unit_count,
             "figure_text_verbatim_count": result.figure_text_verbatim_count,
+            "table_text_verbatim_count": result.table_text_verbatim_count,
             "figure_region_count": rendered.figure_region_count,
             "figure_regions_verified": rendered.figure_regions_verified,
+            "table_region_count": rendered.table_region_count,
+            "table_regions_verified": rendered.table_regions_verified,
             "output_xml_file": output_xml.name,
             "output_xml_sha256": _sha256(output_xml),
             "mono_pdf_file": str(rendered.mono_pdf_path.relative_to(args.article_dir)),

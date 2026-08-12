@@ -263,10 +263,13 @@ def _chunk_passthrough_reason(
     reference_ids: set[str],
     fragile_fragment_ids: set[str],
     figure_text_ids: set[str],
+    table_text_ids: set[str] | None = None,
 ) -> str | None:
     chunk_id = str(chunk["id"])
     if chunk_id in figure_text_ids:
         return "figure_internal_text_passthrough"
+    if chunk_id in set(table_text_ids or ()):
+        return "table_internal_text_passthrough"
     if chunk_id in reference_ids:
         return "reference_section_passthrough"
     if chunk_id in fragile_fragment_ids:
@@ -653,6 +656,7 @@ def run_refined_article(
         raise RuntimeError(f"No prepared chunks for {record_id}")
     reference_ids = _reference_chunk_ids(article_dir, chunks)
     figure_text_ids = runner.figure_text_chunk_ids(article_dir, manifest)
+    table_text_ids = runner.table_text_chunk_ids(article_dir, manifest)
     hard_exact_translations = _hard_exact_translations(article_dir, record_id)
     fragile_fragment_ids = {
         str(chunk["id"])
@@ -678,6 +682,7 @@ def run_refined_article(
             reference_ids=reference_ids,
             fragile_fragment_ids=fragile_fragment_ids,
             figure_text_ids=figure_text_ids,
+            table_text_ids=table_text_ids,
         )
         return {
             "article_dir": article_dir,

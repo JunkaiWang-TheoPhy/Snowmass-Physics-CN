@@ -16,13 +16,16 @@ import unicodedata
 
 
 BABELDOC_VERSION = "0.6.4"
-IR_PIPELINE_VERSION = 5
+IR_PIPELINE_VERSION = 6
 # Corrupt/pathological IR guard only. Model-facing structure density is handled
 # separately by resumable subrequest segmentation in the translation runner.
 MAX_STRUCTURE_COUNT = 512
 TRANSLATE_POLICY = "translate"
 VERBATIM_FIGURE_TEXT_POLICY = "verbatim_figure_text"
-TRANSLATION_POLICIES = frozenset({TRANSLATE_POLICY, VERBATIM_FIGURE_TEXT_POLICY})
+VERBATIM_TABLE_TEXT_POLICY = "verbatim_table_text"
+TRANSLATION_POLICIES = frozenset(
+    {TRANSLATE_POLICY, VERBATIM_FIGURE_TEXT_POLICY, VERBATIM_TABLE_TEXT_POLICY}
+)
 
 
 @dataclass(frozen=True)
@@ -56,12 +59,20 @@ class RefillResult:
     output_xml_path: Path
     refilled_unit_count: int
     figure_text_verbatim_count: int = 0
+    table_text_verbatim_count: int = 0
 
 
 @dataclass(frozen=True)
 class FigureRegion:
     page_number: int
     xobj_id: int
+    box: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
+class TableRegion:
+    page_number: int
+    layout_id: int
     box: tuple[float, float, float, float]
 
 
@@ -76,6 +87,8 @@ class RenderedPdfResult:
     section_heading_occurrences: int = 0
     figure_regions_verified: bool = True
     figure_region_count: int = 0
+    table_regions_verified: bool = True
+    table_region_count: int = 0
 
 
 _BABELDOC_PLACEHOLDER = re.compile(
@@ -149,6 +162,100 @@ def resolve_figure_text_chunk_ids(
     return selected
 
 
+def _json_box(value: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(value, dict):
+        return None
+    box = value.get("box", value)
+    if not isinstance(box, dict):
+        return None
+    try:
+        return tuple(float(box[key]) for key in ("x", "y", "x2", "y2"))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _object_box(value: Any) -> tuple[float, float, float, float] | None:
+    box = getattr(value, "box", None)
+    if box is None:
+        return None
+    try:
+        return (float(box.x), float(box.y), float(box.x2), float(box.y2))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _box_center_is_inside(
+    inner: tuple[float, float, float, float] | None,
+    outer: tuple[float, float, float, float],
+) -> bool:
+    if inner is None:
+        return False
+    x, y, x2, y2 = inner
+    cx, cy = (x + x2) / 2, (y + y2) / 2
+    ox, oy, ox2, oy2 = outer
+    return ox <= cx <= ox2 and oy <= cy <= oy2
+
+
+def _json_table_regions(page: dict[str, Any]) -> list[tuple[int, tuple[float, float, float, float]]]:
+    regions: list[tuple[int, tuple[float, float, float, float]]] = []
+    for layout in page.get("page_layout") or []:
+        if str(layout.get("class_name", "")).casefold() != "table":
+            continue
+        box = _json_box(layout)
+        if box is not None:
+            regions.append((int(layout.get("id") or 0), box))
+    return regions
+
+
+def _object_table_regions(page: Any) -> list[tuple[int, tuple[float, float, float, float]]]:
+    regions: list[tuple[int, tuple[float, float, float, float]]] = []
+    for layout in page.page_layout or []:
+        if str(layout.class_name or "").casefold() != "table":
+            continue
+        box = _object_box(layout)
+        if box is not None:
+            regions.append((int(layout.id or 0), box))
+    return regions
+
+
+def resolve_table_text_chunk_ids(
+    article_dir: Path, manifest: dict[str, Any]
+) -> set[str]:
+    """Identify table-body chunks from policy metadata or page-layout geometry."""
+
+    chunks = list(manifest.get("chunks", []))
+    selected = {
+        str(chunk["id"])
+        for chunk in chunks
+        if chunk.get("translation_policy") == VERBATIM_TABLE_TEXT_POLICY
+    }
+    ir_name = manifest.get("babeldoc_ir_json_file")
+    if not isinstance(ir_name, str) or not ir_name:
+        return selected
+    ir_path = Path(article_dir) / ir_name
+    if not ir_path.is_file():
+        raise RuntimeError(f"BabelDOC JSON IR is missing: {ir_path}")
+    document = json.loads(ir_path.read_text(encoding="utf-8"))
+    pages = document.get("page")
+    if not isinstance(pages, list):
+        raise RuntimeError(f"BabelDOC JSON IR has no page list: {ir_path}")
+    for chunk in chunks:
+        try:
+            page = pages[int(chunk["page_number"]) - 1]
+            paragraph = page["pdf_paragraph"][int(chunk["paragraph_index"])]
+        except (IndexError, KeyError, TypeError) as exc:
+            raise RuntimeError(
+                f"BabelDOC table-text identity is invalid for {chunk.get('id')}"
+            ) from exc
+        paragraph_box = _json_box(paragraph)
+        if any(
+            _box_center_is_inside(paragraph_box, region_box)
+            for _layout_id, region_box in _json_table_regions(page)
+        ):
+            selected.add(str(chunk["id"]))
+    return selected
+
+
 def _normalized_page_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
@@ -189,6 +296,16 @@ def figure_regions_from_document(document: Any) -> list[FigureRegion]:
     return regions
 
 
+def table_regions_from_document(document: Any) -> list[TableRegion]:
+    """Collect high-level table bounds while excluding captions below the grid."""
+
+    regions: list[TableRegion] = []
+    for page_number, page in enumerate(document.page, 1):
+        for layout_id, box in _object_table_regions(page):
+            regions.append(TableRegion(page_number, layout_id, box))
+    return regions
+
+
 def verify_verbatim_figure_regions(
     *,
     source_pdf: Path,
@@ -218,6 +335,67 @@ def verify_verbatim_figure_regions(
                 raise RuntimeError(
                     "Figure region text self-check failed: "
                     f"page={region.page_number} xobj={region.xobj_id}"
+                )
+    return {"verified": True, "region_count": len(checked)}
+
+
+def verify_verbatim_table_regions(
+    *,
+    source_pdf: Path,
+    mono_pdf: Path,
+    regions: Iterable[TableRegion],
+) -> dict[str, Any]:
+    """Require every table grid to retain the complete source-language cell text."""
+
+    import pymupdf
+
+    checked = list(regions)
+    with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono:
+        if source.page_count != mono.page_count:
+            raise RuntimeError("Cannot verify table regions across unequal page counts")
+        for region in checked:
+            if region.page_number < 1 or region.page_number > source.page_count:
+                raise RuntimeError(
+                    f"Table region page is outside the source PDF: {region.page_number}"
+                )
+            source_page = source[region.page_number - 1]
+            mono_page = mono[region.page_number - 1]
+            x, y, x2, y2 = region.box
+            clip = pymupdf.Rect(x, source_page.rect.height - y2, x2, source_page.rect.height - y)
+            source_text = _normalized_figure_text(source_page.get_text(clip=clip))
+            rendered_text = _normalized_figure_text(mono_page.get_text(clip=clip))
+            if not source_text or source_text != rendered_text:
+                raise RuntimeError(
+                    "Table region text self-check failed: "
+                    f"page={region.page_number} layout={region.layout_id}"
+                )
+            source_words = source_page.get_text("words", clip=clip)
+            rendered_words = mono_page.get_text("words", clip=clip)
+            if len(source_words) != len(rendered_words):
+                raise RuntimeError(
+                    "Table region geometry self-check failed: "
+                    f"page={region.page_number} layout={region.layout_id}"
+                )
+            center_drifts = sorted(
+                max(
+                    abs((source_word[0] + source_word[2]) / 2 - (rendered_word[0] + rendered_word[2]) / 2),
+                    abs((source_word[1] + source_word[3]) / 2 - (rendered_word[1] + rendered_word[3]) / 2),
+                )
+                for source_word, rendered_word in zip(
+                    source_words, rendered_words, strict=True
+                )
+            )
+            if not center_drifts:
+                raise RuntimeError(
+                    "Table region geometry self-check failed: "
+                    f"page={region.page_number} layout={region.layout_id}"
+                )
+            percentile_95 = center_drifts[max(0, (95 * len(center_drifts) - 1) // 100)]
+            if percentile_95 > 4.0 or center_drifts[-1] > 8.0:
+                raise RuntimeError(
+                    "Table region geometry self-check failed: "
+                    f"page={region.page_number} layout={region.layout_id} "
+                    f"p95={percentile_95:.2f} max={center_drifts[-1]:.2f}"
                 )
     return {"verified": True, "region_count": len(checked)}
 
@@ -699,6 +877,17 @@ def require_verbatim_figure_text(
         raise RuntimeError("Figure-internal text must remain verbatim")
 
 
+def require_verbatim_table_text(
+    is_table_text: bool, source: str, translated: str
+) -> None:
+    """Fail closed when text geometrically owned by a table grid was translated."""
+
+    if is_table_text and _with_terminal_newline(source) != _with_terminal_newline(
+        translated
+    ):
+        raise RuntimeError("Table-internal text must remain verbatim")
+
+
 def normalize_document_ir_numeric_tokens(value: Any) -> None:
     """Repair xsdata's list[object] XML round-trip for CTM float tokens in place."""
 
@@ -773,6 +962,7 @@ def refill_document_units(
         normalize_document_ir_numeric_tokens(docs)
         il_translator = ILTranslator(_babeldoc_placeholder_translator(), config)
         figure_text_verbatim_count = 0
+        table_text_verbatim_count = 0
         for item in requested:
             if item.page_number < 1 or item.page_number > len(docs.page):
                 raise IndexError(f"BabelDOC page out of range: {item.page_number}")
@@ -807,6 +997,17 @@ def refill_document_units(
             )
             if int(paragraph.xobj_id or 0) != 0:
                 figure_text_verbatim_count += 1
+            is_table_text = any(
+                _box_center_is_inside(_object_box(paragraph), region_box)
+                for _layout_id, region_box in _object_table_regions(page)
+            )
+            require_verbatim_table_text(
+                is_table_text,
+                item.source_text,
+                item.translated_text,
+            )
+            if is_table_text:
+                table_text_verbatim_count += 1
             if not placeholder_sequence_matches(source_text, item.translated_text):
                 raise RuntimeError(
                     "BabelDOC placeholder identity or order changed in translation: "
@@ -826,6 +1027,7 @@ def refill_document_units(
             output_xml,
             len(requested),
             figure_text_verbatim_count=figure_text_verbatim_count,
+            table_text_verbatim_count=table_text_verbatim_count,
         )
     finally:
         config.cleanup_temp_files()
@@ -896,6 +1098,7 @@ def render_translated_document(
         docs = XMLConverter().read_xml(str(ir_xml_path))
         normalize_document_ir_numeric_tokens(docs)
         figure_regions = figure_regions_from_document(docs)
+        table_regions = table_regions_from_document(docs)
         class SnowmassTypesetting(Typesetting):
             """Correct BabelDOC 0.6.4's current-unit double count in word lookahead."""
 
@@ -936,6 +1139,11 @@ def render_translated_document(
             mono_pdf=mono_pdf,
             regions=figure_regions,
         )
+        table_report = verify_verbatim_table_regions(
+            source_pdf=source_pdf,
+            mono_pdf=mono_pdf,
+            regions=table_regions,
+        )
         return RenderedPdfResult(
             mono_pdf,
             dual_pdf,
@@ -950,6 +1158,8 @@ def render_translated_document(
             ),
             figure_regions_verified=bool(figure_report["verified"]),
             figure_region_count=int(figure_report["region_count"]),
+            table_regions_verified=bool(table_report["verified"]),
+            table_region_count=int(table_report["region_count"]),
         )
     finally:
         if doc_pdf is not None:
@@ -1044,6 +1254,10 @@ def extract_document_units(
                     )
                 if not text.endswith("\n"):
                     text += "\n"
+                is_table_text = any(
+                    _box_center_is_inside(_object_box(paragraph), region_box)
+                    for _layout_id, region_box in _object_table_regions(page)
+                )
                 units.append(
                     DocumentUnit(
                         page_number=page_number,
@@ -1054,7 +1268,11 @@ def extract_document_units(
                         translation_policy=(
                             VERBATIM_FIGURE_TEXT_POLICY
                             if int(paragraph.xobj_id or 0) != 0
-                            else TRANSLATE_POLICY
+                            else (
+                                VERBATIM_TABLE_TEXT_POLICY
+                                if is_table_text
+                                else TRANSLATE_POLICY
+                            )
                         ),
                     )
                 )

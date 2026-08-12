@@ -129,6 +129,19 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(reason, "figure_internal_text_passthrough")
 
+    def test_table_internal_policy_has_priority_over_fragment_heuristics(self) -> None:
+        module = load_module()
+
+        reason = module._chunk_passthrough_reason(
+            {"id": "chunk0008"},
+            reference_ids=set(),
+            fragile_fragment_ids={"chunk0008"},
+            figure_text_ids=set(),
+            table_text_ids={"chunk0008"},
+        )
+
+        self.assertEqual(reason, "table_internal_text_passthrough")
+
     def test_manual_correction_is_source_hash_pinned_and_updates_final_checkpoint(self) -> None:
         module = load_module()
         source = "samples)\n"

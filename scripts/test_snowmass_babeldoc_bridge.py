@@ -80,6 +80,61 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Figure-internal text must remain verbatim"):
             bridge.require_verbatim_figure_text(17, "Euclid\n", "欧几里得\n")
 
+    def test_table_text_gate_rejects_translation_but_leaves_caption_translatable(self) -> None:
+        bridge = load_bridge()
+
+        bridge.require_verbatim_table_text(False, "Table 1: Forecast.\n", "表1：预测。\n")
+        bridge.require_verbatim_table_text(True, "Technical Maturity\n", "Technical Maturity\n")
+        with self.assertRaisesRegex(RuntimeError, "Table-internal text must remain verbatim"):
+            bridge.require_verbatim_table_text(True, "Technical Maturity\n", "技术成熟度\n")
+
+    def test_resolves_table_body_from_page_geometry_not_fallback_line_label(self) -> None:
+        bridge = load_bridge()
+        article = self.root / "papers" / "arxiv_allowed"
+        article.mkdir(parents=True)
+        manifest = {
+            "babeldoc_ir_json_file": "babeldoc_ir.json",
+            "chunks": [
+                {"id": "chunk0001", "page_number": 1, "paragraph_index": 0},
+                {"id": "chunk0002", "page_number": 1, "paragraph_index": 1},
+            ],
+        }
+        (article / "babeldoc_ir.json").write_text(
+            json.dumps(
+                {
+                    "page": [
+                        {
+                            "page_layout": [
+                                {
+                                    "id": 7,
+                                    "class_name": "table",
+                                    "box": {"x": 20, "y": 200, "x2": 580, "y2": 640},
+                                }
+                            ],
+                            "pdf_paragraph": [
+                                {
+                                    "layout_label": "fallback_line",
+                                    "xobj_id": 0,
+                                    "box": {"x": 30, "y": 580, "x2": 90, "y2": 595},
+                                },
+                                {
+                                    "layout_label": "figure_caption",
+                                    "xobj_id": 0,
+                                    "box": {"x": 70, "y": 150, "x2": 540, "y2": 190},
+                                },
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertEqual(
+            bridge.resolve_table_text_chunk_ids(article, manifest),
+            {"chunk0001"},
+        )
+
     def test_exported_units_are_consumable_by_translate_book_run_state(self) -> None:
         bridge = load_bridge()
         article = self.root / "papers" / "arxiv_allowed"
@@ -475,6 +530,51 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             bridge.verify_verbatim_figure_regions(
                 source_pdf=source,
                 mono_pdf=drifted,
+                regions=[region],
+            )
+
+    def test_table_region_self_check_rejects_translated_or_missing_cell_text(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "table-source.pdf"
+        matching = self.root / "table-matching.pdf"
+        drifted = self.root / "table-drifted.pdf"
+        shifted = self.root / "table-shifted.pdf"
+
+        def write(path: Path, label: str, *, x: float = 30) -> None:
+            document = pymupdf.open()
+            page = document.new_page(width=300, height=400)
+            page.insert_text((x, 100), label, fontsize=12)
+            document.save(path)
+            document.close()
+
+        write(source, "Technical Maturity")
+        write(matching, "Technical Maturity")
+        write(drifted, "Maturity")
+        write(shifted, "Technical Maturity", x=90)
+        region = bridge.TableRegion(
+            page_number=1,
+            layout_id=7,
+            box=(20, 280, 220, 330),
+        )
+
+        report = bridge.verify_verbatim_table_regions(
+            source_pdf=source,
+            mono_pdf=matching,
+            regions=[region],
+        )
+        self.assertEqual(report, {"verified": True, "region_count": 1})
+        with self.assertRaisesRegex(RuntimeError, "Table region text self-check failed"):
+            bridge.verify_verbatim_table_regions(
+                source_pdf=source,
+                mono_pdf=drifted,
+                regions=[region],
+            )
+        with self.assertRaisesRegex(RuntimeError, "Table region geometry self-check failed"):
+            bridge.verify_verbatim_table_regions(
+                source_pdf=source,
+                mono_pdf=shifted,
                 regions=[region],
             )
 
