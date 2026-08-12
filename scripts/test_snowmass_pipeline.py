@@ -596,6 +596,20 @@ class StructureProtectionTests(unittest.TestCase):
             text,
         )
 
+    def test_plain_parenthesis_delimiters_are_protected_without_hiding_text(self) -> None:
+        text = "projects (CLIC at 380 GeV and ILC at 250 GeV) are compared."
+
+        protected = self.pipeline.protect_structures(text)
+
+        self.assertNotIn("(", protected.text)
+        self.assertNotIn(")", protected.text)
+        self.assertIn("CLIC at ", protected.text)
+        self.assertIn(" and ILC at ", protected.text)
+        self.assertEqual(
+            self.pipeline.validate_and_restore(protected.text, protected.mapping),
+            text,
+        )
+
     def test_protect_structures_keeps_url_separate_from_immediately_following_math(self) -> None:
         text = "See https://example.org/model$^{#3}$ next."
 

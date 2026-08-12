@@ -149,6 +149,7 @@ _DECIMAL_LITERAL_PATTERN = re.compile(
 )
 _STRUCTURE_PATTERNS = (
     re.compile(r"\((?:\{v\d+\}|[()\s])+\)"),
+    re.compile(r"[()（）]"),
     re.compile(r"\{v\d+\}"),
     re.compile(r"\$\$.*?\$\$", re.DOTALL),
     re.compile(r"\\\[.*?\\\]", re.DOTALL),

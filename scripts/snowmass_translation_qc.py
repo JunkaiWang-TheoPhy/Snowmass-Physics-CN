@@ -165,6 +165,7 @@ def _semantic_protected_literals(text: str) -> tuple[str, ...]:
     return tuple(
         literal
         for literal in protected_literals(text)
+        if literal not in {"(", ")", "（", "）"}
         if not _PLAIN_NUMERIC_PROTECTED_RE.fullmatch(literal)
         and not _UNIT_VALUE_RE.fullmatch(literal)
         and not re.fullmatch(r"\d+D", literal)

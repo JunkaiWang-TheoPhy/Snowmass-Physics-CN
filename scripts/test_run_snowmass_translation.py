@@ -559,6 +559,9 @@ class RequestKeyAndCheckpointTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
 
+    def test_qc_contract_version_requires_v3_checkpoint_revalidation(self) -> None:
+        self.assertEqual(RUNNER.QC_CONTRACT_VERSION, 3)
+
     def test_nonempty_stale_output_is_not_a_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "stage1_chunk0001.md"
