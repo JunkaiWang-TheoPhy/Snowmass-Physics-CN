@@ -463,6 +463,32 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
             },
         )
 
+    def test_repeated_header_ignores_source_passthrough_when_one_translation_exists(self) -> None:
+        module = load_module()
+        source = "Snowmass2021 Cosmic Frontier White Paper"
+        target = "Snowmass2021 宇宙学前沿白皮书"
+        chunks = []
+        for order, (page, output) in enumerate(((29, source), (30, target)), 1):
+            chunk = {
+                "id": f"chunk{order:04d}",
+                "order": order,
+                "page_number": page,
+                "source_file": f"chunk{order:04d}.md",
+                "output_file": f"output_chunk{order:04d}.md",
+            }
+            chunks.append(chunk)
+            (self.article / chunk["source_file"]).write_text(source, encoding="utf-8")
+            (self.article / chunk["output_file"]).write_text(output, encoding="utf-8")
+
+        header = module._verbatim_header_translation(
+            self.article,
+            {"chunks": chunks},
+            {29, 30},
+            {"exact_translations": []},
+        )
+
+        self.assertEqual(header, {"source": source, "target": target})
+
     def test_publication_preflight_restores_figure_text_but_translates_caption(self) -> None:
         module = load_module()
         chunks = [

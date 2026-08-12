@@ -553,11 +553,18 @@ def _verbatim_header_translation(
         if exact.get(normalized)
     ]
     if not matches:
-        inferred = [
-            {"source": item["source"], "target": next(iter(item["targets"]))}
-            for item in repeated.values()
-            if len(item["targets"]) == 1
-        ]
+        inferred = []
+        for item in repeated.values():
+            source_normalized = _normalized_phrase(item["source"])
+            translated_targets = {
+                target
+                for target in item["targets"]
+                if _normalized_phrase(target) != source_normalized
+            }
+            if len(translated_targets) == 1:
+                inferred.append(
+                    {"source": item["source"], "target": next(iter(translated_targets))}
+                )
         if len(inferred) == 1:
             return inferred[0]
     if len(matches) != 1:
