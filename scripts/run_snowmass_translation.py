@@ -622,6 +622,18 @@ def restore_structure_anchor_output(
     return restored
 
 
+def should_use_structure_anchor_fallback(
+    stage_status: dict[str, Any],
+    paper_context: str,
+) -> bool:
+    """Use the flexible protocol once, then return to strict slots if it fails."""
+
+    error = str(stage_status.get("error") or "")
+    if "Anchor-template response" in error:
+        return False
+    return "suspiciously short" in error or "# QC-CORRECTION RETRY 2" in paper_context
+
+
 def build_request_payload(instructions: str, input_text: str, max_output_tokens: int) -> dict[str, Any]:
     output_format = (
         {"type": "json_object"}
@@ -1186,9 +1198,9 @@ def process_chunk(
         anchor_protocols: list[tuple[tuple[str, ...], tuple[str, ...]] | None] = []
         segment_passthroughs: list[bool] = []
         max_outputs: list[int] = []
-        use_anchor_fallback = (
-            "suspiciously short" in str(stage_status.get("error") or "")
-            or "# QC-CORRECTION RETRY 2" in paper_context
+        use_anchor_fallback = should_use_structure_anchor_fallback(
+            stage_status,
+            paper_context,
         )
         bounded_segmented_retry = (
             len(protected_segments) > 1

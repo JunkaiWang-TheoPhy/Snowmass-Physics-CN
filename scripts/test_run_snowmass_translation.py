@@ -779,6 +779,22 @@ class ProcessChunkTests(unittest.TestCase):
             "红移[[SM_0002_0000000002]]处的区间[[SM_0001_0000000001]]",
         )
 
+    def test_failed_anchor_fallback_returns_to_strict_slot_protocol(self) -> None:
+        correction_retry = "# QC-CORRECTION RETRY 2\nPreserve every protected value."
+
+        self.assertTrue(
+            RUNNER.should_use_structure_anchor_fallback(
+                {"error": "Structure-slot response is suspiciously short"},
+                correction_retry,
+            )
+        )
+        self.assertFalse(
+            RUNNER.should_use_structure_anchor_fallback(
+                {"error": "Anchor-template response changed anchor identity or count"},
+                correction_retry,
+            )
+        )
+
     def test_academic_polish_uses_anchor_protocol_for_chinese_word_order(self) -> None:
         source = "参数 $x$ 与 $y$。\n"
         (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
