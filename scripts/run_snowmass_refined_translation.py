@@ -573,7 +573,7 @@ def _run_chunk_barrier(
     invoke: Any,
     phase: str,
     record_id: str,
-    max_qc_retries: int = 2,
+    max_qc_retries: int = 4,
     stop_event: Any = None,
 ) -> None:
     """Run independent chunks concurrently and stop before the next paper phase on failure."""

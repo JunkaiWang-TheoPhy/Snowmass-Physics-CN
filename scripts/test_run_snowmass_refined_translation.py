@@ -601,6 +601,47 @@ class RefinedOrchestratorTests(unittest.TestCase):
             )
         self.assertEqual(uncertain_calls, [0])
 
+    def test_chunk_barrier_has_bounded_in_process_recovery_headroom(self) -> None:
+        module = load_module()
+        chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
+        calls: list[int] = []
+
+        def repeatedly_flaky(_chunk, attempt):
+            calls.append(attempt)
+            if attempt < 4:
+                raise RuntimeError("transient structure protocol failure")
+            return {"status": "complete"}
+
+        module._run_chunk_barrier(
+            [chunk],
+            concurrency=1,
+            invoke=repeatedly_flaky,
+            phase="draft",
+            record_id="arxiv:allowed",
+        )
+
+        self.assertEqual(calls, [0, 1, 2, 3, 4])
+
+    def test_chunk_barrier_still_fails_closed_after_bounded_retries(self) -> None:
+        module = load_module()
+        chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
+        calls: list[int] = []
+
+        def always_fails(_chunk, attempt):
+            calls.append(attempt)
+            raise RuntimeError("persistent structure protocol failure")
+
+        with self.assertRaisesRegex(RuntimeError, "persistent structure protocol failure"):
+            module._run_chunk_barrier(
+                [chunk],
+                concurrency=1,
+                invoke=always_fails,
+                phase="draft",
+                record_id="arxiv:allowed",
+            )
+
+        self.assertEqual(calls, [0, 1, 2, 3, 4])
+
     def test_retry_context_reports_literal_parenthesis_and_term_differences(self) -> None:
         module = load_module()
         chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
