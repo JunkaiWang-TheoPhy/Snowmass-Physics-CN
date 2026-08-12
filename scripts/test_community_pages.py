@@ -305,6 +305,7 @@ class CommunityPagesTest(unittest.TestCase):
 
     def test_guide_merges_translation_and_review_into_three_stacked_routes(self):
         html = self.read("guide/index.html")
+        self.assertIn('href="../styles.css?v=20260812-guide-stack"', html)
         self.assertEqual(html.count('<article class="participation-card '), 3)
         for text in ("参与翻译与审校", "协助申请翻译权限", "分发和宣传"):
             self.assertIn(f'data-zh="{text}"', html)
