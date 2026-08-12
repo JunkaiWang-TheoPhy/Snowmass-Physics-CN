@@ -522,6 +522,16 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             self.assertEqual(text.count("REFERENCE ONE"), 2)
             self.assertNotIn("DUAL BROKEN ONE", text)
 
+    def test_reference_number_check_ignores_citations_before_midpage_heading(self) -> None:
+        bridge = load_bridge()
+
+        self.assertEqual(
+            bridge.reference_entry_numbers(
+                "Body cites [14], [5], and [15].\nReferences\n[1] One\n[2] Two\n"
+            ),
+            [1, 2],
+        )
+
     def test_figure_region_self_check_rejects_rendered_text_drift(self) -> None:
         bridge = load_bridge()
         import pymupdf

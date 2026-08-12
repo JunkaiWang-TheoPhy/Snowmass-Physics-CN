@@ -429,6 +429,40 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(report["first_use_terms"], 2)
         self.assertTrue((self.article / "publication_chunks" / "chunk0003.md").is_file())
 
+    def test_repeated_reference_header_uses_one_consistent_verified_translation(self) -> None:
+        module = load_module()
+        chunks = []
+        for order, page in enumerate((2, 3), 1):
+            chunk = {
+                "id": f"chunk{order:04d}",
+                "order": order,
+                "page_number": page,
+                "source_file": f"chunk{order:04d}.md",
+                "output_file": f"output_chunk{order:04d}.md",
+            }
+            chunks.append(chunk)
+            (self.article / chunk["source_file"]).write_text(
+                "Laser applications in accelerators\n", encoding="utf-8"
+            )
+            (self.article / chunk["output_file"]).write_text(
+                "加速器中的激光应用\n", encoding="utf-8"
+            )
+
+        header = module._verbatim_header_translation(
+            self.article,
+            {"chunks": chunks},
+            {2, 3},
+            {"exact_translations": []},
+        )
+
+        self.assertEqual(
+            header,
+            {
+                "source": "Laser applications in accelerators",
+                "target": "加速器中的激光应用",
+            },
+        )
+
     def test_publication_preflight_restores_figure_text_but_translates_caption(self) -> None:
         module = load_module()
         chunks = [
@@ -593,6 +627,64 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
                 constraints={"schema_version": 1, "exact_translations": []},
                 glossary=[],
             )
+
+    def test_publication_preflight_normalizes_mixed_width_parenthesis_pairs(self) -> None:
+        module = load_module()
+        translation = module.BRIDGE.RefillTranslation(
+            1,
+            0,
+            "Energy 1.17 eV (1064 nm).\n",
+            "能量为1.17 eV (1064 nm）。\n",
+        )
+
+        prepared, _report = module.prepare_publication_translations(
+            self.article,
+            {
+                "chunks": [
+                    {
+                        "id": "chunk0001",
+                        "order": 1,
+                        "page_number": 1,
+                        "paragraph_index": 0,
+                        "layout_label": "plain text",
+                    }
+                ]
+            },
+            [translation],
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[],
+        )
+
+        self.assertEqual(prepared[0].translated_text, "能量为1.17 eV （1064 nm）。\n")
+
+    def test_publication_preflight_allows_only_source_inherited_parenthesis_residue(self) -> None:
+        module = load_module()
+        translation = module.BRIDGE.RefillTranslation(
+            1,
+            0,
+            "beam diagnostics ) and extraction\n",
+            "束流诊断）以及束流引出\n",
+        )
+
+        prepared, _report = module.prepare_publication_translations(
+            self.article,
+            {
+                "chunks": [
+                    {
+                        "id": "chunk0001",
+                        "order": 1,
+                        "page_number": 1,
+                        "paragraph_index": 0,
+                        "layout_label": "plain text",
+                    }
+                ]
+            },
+            [translation],
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[],
+        )
+
+        self.assertEqual(prepared[0].translated_text, "束流诊断）以及束流引出\n")
 
     def test_publication_preflight_blocks_known_mistranslation_before_writing_chunks(self) -> None:
         module = load_module()

@@ -49,6 +49,12 @@ _NUMBER_RE = re.compile(
     r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)"
     r"(?:\.\d+)?(?:[eE][-+]?\d+)?%?"
 )
+_UNIT_VALUE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+    r"(?:\s*[×x]\s*[-+]?\d+(?:\.\d+)?)?"
+    r"\s*(?:%|eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|km|m|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?![A-Za-z0-9_])"
+)
 _COMPARE_NUMBER_RE = re.compile(
     r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)"
     r"(?:\.\d+)?(?:[eE][-+]?\d+)?%?s?"
@@ -148,8 +154,10 @@ def _candidate_spans(text: str) -> list[tuple[int, int, str]]:
         candidates.append((match.start(), match.end(), "url", 1))
     for match in _EMAIL_RE.finditer(text):
         candidates.append((match.start(), match.end(), "email", 2))
+    for match in _UNIT_VALUE_RE.finditer(text):
+        candidates.append((match.start(), match.end(), "unit", 3))
     for match in _NUMBER_RE.finditer(text):
-        candidates.append((match.start(), match.end(), "number", 3))
+        candidates.append((match.start(), match.end(), "number", 4))
 
     accepted: list[tuple[int, int, str]] = []
     occupied = [(match.start(), match.end()) for match in _EXISTING_PROTECTED_TOKEN_RE.finditer(text)]
@@ -211,7 +219,7 @@ def _numeric_source_text(text: str) -> str:
     protected = protect_translation_unit(text, max_nodes=10_000)
     output = protected.text
     for node in protected.nodes:
-        if node.kind != "number":
+        if node.kind not in {"number", "unit"}:
             output = output.replace(node.token, " ")
         else:
             output = output.replace(node.token, node.value)

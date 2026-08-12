@@ -149,17 +149,45 @@ def _clean_title_text(text: str) -> str:
     return " ".join(line for line in lines if line).strip() + ("\n" if text.endswith("\n") else "")
 
 
-def _visible_parentheses_balanced(text: str) -> bool:
-    pairs = {"(": ")", "（": "）"}
-    closing = set(pairs.values())
+def _visible_parenthesis_residue(text: str) -> tuple[int, int]:
     stack: list[str] = []
+    unmatched_closing = 0
     for character in text:
-        if character in pairs:
-            stack.append(pairs[character])
-        elif character in closing:
-            if not stack or stack.pop() != character:
-                return False
-    return not stack
+        if character in {"(", "（"}:
+            stack.append(character)
+        elif character in {")", "）"}:
+            if stack:
+                stack.pop()
+            else:
+                unmatched_closing += 1
+    return len(stack), unmatched_closing
+
+
+def _visible_parentheses_balanced(text: str) -> bool:
+    return _visible_parenthesis_residue(text) == (0, 0)
+
+
+def _normalize_mixed_width_parentheses(text: str) -> str:
+    """Normalize only unambiguous ASCII/full-width mixed pairs."""
+
+    characters = list(text)
+    stack: list[tuple[int, str]] = []
+    for index, character in enumerate(characters):
+        if character in {"(", "（"}:
+            stack.append((index, character))
+            continue
+        if character not in {")", "）"} or not stack:
+            continue
+        opening_index, opening = stack.pop()
+        expected = ")" if opening == "(" else "）"
+        if character == expected:
+            continue
+        # Academic Chinese prose uses full-width punctuation around parenthetic
+        # English literals. Canonicalize the entire observed pair, never invent
+        # a missing delimiter.
+        characters[opening_index] = "（"
+        characters[index] = "）"
+    return "".join(characters)
 
 
 def _merge_exact_translation_rules(
@@ -299,8 +327,11 @@ def prepare_publication_translations(
             normalized_title_count += 1
             prepared_texts[index] = cleaned
 
-    for chunk, text in zip(chunks, prepared_texts, strict=True):
-        if not _visible_parentheses_balanced(text):
+    prepared_texts = [_normalize_mixed_width_parentheses(text) for text in prepared_texts]
+    for chunk, translation, text in zip(chunks, translations, prepared_texts, strict=True):
+        if _visible_parenthesis_residue(text) != _visible_parenthesis_residue(
+            translation.source_text
+        ):
             raise RuntimeError(f"unbalanced parentheses in publication chunk: {chunk['id']}")
 
     eligible_first_use_indices: list[int] = []
@@ -464,7 +495,7 @@ def _verbatim_header_translation(
     reference_pages: set[int],
     constraints: dict[str, Any],
 ) -> dict[str, str] | None:
-    if not reference_pages:
+    if len(reference_pages) < 2:
         return None
     by_source: dict[str, dict[str, Any]] = {}
     for chunk in manifest.get("chunks", []):
@@ -477,9 +508,16 @@ def _verbatim_header_translation(
             continue
         item = by_source.setdefault(
             normalized,
-            {"source": " ".join(raw.split()), "pages": set()},
+            {"source": " ".join(raw.split()), "pages": set(), "targets": set()},
         )
         item["pages"].add(page_number)
+        output_file = chunk.get("output_file")
+        if isinstance(output_file, str) and output_file:
+            output_path = article_dir / output_file
+            if output_path.is_file():
+                target = " ".join(output_path.read_text(encoding="utf-8").split())
+                if target:
+                    item["targets"].add(target)
     repeated = {
         normalized: item
         for normalized, item in by_source.items()
@@ -497,6 +535,14 @@ def _verbatim_header_translation(
         for normalized, item in repeated.items()
         if exact.get(normalized)
     ]
+    if not matches:
+        inferred = [
+            {"source": item["source"], "target": next(iter(item["targets"]))}
+            for item in repeated.values()
+            if len(item["targets"]) == 1
+        ]
+        if len(inferred) == 1:
+            return inferred[0]
     if len(matches) != 1:
         raise RuntimeError(
             "Reference pages contain a repeated running header without one canonical exact translation"

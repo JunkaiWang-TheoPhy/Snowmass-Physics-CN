@@ -804,6 +804,15 @@ class ProcessChunkTests(unittest.TestCase):
             )
         )
 
+    def test_translate_uses_one_anchor_retry_for_invalid_slot_value(self) -> None:
+        self.assertTrue(
+            RUNNER.should_use_structure_anchor_fallback(
+                "translate",
+                {"error": "Invalid structure-slot value for T0001"},
+                "",
+            )
+        )
+
     def test_structure_failure_retries_with_one_anchor_per_segment(self) -> None:
         self.assertEqual(RUNNER.structure_segment_limit({}), 4)
         self.assertEqual(

@@ -309,6 +309,14 @@ def _normalized_figure_text(value: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
 
 
+def reference_entry_numbers(text: str) -> list[int]:
+    """Return bibliography entry numbers after the first section heading."""
+
+    heading = re.search(r"(?im)^\s*(?:references|bibliography)\s*$", text)
+    body = text[heading.end() :] if heading is not None else text
+    return [int(value) for value in re.findall(r"(?m)^\s*\[(\d+)\]", body)]
+
+
 def figure_regions_from_document(document: Any) -> list[FigureRegion]:
     """Collect XObject bounds that own translatable figure text paragraphs."""
 
@@ -679,10 +687,7 @@ def restore_verbatim_pages(
                     f"source={source_text!r}, output={output_text!r}"
                 )
             selected_source_text.append(source_text)
-    numbers = [
-        int(value)
-        for value in re.findall(r"\[(\d+)\]", " ".join(selected_source_text))
-    ]
+    numbers = reference_entry_numbers("\n".join(selected_source_text))
     sequential = not numbers or numbers == list(range(1, numbers[-1] + 1))
     if not sequential:
         raise RuntimeError("Reference numbering self-check failed")

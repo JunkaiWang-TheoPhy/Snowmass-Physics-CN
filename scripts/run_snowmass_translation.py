@@ -644,6 +644,8 @@ def should_use_structure_anchor_fallback(
     """Use the flexible protocol once, then return to strict slots if it fails."""
 
     error = str(stage_status.get("error") or "")
+    if stage == "translate" and error.startswith("Invalid structure-slot value"):
+        return True
     if stage not in {"revision", *OPTIONAL_STYLE_STAGES}:
         return False
     if "Anchor-template response" in error:

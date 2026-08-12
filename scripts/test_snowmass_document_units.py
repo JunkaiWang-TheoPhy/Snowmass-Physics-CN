@@ -71,6 +71,27 @@ class TypedProtectionTests(unittest.TestCase):
             ],
         )
 
+    def test_number_unit_literals_are_one_immutable_node(self) -> None:
+        units = load_units()
+
+        protected = units.protect_translation_unit(
+            "above 400 GeV, 1TeV, 10%, and 2 TeV"
+        )
+
+        self.assertEqual(
+            [(node.kind, node.value) for node in protected.nodes],
+            [
+                ("unit", "400 GeV"),
+                ("unit", "1TeV"),
+                ("unit", "10%"),
+                ("unit", "2 TeV"),
+            ],
+        )
+        self.assertEqual(
+            units.restore_translation_unit(protected.text, protected.nodes),
+            "above 400 GeV, 1TeV, 10%, and 2 TeV",
+        )
+
     def test_numbers_glued_to_pdf_text_are_still_protected_without_nesting_sentinels(self) -> None:
         units = load_units()
         sentinel = "[[SM_0001_0123456789]]"
