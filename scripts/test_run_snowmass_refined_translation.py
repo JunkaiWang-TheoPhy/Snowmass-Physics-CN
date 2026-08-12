@@ -1116,6 +1116,38 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertTrue(all(event["phase"] == "revision" for event in events))
         self.assertTrue(all(event["attempt"] == 0 for event in events))
 
+    def test_style_batch_projection_is_observational_and_excludes_structured_chunks(self) -> None:
+        module = load_module()
+        chunks = []
+        texts = ["简洁正文一。\n", "简洁正文二。\n", "含有 14 TeV 的结构正文。\n", "简洁正文四。\n"]
+        for index, text in enumerate(texts, 1):
+            chunk_id = f"chunk{index:04d}"
+            (self.article / f"stage_revision_{chunk_id}.md").write_text(text, encoding="utf-8")
+            chunks.append({"id": chunk_id, "order": index, "output_file": f"out{index}.md"})
+
+        def task(chunk):
+            return {
+                "passthrough": chunk["id"] == "chunk0004",
+                "fixed_translation": None,
+            }
+
+        projection = module._style_batch_projection(
+            self.article,
+            chunks,
+            task,
+            max_group_size=4,
+            max_group_characters=2000,
+        )
+
+        self.assertEqual(projection["eligible_chunks"], 3)
+        self.assertEqual(projection["groupable_chunks"], 2)
+        self.assertEqual(projection["non_groupable_chunks"], 1)
+        self.assertEqual(projection["projected_groups"], 2)
+        self.assertEqual(projection["current_style_requests"], 6)
+        self.assertEqual(projection["projected_style_requests"], 4)
+        self.assertAlmostEqual(projection["projected_request_reduction_fraction"], 1 / 3)
+        self.assertFalse((self.article / "style_batch_projection.json").exists())
+
     def test_retry_context_reports_literal_parenthesis_and_term_differences(self) -> None:
         module = load_module()
         chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}

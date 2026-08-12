@@ -1040,6 +1040,94 @@ def _print_barrier_progress(event: dict[str, Any]) -> None:
     )
 
 
+def _style_batch_projection(
+    article_dir: Path,
+    chunks: list[dict[str, Any]],
+    chunk_task: Any,
+    *,
+    max_group_size: int = 4,
+    max_group_characters: int = 6000,
+) -> dict[str, Any]:
+    """Estimate safe final-style grouping without changing execution behavior."""
+
+    if max_group_size <= 0 or max_group_characters <= 0:
+        raise ValueError("style batch projection limits must be positive")
+    eligible = 0
+    groupable = 0
+    groups: list[list[str]] = []
+    current_group: list[str] = []
+    current_characters = 0
+
+    def flush() -> None:
+        nonlocal current_group, current_characters
+        if current_group:
+            groups.append(current_group)
+            current_group = []
+            current_characters = 0
+
+    for chunk in chunks:
+        task = chunk_task(chunk)
+        if task.get("passthrough") or task.get("fixed_translation") is not None:
+            flush()
+            continue
+        eligible += 1
+        chunk_id = str(chunk["id"])
+        input_path = runner.stage_output_path(
+            article_dir,
+            chunk_id,
+            str(chunk["output_file"]),
+            "revision",
+        )
+        if not runner.nonempty(input_path):
+            flush()
+            continue
+        text = input_path.read_text(encoding="utf-8")
+        protected, _mapping, _typed = runner.protect_stage_text(text)
+        segments = runner.split_protected_model_input(
+            protected,
+            runner.MODEL_STRUCTURE_SEGMENT_LIMIT,
+        )
+        safe = len(segments) == 1 and runner._MODEL_SENTINEL_RE.search(segments[0]) is None
+        if not safe:
+            flush()
+            continue
+        groupable += 1
+        if (
+            current_group
+            and (
+                len(current_group) >= max_group_size
+                or current_characters + len(text) > max_group_characters
+            )
+        ):
+            flush()
+        current_group.append(chunk_id)
+        current_characters += len(text)
+    flush()
+    non_groupable = eligible - groupable
+    per_stage_groups = len(groups) + non_groupable
+    current_style_requests = eligible * 2
+    projected_style_requests = per_stage_groups * 2
+    reduction = (
+        (current_style_requests - projected_style_requests) / current_style_requests
+        if current_style_requests
+        else 0.0
+    )
+    return {
+        "schema_version": 1,
+        "execution_mode": "observational_projection_only",
+        "eligible_chunks": eligible,
+        "groupable_chunks": groupable,
+        "non_groupable_chunks": non_groupable,
+        "projected_groups": per_stage_groups,
+        "max_group_size": max_group_size,
+        "max_group_characters": max_group_characters,
+        "current_style_requests": current_style_requests,
+        "projected_style_requests": projected_style_requests,
+        "projected_request_reduction_fraction": reduction,
+        "groups": groups,
+    }
+
+
 def _qc_retry_context(
     article_dir: Path,
     chunk: dict[str, Any],
@@ -1363,6 +1451,22 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         path=article_dir / REVISION_FILE,
         text=revision,
         input_hash=revision_signature,
+        status=status,
+        status_path=status_path,
+    )
+
+    style_projection = _style_batch_projection(article_dir, chunks, chunk_task)
+    projection_text = json.dumps(
+        style_projection,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    _deterministic_phase(
+        name="style_batch_projection",
+        path=article_dir / "style_batch_projection.json",
+        text=projection_text,
+        input_hash=runner.text_hash(projection_text),
         status=status,
         status_path=status_path,
     )
