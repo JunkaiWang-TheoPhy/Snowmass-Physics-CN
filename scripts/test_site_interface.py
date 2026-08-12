@@ -1,8 +1,22 @@
 from pathlib import Path
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urlparse
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class _PaperResourceParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.urls = []
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        for attribute in ("href", "src", "data-papers-url"):
+            if values.get(attribute):
+                self.urls.append(values[attribute])
 
 
 class SiteInterfaceTest(unittest.TestCase):
@@ -13,14 +27,32 @@ class SiteInterfaceTest(unittest.TestCase):
         netlify = (ROOT / "netlify.toml").read_text()
 
         self.assertIn('id="paper-page"', paper_html)
-        self.assertIn('../data/papers.json', paper_html)
-        self.assertIn('src="../paper-page.js"', paper_html)
+        self.assertIn('/data/papers.json', paper_html)
+        self.assertIn('src="/paper-page.js"', paper_html)
         self.assertIn("window.location.pathname", paper_script)
         self.assertIn("publication_translation_url", paper_script)
         self.assertIn('from = "/paper/*"', netlify)
         self.assertIn('to = "/paper/index.html"', netlify)
         self.assertIn('status = 200', netlify)
         self.assertIn('params.get("paper")', app_script)
+
+    def test_paper_template_resources_resolve_from_a_permanent_nested_url(self):
+        parser = _PaperResourceParser()
+        parser.feed((ROOT / "site/paper/index.html").read_text())
+        origin = "https://snowmass-physics-cn.netlify.app"
+        permanent_url = f"{origin}/paper/2203.07506/"
+        internal_paths = {
+            urlparse(urljoin(permanent_url, value)).path
+            for value in parser.urls
+            if not value.startswith(("mailto:", "https://github.com"))
+        }
+
+        self.assertIn("/styles.css", internal_paths)
+        self.assertIn("/paper-page.js", internal_paths)
+        self.assertIn("/data/papers.json", internal_paths)
+        self.assertNotIn("/paper/styles.css", internal_paths)
+        self.assertNotIn("/paper/paper-page.js", internal_paths)
+        self.assertNotIn("/paper/data/papers.json", internal_paths)
 
     def test_catalog_cards_link_to_permanent_paper_pages(self):
         script = (ROOT / "site/app.js").read_text()
