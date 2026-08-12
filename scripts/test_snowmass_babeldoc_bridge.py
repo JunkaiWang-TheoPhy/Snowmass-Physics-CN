@@ -63,14 +63,17 @@ class BabelDocWorkspaceTests(unittest.TestCase):
 
         self.assertFalse(article.exists())
 
-    def test_placeholder_validation_rejects_reordered_formula_identities(self) -> None:
+    def test_placeholder_validation_allows_reordering_but_rejects_identity_drift(self) -> None:
         bridge = load_bridge()
 
         self.assertTrue(
             bridge.placeholder_sequence_matches("A {v1} B {v2}", "甲 {v1} 乙 {v2}")
         )
-        self.assertFalse(
+        self.assertTrue(
             bridge.placeholder_sequence_matches("A {v1} B {v2}", "甲 {v2} 乙 {v1}")
+        )
+        self.assertFalse(
+            bridge.placeholder_sequence_matches("A {v1} B {v2}", "甲 {v2} 乙 {v2}")
         )
 
     def test_materializes_lazy_passthrough_values_before_xml_serialization(self) -> None:

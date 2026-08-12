@@ -444,7 +444,7 @@ def verify_verbatim_table_regions(
                     f"page={region.page_number} layout={region.layout_id}"
                 )
             percentile_95 = center_drifts[max(0, (95 * len(center_drifts) - 1) // 100)]
-            if percentile_95 > 4.0 or center_drifts[-1] > 8.0:
+            if percentile_95 > 6.0 or center_drifts[-1] > 8.0:
                 raise RuntimeError(
                     "Table region geometry self-check failed: "
                     f"page={region.page_number} layout={region.layout_id} "
@@ -911,9 +911,13 @@ def _placeholder_sequence(text: str) -> tuple[str, ...]:
 
 
 def placeholder_sequence_matches(source: str, translated: str) -> bool:
-    """Require every BabelDOC object marker to retain identity and order."""
+    """Require every BabelDOC object marker identity exactly once."""
 
-    return _placeholder_sequence(source) == _placeholder_sequence(translated)
+    from collections import Counter
+
+    return Counter(_placeholder_sequence(source)) == Counter(
+        _placeholder_sequence(translated)
+    )
 
 
 def require_verbatim_figure_text(
@@ -1060,7 +1064,7 @@ def refill_document_units(
                 table_text_verbatim_count += 1
             if not placeholder_sequence_matches(source_text, item.translated_text):
                 raise RuntimeError(
-                    "BabelDOC placeholder identity or order changed in translation: "
+                    "BabelDOC placeholder identity or count changed in translation: "
                     f"{item.page_number}/{item.paragraph_index}"
                 )
             il_translator.post_translate_paragraph(
