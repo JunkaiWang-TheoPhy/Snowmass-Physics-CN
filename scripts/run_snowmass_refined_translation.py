@@ -28,6 +28,7 @@ REVISION_FILE = "05-revision.md"
 FINAL_FILE = "translation.md"
 NO_ACTIONABLE_CRITIQUE = "NO_ACTIONABLE_CHUNK_CRITIQUE"
 MANUAL_CORRECTIONS_FILE = "manual_corrections.json"
+TRACKED_HARD_CONSTRAINTS = SCRIPT_DIR.parent / "translations/snowmass-hard-constraints.json"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -254,6 +255,47 @@ def _reference_chunk_ids(article_dir: Path, chunks: list[dict[str, Any]]) -> set
         if heading in {"references", "bibliography"}:
             return {str(item["id"]) for item in chunks[index:]}
     return set()
+
+
+def _hard_exact_translations(
+    article_dir: Path,
+    record_id: str,
+    *,
+    policy_path: Path = TRACKED_HARD_CONSTRAINTS,
+) -> dict[str, str]:
+    """Load document-level exact translations used for repeated PDF artifacts."""
+
+    path = article_dir / "hard_constraints.json"
+    if path.is_file():
+        value = _load_json(path)
+        if value.get("schema_version") != 1:
+            raise RuntimeError(f"Unsupported hard constraint schema: {path}")
+        if value.get("record_id") not in {None, record_id}:
+            raise RuntimeError(f"Hard constraint record mismatch: {path}")
+        rules = value.get("exact_translations", [])
+    elif policy_path.is_file():
+        policy = _load_json(policy_path)
+        if policy.get("schema_version") != 1 or not isinstance(
+            policy.get("records"), dict
+        ):
+            raise RuntimeError(f"Invalid tracked hard constraint policy: {policy_path}")
+        record_rules = policy["records"].get(record_id, {})
+        if not isinstance(record_rules, dict):
+            raise RuntimeError(f"Invalid tracked hard constraints for {record_id}")
+        rules = record_rules.get("exact_translations", [])
+        path = policy_path
+    else:
+        return {}
+    mapping: dict[str, str] = {}
+    for rule in rules:
+        source = " ".join(str(rule.get("source", "")).split()).casefold()
+        target = str(rule.get("target", "")).strip()
+        if not source or not target:
+            raise RuntimeError(f"Incomplete exact translation rule: {path}")
+        if source in mapping and mapping[source] != target:
+            raise RuntimeError(f"Conflicting exact translation rule: {path}")
+        mapping[source] = target
+    return mapping
 
 
 def _apply_manual_corrections(
@@ -593,6 +635,7 @@ def run_refined_article(
     if not chunks:
         raise RuntimeError(f"No prepared chunks for {record_id}")
     reference_ids = _reference_chunk_ids(article_dir, chunks)
+    hard_exact_translations = _hard_exact_translations(article_dir, record_id)
     fragile_fragment_ids = {
         str(chunk["id"])
         for chunk in chunks
@@ -605,6 +648,13 @@ def run_refined_article(
 
     def chunk_task(chunk: dict[str, Any]) -> dict[str, Any]:
         chunk_id = str(chunk["id"])
+        source_text = (article_dir / str(chunk["source_file"])).read_text(
+            encoding="utf-8"
+        )
+        normalized_source = " ".join(source_text.split()).casefold()
+        fixed_translation = hard_exact_translations.get(normalized_source)
+        if fixed_translation is not None and source_text.endswith("\n"):
+            fixed_translation += "\n"
         passthrough_reason = None
         if chunk_id in reference_ids:
             passthrough_reason = "reference_section_passthrough"
@@ -616,6 +666,10 @@ def run_refined_article(
             "chunk": chunk,
             "passthrough": passthrough_reason is not None,
             "passthrough_reason": passthrough_reason,
+            "fixed_translation": fixed_translation,
+            "fixed_translation_reason": (
+                "hard_exact_translation" if fixed_translation is not None else None
+            ),
             "retry_uncertain": retry_uncertain,
         }
 

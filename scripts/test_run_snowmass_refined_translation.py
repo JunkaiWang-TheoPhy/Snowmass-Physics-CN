@@ -49,6 +49,61 @@ def completed_response(text: str, response_id: str) -> dict[str, object]:
 
 
 class RefinedOrchestratorTests(unittest.TestCase):
+    def test_hard_exact_translations_bind_repeated_pdf_headers_once(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "hard_constraints.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "record_id": "arxiv:allowed",
+                        "exact_translations": [
+                            {
+                                "source": "Repeated running header",
+                                "target": "统一运行页眉",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            mapping = module._hard_exact_translations(article, "arxiv:allowed")
+
+        self.assertEqual(mapping, {"repeated running header": "统一运行页眉"})
+
+    def test_hard_exact_translations_use_tracked_policy_when_article_has_none(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            article = root / "article"
+            article.mkdir()
+            policy = root / "policy.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "records": {
+                            "arxiv:allowed": {
+                                "exact_translations": [
+                                    {"source": "Header", "target": "统一页眉"}
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            mapping = module._hard_exact_translations(
+                article,
+                "arxiv:allowed",
+                policy_path=policy,
+            )
+
+        self.assertEqual(mapping, {"header": "统一页眉"})
+
     def test_chunk_critique_context_is_local_and_marks_noop(self) -> None:
         module = load_module()
         critique = "chunk0001: 修正甲。\nchunk0002: 修正乙。\n"

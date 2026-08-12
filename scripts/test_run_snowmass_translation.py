@@ -1095,6 +1095,37 @@ class ProcessChunkTests(unittest.TestCase):
             )
         )
 
+    def test_fixed_document_text_is_reused_across_all_stages_without_model_calls(self) -> None:
+        self.task["fixed_translation"] = "统一运行页眉\n"
+        self.task["fixed_translation_reason"] = "hard_exact_translation"
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("fixed document text must not call the model")
+
+        result = RUNNER.process_chunk(self.task, NoCallClient(), [])
+
+        self.assertEqual(result["status"], "complete")
+        for filename in (
+            "stage1_chunk0001.md",
+            "stage2_chunk0001.md",
+            "stage3_chunk0001.md",
+            "output_chunk0001.md",
+        ):
+            self.assertEqual(
+                (self.article_dir / filename).read_text(encoding="utf-8"),
+                "统一运行页眉\n",
+            )
+        status = json.loads(
+            (self.article_dir / "chunk_status/chunk0001.json").read_text(encoding="utf-8")
+        )
+        self.assertTrue(
+            all(
+                stage["decision"]["reason"] == "hard_exact_translation"
+                for stage in status["stages"].values()
+            )
+        )
+
     def test_structure_dense_stage_uses_resumable_bounded_subrequests(self) -> None:
         source = " ".join(
             f"part $x_{{{index}}}$" for index in range(66)

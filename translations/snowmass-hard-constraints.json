@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "records": {
+    "arxiv:2203.07506": {
+      "exact_translations": [
+        {
+          "source": "Cosmology and fundamental physics from large-scale structure",
+          "target": "基于大尺度结构的宇宙学与基础物理",
+          "scope": "all_occurrences",
+          "reason": "Canonical running header; the PDF repeats one TeX header definition on each page."
+        },
+        {
+          "source": "References",
+          "target": "参考文献",
+          "scope": "all_occurrences",
+          "reason": "Canonical Chinese section heading while preserving bibliography entries verbatim."
+        }
+      ]
+    }
+  }
+}

@@ -1133,6 +1133,11 @@ def process_chunk(
         current = initial_text_path.read_text(encoding="utf-8")
     else:
         current = source
+    fixed_translation = task.get("fixed_translation")
+    if fixed_translation is not None:
+        if not isinstance(fixed_translation, str) or not fixed_translation.strip():
+            raise RuntimeError(f"Fixed translation is blank for {chunk_id}")
+        current = fixed_translation
     stage_sequence = stages if stages is not None else STAGES
     for stage in stage_sequence:
         output_path = stage_output_path(article_dir, chunk_id, chunk["output_file"], stage)
@@ -1356,6 +1361,11 @@ def process_chunk(
         decision = stage_decision(stage, current, selected_terms)
         if stage == "revision" and "NO_ACTIONABLE_CHUNK_CRITIQUE" in paper_context:
             decision = StageDecision(False, "revision_no_actionable_chunk_critique")
+        if fixed_translation is not None:
+            decision = StageDecision(
+                False,
+                str(task.get("fixed_translation_reason") or "hard_exact_translation"),
+            )
         if passthrough:
             decision = StageDecision(
                 False,

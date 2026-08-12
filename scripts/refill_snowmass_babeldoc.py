@@ -9,13 +9,16 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
-REFILL_SCHEMA_VERSION = 3
+DEFAULT_GLOSSARY = ROOT / "translations/snowmass-global-glossary.json"
+DEFAULT_HARD_CONSTRAINTS = ROOT / "translations/snowmass-hard-constraints.json"
+REFILL_SCHEMA_VERSION = 5
 
 
 def _load_bridge():
@@ -108,10 +111,269 @@ def _translation_inputs(article_dir: Path, manifest: dict[str, Any]):
     return translations, hashes
 
 
+def _normalized_phrase(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def _term_match(text: str, term: str) -> re.Match[str] | None:
+    escaped = re.escape(term).replace(r"\ ", r"\s+")
+    if term and term[0].isascii() and term[0].isalnum():
+        escaped = r"(?<![A-Za-z0-9])" + escaped
+    if term and term[-1].isascii() and term[-1].isalnum():
+        escaped += r"(?![A-Za-z0-9])"
+    return re.search(escaped, text, flags=re.IGNORECASE)
+
+
+def _first_use_terms(
+    translations: list[Any],
+    glossary: list[dict[str, Any]],
+    *,
+    eligible_indices: list[int] | None = None,
+) -> list[tuple[int, int, int, dict[str, Any]]]:
+    candidates: list[tuple[int, int, int, dict[str, Any]]] = []
+    for term in glossary:
+        if term.get("first_use") is not True:
+            continue
+        source_term = str(term.get("source", "")).strip()
+        target_term = str(term.get("target", "")).strip()
+        if not source_term or not target_term or source_term == target_term:
+            continue
+        indices = eligible_indices if eligible_indices is not None else list(range(len(translations)))
+        for translation_index in indices:
+            translation = translations[translation_index]
+            match = _term_match(translation.source_text, source_term)
+            if match is not None:
+                candidates.append(
+                    (translation_index, match.start(), match.end(), term)
+                )
+                break
+
+    accepted: list[tuple[int, int, int, dict[str, Any]]] = []
+    for candidate in sorted(candidates, key=lambda item: (item[0], item[1], -(item[2] - item[1]))):
+        index, start, end, _term = candidate
+        if any(
+            other_index == index and not (end <= other_start or start >= other_end)
+            for other_index, other_start, other_end, _other_term in accepted
+        ):
+            continue
+        accepted.append(candidate)
+    return accepted
+
+
+def _insert_first_use(text: str, term: dict[str, Any]) -> str:
+    source_term = str(term["source"]).strip()
+    target_term = str(term["target"]).strip()
+    target_index = text.find(target_term)
+    if target_index < 0:
+        raise RuntimeError(f"locked first-use target is missing: {target_term}")
+    suffix = text[target_index + len(target_term) :]
+    existing = re.match(r"\s*[（(]([^）)]*)[）)]", suffix)
+    if existing is not None and source_term.casefold() in existing.group(1).casefold():
+        return text
+    acronym = str(term.get("acronym", "")).strip()
+    definition = source_term + (f"，{acronym}" if acronym else "")
+    insertion_at = target_index + len(target_term)
+    return text[:insertion_at] + f"（{definition}）" + text[insertion_at:]
+
+
+def prepare_publication_translations(
+    article_dir: Path,
+    manifest: dict[str, Any],
+    translations: list[Any],
+    *,
+    constraints: dict[str, Any],
+    glossary: list[dict[str, Any]],
+) -> tuple[list[Any], dict[str, Any]]:
+    """Create deterministic publication-stage chunks and enforce hard constraints."""
+
+    if constraints.get("schema_version", 1) != 1:
+        raise RuntimeError("Unsupported publication constraint schema")
+    chunks = sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0))
+    if len(chunks) != len(translations):
+        raise RuntimeError("Publication chunks do not match refill translations")
+    prepared_texts = [translation.translated_text for translation in translations]
+    exact_occurrences = 0
+    for rule in constraints.get("exact_translations", []):
+        source = str(rule.get("source", "")).strip()
+        target = str(rule.get("target", "")).strip()
+        if not source or not target:
+            raise RuntimeError("Exact translation rule is incomplete")
+        matched = 0
+        for index, translation in enumerate(translations):
+            if _normalized_phrase(translation.source_text) != _normalized_phrase(source):
+                continue
+            trailing_newline = "\n" if translation.translated_text.endswith("\n") else ""
+            prepared_texts[index] = target + trailing_newline
+            matched += 1
+        if matched == 0:
+            raise RuntimeError(f"exact translation source was not found: {source}")
+        exact_occurrences += matched
+
+    eligible_first_use_indices: list[int] = []
+    in_references = False
+    for index, (chunk, translation) in enumerate(zip(chunks, translations, strict=True)):
+        normalized_source = _normalized_phrase(translation.source_text).rstrip(":")
+        if normalized_source in {"references", "bibliography"}:
+            in_references = True
+        if not in_references and str(chunk.get("layout_label", "")) != "title":
+            eligible_first_use_indices.append(index)
+    first_use = _first_use_terms(
+        translations,
+        glossary,
+        eligible_indices=eligible_first_use_indices,
+    )
+    for translation_index, _start, _end, term in first_use:
+        prepared_texts[translation_index] = _insert_first_use(
+            prepared_texts[translation_index], term
+        )
+
+    publication_dir = article_dir / "publication_chunks"
+    prepared: list[Any] = []
+    chunk_hashes: dict[str, str] = {}
+    for chunk, translation, text in zip(chunks, translations, prepared_texts, strict=True):
+        output = publication_dir / f"{chunk['id']}.md"
+        temporary = output.with_name(output.name + ".tmp")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, output)
+        chunk_hashes[str(chunk["id"])] = _sha256(output)
+        prepared.append(
+            BRIDGE.RefillTranslation(
+                page_number=translation.page_number,
+                paragraph_index=translation.paragraph_index,
+                source_text=translation.source_text,
+                translated_text=text,
+            )
+        )
+    return prepared, {
+        "ok": True,
+        "exact_translation_occurrences": exact_occurrences,
+        "first_use_terms": len(first_use),
+        "publication_chunk_sha256": chunk_hashes,
+    }
+
+
+def _load_constraints(
+    article_dir: Path,
+    record_id: str,
+    *,
+    policy_path: Path = DEFAULT_HARD_CONSTRAINTS,
+) -> dict[str, Any]:
+    path = article_dir / "hard_constraints.json"
+    if path.is_file():
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise RuntimeError(f"Hard constraints must be a JSON object: {path}")
+        return value
+    if not policy_path.is_file():
+        return {"schema_version": 1, "record_id": record_id, "exact_translations": []}
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    if not isinstance(policy, dict) or policy.get("schema_version") != 1:
+        raise RuntimeError(f"Invalid tracked hard constraint policy: {policy_path}")
+    records = policy.get("records")
+    if not isinstance(records, dict):
+        raise RuntimeError(f"Tracked hard constraint policy has no records: {policy_path}")
+    record_rules = records.get(record_id, {})
+    if not isinstance(record_rules, dict):
+        raise RuntimeError(f"Tracked hard constraints are invalid for {record_id}")
+    return {
+        "schema_version": 1,
+        "record_id": record_id,
+        "exact_translations": record_rules.get("exact_translations", []),
+    }
+
+
+def _load_glossary(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    value = json.loads(path.read_text(encoding="utf-8"))
+    terms = value.get("terms") if isinstance(value, dict) else None
+    if not isinstance(terms, list) or not all(isinstance(term, dict) for term in terms):
+        raise RuntimeError(f"Glossary must contain a terms list: {path}")
+    return terms
+
+
+def _reference_page_numbers(article_dir: Path, manifest: dict[str, Any]) -> set[int]:
+    chunks = sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0))
+    reference_page: int | None = None
+    last_page = 0
+    for chunk in chunks:
+        page_number = int(chunk["page_number"])
+        last_page = max(last_page, page_number)
+        source_path = article_dir / str(chunk["source_file"])
+        heading = _normalized_phrase(source_path.read_text(encoding="utf-8")).rstrip(":")
+        if reference_page is None and heading in {"references", "bibliography"}:
+            reference_page = page_number
+    if reference_page is None:
+        return set()
+    return set(range(reference_page, last_page + 1))
+
+
+def _verbatim_header_translation(
+    article_dir: Path,
+    manifest: dict[str, Any],
+    reference_pages: set[int],
+    constraints: dict[str, Any],
+) -> dict[str, str] | None:
+    if not reference_pages:
+        return None
+    by_source: dict[str, dict[str, Any]] = {}
+    for chunk in manifest.get("chunks", []):
+        page_number = int(chunk["page_number"])
+        if page_number not in reference_pages:
+            continue
+        raw = (article_dir / str(chunk["source_file"])).read_text(encoding="utf-8")
+        normalized = _normalized_phrase(raw)
+        if len(normalized) > 200 or len(re.findall(r"[A-Za-z]", normalized)) < 4:
+            continue
+        item = by_source.setdefault(
+            normalized,
+            {"source": " ".join(raw.split()), "pages": set()},
+        )
+        item["pages"].add(page_number)
+    repeated = {
+        normalized: item
+        for normalized, item in by_source.items()
+        if item["pages"] == reference_pages
+        and normalized not in {"references", "bibliography"}
+    }
+    if not repeated:
+        return None
+    exact = {
+        _normalized_phrase(str(rule.get("source", ""))): str(rule.get("target", "")).strip()
+        for rule in constraints.get("exact_translations", [])
+    }
+    matches = [
+        {"source": item["source"], "target": exact[normalized]}
+        for normalized, item in repeated.items()
+        if exact.get(normalized)
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            "Reference pages contain a repeated running header without one canonical exact translation"
+        )
+    return matches[0]
+
+
+def _verbatim_section_heading_translations(
+    constraints: dict[str, Any], reference_pages: set[int]
+) -> list[dict[str, str]]:
+    if not reference_pages:
+        return []
+    return [
+        {"source": str(rule["source"]).strip(), "target": str(rule["target"]).strip()}
+        for rule in constraints.get("exact_translations", [])
+        if _normalized_phrase(str(rule.get("source", ""))).rstrip(":")
+        in {"references", "bibliography"}
+        and str(rule.get("target", "")).strip()
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--article-dir", type=Path, required=True)
     parser.add_argument("--rights-manifest", type=Path, default=DEFAULT_RIGHTS_MANIFEST)
+    parser.add_argument("--glossary", type=Path, default=DEFAULT_GLOSSARY)
     args = parser.parse_args(argv)
     manifest = json.loads((args.article_dir / "manifest.json").read_text(encoding="utf-8"))
     record_id = manifest.get("record_id")
@@ -124,6 +386,30 @@ def main(argv: list[str] | None = None) -> int:
     source_pdf = _resolve_source_pdf(str(manifest["source_pdf_path"]))
     ir_xml = args.article_dir / str(manifest["babeldoc_ir_xml_file"])
     translations, chunk_hashes = _translation_inputs(args.article_dir, manifest)
+    constraints = _load_constraints(args.article_dir, str(record_id))
+    constraint_record = constraints.get("record_id")
+    if constraint_record is not None and constraint_record != record_id:
+        raise RuntimeError(
+            f"Hard constraint record mismatch: expected {record_id}, got {constraint_record}"
+        )
+    glossary = _load_glossary(args.glossary)
+    translations, publication_qc = prepare_publication_translations(
+        args.article_dir,
+        manifest,
+        translations,
+        constraints=constraints,
+        glossary=glossary,
+    )
+    reference_pages = _reference_page_numbers(args.article_dir, manifest)
+    verbatim_header = _verbatim_header_translation(
+        args.article_dir,
+        manifest,
+        reference_pages,
+        constraints,
+    )
+    verbatim_section_headings = _verbatim_section_heading_translations(
+        constraints, reference_pages
+    )
     signature_payload = {
         "refill_schema_version": REFILL_SCHEMA_VERSION,
         "babeldoc_version": BRIDGE.BABELDOC_VERSION,
@@ -132,6 +418,12 @@ def main(argv: list[str] | None = None) -> int:
         "source_pdf_sha256": _sha256(source_pdf),
         "ir_xml_sha256": _sha256(ir_xml),
         "chunks": chunk_hashes,
+        "publication_chunks": publication_qc["publication_chunk_sha256"],
+        "hard_constraints": constraints,
+        "first_use_glossary": [term for term in glossary if term.get("first_use") is True],
+        "verbatim_page_numbers": sorted(reference_pages),
+        "verbatim_header_translation": verbatim_header,
+        "verbatim_section_heading_translations": verbatim_section_headings,
     }
     signature = hashlib.sha256(
         json.dumps(signature_payload, sort_keys=True).encode("utf-8")
@@ -170,6 +462,9 @@ def main(argv: list[str] | None = None) -> int:
         source_pdf=source_pdf,
         working_dir=args.article_dir / ".babeldoc-render-work",
         output_dir=render_dir,
+        verbatim_page_numbers=reference_pages,
+        verbatim_header_translation=verbatim_header,
+        verbatim_section_heading_translations=verbatim_section_headings,
     )
     _atomic_json(
         status_path,
@@ -189,6 +484,14 @@ def main(argv: list[str] | None = None) -> int:
             "dual_pdf_file": str(rendered.dual_pdf_path.relative_to(args.article_dir)),
             "dual_pdf_sha256": _sha256(rendered.dual_pdf_path),
             "chunks": chunk_hashes,
+            "publication_qc": publication_qc,
+            "reference_qc": {
+                "page_numbers": list(rendered.verbatim_pages),
+                "verified": rendered.verbatim_verified,
+                "reference_numbers": rendered.reference_numbers,
+                "canonical_header_occurrences": rendered.canonical_header_occurrences,
+                "section_heading_occurrences": rendered.section_heading_occurrences,
+            },
         },
     )
     return 0

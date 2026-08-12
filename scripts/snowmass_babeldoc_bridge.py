@@ -15,7 +15,7 @@ from typing import Any, Iterable
 
 
 BABELDOC_VERSION = "0.6.4"
-IR_PIPELINE_VERSION = 3
+IR_PIPELINE_VERSION = 4
 # Corrupt/pathological IR guard only. Model-facing structure density is handled
 # separately by resumable subrequest segmentation in the translation runner.
 MAX_STRUCTURE_COUNT = 512
@@ -56,6 +56,11 @@ class RefillResult:
 class RenderedPdfResult:
     mono_pdf_path: Path
     dual_pdf_path: Path
+    verbatim_pages: tuple[int, ...] = ()
+    verbatim_verified: bool = True
+    reference_numbers: dict[str, Any] | None = None
+    canonical_header_occurrences: int = 0
+    section_heading_occurrences: int = 0
 
 
 _BABELDOC_PLACEHOLDER = re.compile(
@@ -92,6 +97,265 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     temporary = destination.with_name(destination.name + ".tmp")
     shutil.copyfile(source, temporary)
     os.replace(temporary, destination)
+
+
+def _normalized_page_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def restore_verbatim_pages(
+    *,
+    source_pdf: Path,
+    mono_pdf: Path,
+    dual_pdf: Path,
+    page_numbers: set[int],
+    canonical_header: dict[str, str] | None = None,
+    section_heading_translations: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Replace layout-sensitive passthrough pages with pristine source pages."""
+
+    import pymupdf
+
+    selected = sorted(set(page_numbers))
+    if not selected:
+        return {
+            "page_numbers": [],
+            "verified": True,
+            "reference_numbers": {
+                "count": 0,
+                "first": None,
+                "last": None,
+                "sequential": True,
+            },
+        }
+    source_pdf = Path(source_pdf)
+    mono_pdf = Path(mono_pdf)
+    dual_pdf = Path(dual_pdf)
+    with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono, pymupdf.open(
+        dual_pdf
+    ) as dual:
+        if mono.page_count != source.page_count or dual.page_count != source.page_count:
+            raise RuntimeError("Cannot restore verbatim pages across unequal page counts")
+        if selected[0] < 1 or selected[-1] > source.page_count:
+            raise RuntimeError("Verbatim page number is outside the source PDF")
+
+        canonical_header_occurrences = 0
+        section_heading_occurrences = 0
+        if canonical_header is not None:
+            source_header = str(canonical_header.get("source", "")).strip()
+            target_header = str(canonical_header.get("target", "")).strip()
+            if not source_header or not target_header:
+                raise RuntimeError("Canonical header rule is incomplete")
+            header_font_size: float | None = None
+            header_bbox: tuple[float, float, float, float] | None = None
+            for page_index, page in enumerate(mono):
+                if page_index + 1 in page_numbers:
+                    continue
+                for block in page.get_text("dict").get("blocks", []):
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            if span.get("text") == target_header:
+                                header_font_size = float(span["size"])
+                                header_bbox = tuple(float(value) for value in span["bbox"])
+                                break
+                        if header_font_size is not None:
+                            break
+                    if header_font_size is not None:
+                        break
+                if header_font_size is not None:
+                    break
+            for page_number in selected:
+                page = source[page_number - 1]
+                header_rects = [
+                    rect
+                    for rect in page.search_for(source_header)
+                    if rect.y1 <= page.rect.height * 0.12
+                ]
+                if len(header_rects) != 1:
+                    raise RuntimeError(
+                        f"Expected one running header on page {page_number}, "
+                        f"found {len(header_rects)}"
+                    )
+                rect = header_rects[0]
+                page.add_redact_annot(rect, fill=(1, 1, 1))
+                page.apply_redactions()
+                header_box = pymupdf.Rect(
+                    header_bbox[0] if header_bbox is not None else 0,
+                    max(
+                        0,
+                        (header_bbox[1] - 1)
+                        if header_bbox is not None
+                        else rect.y0 - 1,
+                    ),
+                    page.rect.width,
+                    min(
+                        page.rect.height,
+                        (
+                            header_bbox[1]
+                            if header_bbox is not None
+                            else rect.y0
+                        )
+                        + (header_font_size or rect.height * 0.75) * 1.7,
+                    ),
+                )
+                cached_fonts = sorted(
+                    (Path.home() / ".cache/babeldoc/fonts").glob(
+                        "LXGWWenKaiGB-Regular*.ttf"
+                    )
+                )
+                font_options: dict[str, Any] = (
+                    {
+                        "fontname": "snowmass-running-header",
+                        "fontfile": str(cached_fonts[0]),
+                    }
+                    if cached_fonts
+                    else {"fontname": "china-s"}
+                )
+                remaining = page.insert_textbox(
+                    header_box,
+                    target_header,
+                    fontsize=(
+                        header_font_size
+                        if header_font_size is not None
+                        else max(6, min(10, rect.height * 0.75))
+                    ),
+                    align=(
+                        pymupdf.TEXT_ALIGN_LEFT
+                        if header_bbox is not None
+                        else pymupdf.TEXT_ALIGN_CENTER
+                    ),
+                    color=(0, 0, 0),
+                    **font_options,
+                )
+                if remaining < 0:
+                    raise RuntimeError(
+                        f"Canonical running header did not fit on page {page_number}"
+                    )
+                canonical_header_occurrences += 1
+
+        for rule in section_heading_translations or []:
+            source_heading = str(rule.get("source", "")).strip()
+            target_heading = str(rule.get("target", "")).strip()
+            if not source_heading or not target_heading:
+                raise RuntimeError("Section heading translation rule is incomplete")
+            matched_rects: list[tuple[Any, Any]] = []
+            for page_number in selected:
+                page = source[page_number - 1]
+                matched_rects.extend(
+                    (page, rect)
+                    for rect in page.search_for(source_heading)
+                    if rect.y1 <= page.rect.height * 0.30
+                )
+            if len(matched_rects) != 1:
+                raise RuntimeError(
+                    f"Expected one verbatim section heading {source_heading!r}, "
+                    f"found {len(matched_rects)}"
+                )
+            page, rect = matched_rects[0]
+            page.add_redact_annot(rect, fill=(1, 1, 1))
+            page.apply_redactions()
+            heading_box = pymupdf.Rect(
+                rect.x0,
+                max(0, rect.y0 - 1),
+                min(page.rect.width, rect.x1 + 80),
+                min(page.rect.height, rect.y1 + 4),
+            )
+            remaining = page.insert_textbox(
+                heading_box,
+                target_heading,
+                fontname="china-s",
+                fontsize=max(7, min(13, rect.height * 0.78)),
+                align=pymupdf.TEXT_ALIGN_LEFT,
+                color=(0, 0, 0),
+            )
+            if remaining < 0:
+                raise RuntimeError(f"Translated section heading did not fit: {source_heading}")
+            section_heading_occurrences += 1
+
+        mono_rebuilt = pymupdf.open()
+        dual_rebuilt = pymupdf.open()
+        for page_index in range(source.page_count):
+            page_number = page_index + 1
+            if page_number not in page_numbers:
+                mono_rebuilt.insert_pdf(mono, from_page=page_index, to_page=page_index)
+                dual_rebuilt.insert_pdf(dual, from_page=page_index, to_page=page_index)
+                continue
+
+            mono_rebuilt.insert_pdf(source, from_page=page_index, to_page=page_index)
+            dual_page = dual[page_index]
+            rebuilt_page = dual_rebuilt.new_page(
+                width=dual_page.rect.width,
+                height=dual_page.rect.height,
+            )
+            midpoint = rebuilt_page.rect.width / 2
+            rebuilt_page.show_pdf_page(
+                pymupdf.Rect(0, 0, midpoint, rebuilt_page.rect.height),
+                source,
+                page_index,
+            )
+            rebuilt_page.show_pdf_page(
+                pymupdf.Rect(midpoint, 0, rebuilt_page.rect.width, rebuilt_page.rect.height),
+                source,
+                page_index,
+            )
+
+        mono_temporary = mono_pdf.with_name(mono_pdf.stem + ".verbatim.tmp.pdf")
+        dual_temporary = dual_pdf.with_name(dual_pdf.stem + ".verbatim.tmp.pdf")
+        mono_rebuilt.save(mono_temporary, garbage=4, deflate=True)
+        dual_rebuilt.save(dual_temporary, garbage=4, deflate=True)
+        mono_rebuilt.close()
+        dual_rebuilt.close()
+
+    os.replace(mono_temporary, mono_pdf)
+    os.replace(dual_temporary, dual_pdf)
+
+    selected_source_text: list[str] = []
+    with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono:
+        for page_number in selected:
+            source_page = source[page_number - 1]
+            output_page = mono[page_number - 1]
+            source_body = pymupdf.Rect(
+                0,
+                source_page.rect.height * 0.10,
+                source_page.rect.width,
+                source_page.rect.height,
+            )
+            output_body = pymupdf.Rect(
+                0,
+                output_page.rect.height * 0.10,
+                output_page.rect.width,
+                output_page.rect.height,
+            )
+            source_text = _normalized_page_text(source_page.get_text(clip=source_body))
+            output_text = _normalized_page_text(output_page.get_text(clip=output_body))
+            for rule in section_heading_translations or []:
+                source_text = source_text.replace(str(rule["source"]), "", 1).strip()
+                output_text = output_text.replace(str(rule["target"]), "", 1).strip()
+            if source_text != output_text:
+                raise RuntimeError(
+                    f"Verbatim page self-check failed on page {page_number}: "
+                    f"source={source_text!r}, output={output_text!r}"
+                )
+            selected_source_text.append(source_text)
+    numbers = [
+        int(value)
+        for value in re.findall(r"\[(\d+)\]", " ".join(selected_source_text))
+    ]
+    sequential = not numbers or numbers == list(range(1, numbers[-1] + 1))
+    if not sequential:
+        raise RuntimeError("Reference numbering self-check failed")
+    return {
+        "page_numbers": selected,
+        "verified": True,
+        "canonical_header_occurrences": canonical_header_occurrences,
+        "section_heading_occurrences": section_heading_occurrences,
+        "reference_numbers": {
+            "count": len(numbers),
+            "first": numbers[0] if numbers else None,
+            "last": numbers[-1] if numbers else None,
+            "sequential": sequential,
+        },
+    }
 
 
 def _validate_units(units: Iterable[DocumentUnit]) -> list[DocumentUnit]:
@@ -426,6 +690,9 @@ def render_translated_document(
     source_pdf: Path,
     working_dir: Path,
     output_dir: Path,
+    verbatim_page_numbers: set[int] | None = None,
+    verbatim_header_translation: dict[str, str] | None = None,
+    verbatim_section_heading_translations: list[dict[str, str]] | None = None,
 ) -> RenderedPdfResult:
     """Typeset translated BabelDOC XML IR into stable mono and dual PDFs."""
 
@@ -508,7 +775,27 @@ def render_translated_document(
         dual_pdf = output_dir / "translated_dual.pdf"
         _atomic_copy(Path(result.mono_pdf_path), mono_pdf)
         _atomic_copy(Path(result.dual_pdf_path), dual_pdf)
-        return RenderedPdfResult(mono_pdf, dual_pdf)
+        verbatim_report = restore_verbatim_pages(
+            source_pdf=source_pdf,
+            mono_pdf=mono_pdf,
+            dual_pdf=dual_pdf,
+            page_numbers=set(verbatim_page_numbers or ()),
+            canonical_header=verbatim_header_translation,
+            section_heading_translations=verbatim_section_heading_translations,
+        )
+        return RenderedPdfResult(
+            mono_pdf,
+            dual_pdf,
+            verbatim_pages=tuple(verbatim_report["page_numbers"]),
+            verbatim_verified=bool(verbatim_report["verified"]),
+            reference_numbers=verbatim_report["reference_numbers"],
+            canonical_header_occurrences=int(
+                verbatim_report.get("canonical_header_occurrences", 0)
+            ),
+            section_heading_occurrences=int(
+                verbatim_report.get("section_heading_occurrences", 0)
+            ),
+        )
     finally:
         if doc_pdf is not None:
             doc_pdf.close()

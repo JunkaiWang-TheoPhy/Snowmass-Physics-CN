@@ -22,3 +22,10 @@ translations/<record-slug>/
 - `metadata.json`：来源、许可证、授权依据、模型、阶段、审校者和变更声明。
 
 完整要求见 [`../CONTRIBUTING.md`](../CONTRIBUTING.md) 和 [`../docs/RIGHTS_PROTOCOL.md`](../docs/RIGHTS_PROTOCOL.md)。
+
+## 发布级硬约束
+
+- `snowmass-global-glossary.json` 是可版本化的中英术语真源。`first_use=true` 的术语在每篇摘要或正文首次出现时必须写成“中文（English，缩写）”；后续才可只用锁定中文或缩写。
+- `snowmass-hard-constraints.json` 保存逐篇精确对照。运行页眉等由 TeX 一次定义、却在 PDF 每页重复出现的对象只确定一次译法，所有重复实例必须复用，不能逐页调用模型。
+- 参考文献条目保持原文和原排版，不进入模型翻译或 BabelDOC 二次排版；仅运行页眉和 `References` 标题按精确对照替换。
+- 发布前自检必须确认：所有精确对照已应用、首次术语对照存在、页眉文字/字号/水平位置一致、参考文献正文与原 PDF 一致、编号从 `[1]` 到 `[N]` 连续。任一检查失败时不得装订发布版。

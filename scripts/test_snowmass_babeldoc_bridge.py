@@ -312,6 +312,114 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             self.assertNotIn("abandon", rendered_text)
             self.assertNotIn("S\nnowmass", rendered_text)
 
+    def test_restore_verbatim_pages_keeps_reference_layout_in_mono_and_dual(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "source-real.pdf"
+        mono = self.root / "mono.pdf"
+        dual = self.root / "dual.pdf"
+
+        def write_pdf(
+            path: Path,
+            texts: list[str],
+            *,
+            width: float = 300,
+            running_header: str | None = None,
+            section_headings: dict[int, str] | None = None,
+        ) -> None:
+            document = pymupdf.open()
+            for page_number, value in enumerate(texts, 1):
+                page = document.new_page(width=width, height=400)
+                if running_header is not None:
+                    page.insert_text(
+                        (90, 20),
+                        running_header,
+                        fontsize=8,
+                        fontname="china-s" if any(ord(ch) > 127 for ch in running_header) else "helv",
+                    )
+                if section_headings and page_number in section_headings:
+                    page.insert_text((30, 45), section_headings[page_number], fontsize=11)
+                page.insert_text((30, 70), value)
+            document.save(path)
+            document.close()
+
+        write_pdf(
+            source,
+            ["SOURCE BODY", "[1] REFERENCE ONE", "[2] REFERENCE TWO"],
+            running_header="RUNNING HEADER",
+            section_headings={2: "References"},
+        )
+        write_pdf(
+            mono,
+            ["TRANSLATED BODY", "BROKEN ONE", "BROKEN TWO"],
+            running_header="统一页眉",
+        )
+        write_pdf(dual, ["DUAL BODY", "DUAL BROKEN ONE", "DUAL BROKEN TWO"], width=600)
+
+        report = bridge.restore_verbatim_pages(
+            source_pdf=source,
+            mono_pdf=mono,
+            dual_pdf=dual,
+            page_numbers={2, 3},
+            canonical_header={"source": "RUNNING HEADER", "target": "统一页眉"},
+            section_heading_translations=[
+                {"source": "References", "target": "参考文献"}
+            ],
+        )
+
+        self.assertEqual(report["page_numbers"], [2, 3])
+        self.assertEqual(
+            report["reference_numbers"],
+            {"count": 2, "first": 1, "last": 2, "sequential": True},
+        )
+        self.assertEqual(report["canonical_header_occurrences"], 2)
+        self.assertEqual(report["section_heading_occurrences"], 1)
+        with pymupdf.open(mono) as document:
+            self.assertIn("TRANSLATED BODY", document[0].get_text())
+            self.assertIn("REFERENCE ONE", document[1].get_text())
+            self.assertNotIn("BROKEN ONE", document[1].get_text())
+            self.assertIn("统一页眉", document[1].get_text())
+            self.assertNotIn("RUNNING HEADER", document[1].get_text())
+            self.assertIn("参考文献", document[1].get_text())
+            self.assertNotIn("References", document[1].get_text())
+            first_span = next(
+                span
+                for block in document[0].get_text("dict")["blocks"]
+                if "lines" in block
+                for line in block["lines"]
+                for span in line["spans"]
+                if span["text"] == "统一页眉"
+            )
+            restored_span = next(
+                span
+                for block in document[1].get_text("dict")["blocks"]
+                if "lines" in block
+                for line in block["lines"]
+                for span in line["spans"]
+                if span["text"] == "统一页眉"
+            )
+            self.assertAlmostEqual(first_span["size"], restored_span["size"], places=2)
+            self.assertAlmostEqual(
+                first_span["bbox"][0], restored_span["bbox"][0], places=2
+            )
+        with pymupdf.open(dual) as document:
+            text = document[1].get_text()
+            self.assertEqual(text.count("REFERENCE ONE"), 2)
+            self.assertNotIn("DUAL BROKEN ONE", text)
+
+    def test_render_result_records_verbatim_page_self_check(self) -> None:
+        bridge = load_bridge()
+        result = bridge.RenderedPdfResult(
+            Path("mono.pdf"),
+            Path("dual.pdf"),
+            verbatim_pages=(19, 20),
+            verbatim_verified=True,
+        )
+
+        self.assertEqual(result.verbatim_pages, (19, 20))
+        self.assertTrue(result.verbatim_verified)
+
 
 if __name__ == "__main__":
     unittest.main()
