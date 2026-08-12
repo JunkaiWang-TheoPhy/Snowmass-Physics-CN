@@ -484,7 +484,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .frontier-name strong { color: var(--glacier-dark); }
 .frontier-name span { margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 400; }
 
-.community-grid, .guide-grid, .participation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 58px; }
+.community-grid, .guide-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 58px; }
+.participation-grid { grid-template-columns: 1fr; display: grid; gap: 18px; margin-bottom: 58px; }
 .contributor-directory { margin-bottom: 58px; }
 .contributor-directory-heading { display: flex; gap: 20px; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
 .contributor-directory-heading h2 { margin: 0; font-family: "Songti SC", STSong, Georgia, serif; font-size: clamp(22px, 2.2vw, 30px); font-weight: 600; letter-spacing: -.025em; }
@@ -496,6 +497,14 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .contributor-profile { color: var(--glacier-dark); font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap; }
 .contributor-profile:hover { text-decoration: underline; }
 .open-call-card, .guide-step, .participation-card { display: flex; min-height: 300px; flex-direction: column; align-items: flex-start; padding: clamp(24px, 4vw, 42px); }
+.participation-card { min-height: 260px; border-left-width: 6px; }
+.participation-translation { border-left-color: var(--glacier); background: linear-gradient(110deg, color-mix(in srgb, var(--glacier) 16%, var(--surface-strong)) 0%, var(--surface-strong) 72%); }
+.participation-rights { border-left-color: var(--amber); background: linear-gradient(110deg, color-mix(in srgb, var(--amber) 17%, var(--surface-strong)) 0%, var(--surface-strong) 72%); }
+.participation-outreach { border-left-color: var(--pine); background: linear-gradient(110deg, color-mix(in srgb, var(--pine) 17%, var(--surface-strong)) 0%, var(--surface-strong) 72%); }
+.participation-rights .participation-number { color: var(--amber); }
+.participation-outreach .participation-number { color: var(--pine); }
+.participation-rights .button-primary { background: var(--amber); color: var(--ink); }
+.participation-outreach .button-primary { background: var(--pine); color: var(--ink); }
 .open-call-card h3, .guide-step h2, .participation-card h2 { margin: 20px 0 14px; font-family: "Songti SC", STSong, Georgia, serif; font-size: clamp(25px, 3vw, 38px); font-weight: 600; letter-spacing: -.035em; line-height: 1.25; }
 .open-call-card > p:not(.eyebrow) { margin: 0 0 28px; color: var(--muted); }
 .open-call-card .button { margin-top: auto; }

@@ -303,10 +303,17 @@ class CommunityPagesTest(unittest.TestCase):
         )
         self.assertIn("不代表 Snowmass、SLAC、arXiv、论文作者或任何机构为项目背书", html)
 
-    def test_guide_has_four_participation_paths(self):
+    def test_guide_merges_translation_and_review_into_three_stacked_routes(self):
         html = self.read("guide/index.html")
-        for text in ("参与翻译并署名", "核对、修改并提出建议", "协助申请翻译权限", "分发和宣传"):
+        self.assertEqual(html.count('<article class="participation-card '), 3)
+        for text in ("参与翻译与审校", "协助申请翻译权限", "分发和宣传"):
             self.assertIn(f'data-zh="{text}"', html)
+        for modifier in ("participation-translation", "participation-rights", "participation-outreach"):
+            self.assertIn(modifier, html)
+        for number in ("01", "02", "03"):
+            self.assertIn(f'>{number}</span>', html)
+        self.assertNotIn('data-zh="参与翻译并署名"', html)
+        self.assertNotIn('data-zh="核对、修改并提出建议"', html)
 
     def test_guide_splits_public_work_from_private_rights_contact(self):
         html = self.read("guide/index.html")

@@ -70,8 +70,12 @@ class SiteInterfaceTest(unittest.TestCase):
             ".guide-grid",
             ".guide-step",
             ".guide-actions",
+            ".participation-translation",
+            ".participation-rights",
+            ".participation-outreach",
         ):
             self.assertIn(selector, css)
+        self.assertIn(".participation-grid { grid-template-columns: 1fr;", css)
         self.assertIn(
             "background: conic-gradient(\n"
             "    var(--pine) 0 var(--allowed-angle),\n"
