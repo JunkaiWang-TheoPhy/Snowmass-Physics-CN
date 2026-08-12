@@ -182,6 +182,67 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertIn("original instructions' stricter count", calls[1][0])
         self.assertNotIn("no more than 30", calls[1][0])
 
+    def test_sharded_critique_repairs_non_exact_chunk_labels_auditably(self) -> None:
+        module = load_module()
+        chunks = []
+        for index in range(1, 3):
+            chunk_id = f"chunk{index:04d}"
+            source_text = f"English source {index}.\n"
+            (self.article / f"{chunk_id}.md").write_text(source_text, encoding="utf-8")
+            (self.article / f"stage2_{chunk_id}.md").write_text(
+                f"中文草稿 {index}。\n", encoding="utf-8"
+            )
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": index,
+                    "source_file": f"{chunk_id}.md",
+                    "output_file": f"output_{chunk_id}.md",
+                    "source_hash": module.runner.text_hash(source_text),
+                    "babeldoc_unit_id": f"p{index:04d}-i0000",
+                }
+            )
+        calls: list[str] = []
+
+        class Client:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                calls.append(instructions)
+                if len(calls) == 1:
+                    text = (
+                        "## Accuracy\n- chunk0001-0002: range label is invalid\n\n"
+                        "## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+                        "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+                        "## Summary\n- NO_ACTIONABLE_FINDINGS\n"
+                    )
+                else:
+                    text = (
+                        "## Accuracy\n- chunk0001: exact repaired finding\n\n"
+                        "## Native Voice\n- NO_ACTIONABLE_FINDINGS\n\n"
+                        "## Notes & Adaptation\n- NO_ACTIONABLE_FINDINGS\n\n"
+                        "## Summary\n- NO_ACTIONABLE_FINDINGS\n"
+                    )
+                return completed_response(text, f"response-{len(calls)}"), 0.1
+
+        status = {"record_id": "arxiv:allowed", "phases": {}}
+        critique = module._run_sharded_critique(
+            article_dir=self.article,
+            chunks=chunks,
+            client=Client(),
+            status=status,
+            status_path=self.article / "paper_status.json",
+            run_id="run-one",
+            budget_guard=None,
+            retry_uncertain=False,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("STRUCTURE-REPAIR", calls[1])
+        self.assertIn("chunk0001", calls[1])
+        self.assertIn("chunk0002", calls[1])
+        self.assertIn("- chunk0001: exact repaired finding", critique)
+        self.assertEqual(status["phases"]["critique_shard_repair_0001"]["status"], "complete")
+        self.assertTrue((self.article / "critique_shard_repairs/shard0001.md").exists())
+
     def test_sharded_critique_round_robins_before_global_cap(self) -> None:
         module = load_module()
         shard_outputs = []

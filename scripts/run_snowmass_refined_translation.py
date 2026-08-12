@@ -489,6 +489,29 @@ def _merge_sharded_critiques(
     )
 
 
+def _validate_shard_critique(
+    output: str,
+    *,
+    shard_index: int,
+    allowed_chunk_ids: set[str],
+) -> None:
+    """Reject findings that cannot be routed to one exact chunk in this shard."""
+
+    _require_sections(
+        output,
+        ("Accuracy", "Native Voice", "Notes & Adaptation", "Summary"),
+        f"critique shard {shard_index}",
+    )
+    _merge_sharded_critiques([output])
+    referenced = set(re.findall(r"\bchunk\d{4}\b", output, flags=re.I))
+    unexpected = sorted(item.lower() for item in referenced if item.lower() not in allowed_chunk_ids)
+    if unexpected:
+        raise RuntimeError(
+            f"critique shard {shard_index} references chunks outside its aligned input: "
+            + ", ".join(unexpected)
+        )
+
+
 def _run_sharded_critique(
     *,
     article_dir: Path,
@@ -512,6 +535,9 @@ def _run_sharded_critique(
 Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
 Report only high-impact actionable defects. Every actionable line must start with its exact chunk ID, for example `- chunk0001:`. Return at most {CRITIQUE_SHARD_MAX_FINDINGS} actionable lines total, ranked highest risk first. Each actionable line must contain at most {CRITIQUE_SHARD_MAX_FINDING_CHARACTERS} characters including its chunk ID. If none exist, write `- NO_ACTIONABLE_FINDINGS`. In every other empty section write only `- NO_ACTIONABLE_FINDINGS`. Do not quote passages, enumerate correct chunks, explain methods, add prose summaries, or rewrite the draft."""
     for index, (source_shard, draft_shard) in enumerate(shards, 1):
+        allowed_chunk_ids = {
+            item.lower() for item in re.findall(r"\bchunk\d{4}\b", source_shard, flags=re.I)
+        }
         output = _run_paper_model_phase(
             phase_name=f"critique_shard_{index:04d}",
             output_path=shard_dir / f"shard{index:04d}.md",
@@ -528,11 +554,38 @@ Report only high-impact actionable defects. Every actionable line must start wit
             budget_guard=budget_guard,
             retry_uncertain=retry_uncertain,
         )
-        _require_sections(
-            output,
-            ("Accuracy", "Native Voice", "Notes & Adaptation", "Summary"),
-            f"critique shard {index}",
-        )
+        try:
+            _validate_shard_critique(
+                output,
+                shard_index=index,
+                allowed_chunk_ids=allowed_chunk_ids,
+            )
+        except RuntimeError as validation_error:
+            repair_instructions = f"""STRUCTURE-REPAIR: Rewrite the supplied critique without adding, deleting, or strengthening findings.
+Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
+Every actionable line must use exactly one of these allowed chunk IDs followed immediately by a colon: {', '.join(sorted(allowed_chunk_ids))}.
+Ranges, lists, invented chunk IDs, quotations, explanations, and prose outside the four sections are forbidden. Preserve at most {CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS} actionable lines, each at most {CRITIQUE_SHARD_MAX_FINDING_CHARACTERS} characters. If a range finding cannot be assigned safely to one exact allowed chunk, omit it. Empty sections must contain only `- NO_ACTIONABLE_FINDINGS`."""
+            output = _run_paper_model_phase(
+                phase_name=f"critique_shard_repair_{index:04d}",
+                output_path=article_dir / "critique_shard_repairs" / f"shard{index:04d}.md",
+                instructions=repair_instructions,
+                input_text=(
+                    f"VALIDATION ERROR:\n{validation_error}\n\n"
+                    f"CRITIQUE TO REPAIR:\n{output}"
+                ),
+                max_output_tokens=CRITIQUE_SHARD_MAX_OUTPUT_TOKENS,
+                client=client,
+                status=status,
+                status_path=status_path,
+                run_id=run_id,
+                budget_guard=budget_guard,
+                retry_uncertain=retry_uncertain,
+            )
+            _validate_shard_critique(
+                output,
+                shard_index=index,
+                allowed_chunk_ids=allowed_chunk_ids,
+            )
         shard_outputs.append(output)
     merged = _merge_sharded_critiques(shard_outputs)
     signature = runner.text_hash(
