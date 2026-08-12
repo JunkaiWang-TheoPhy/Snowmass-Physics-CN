@@ -227,6 +227,85 @@ class RunLockTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"status": "complete"})
 
 
+class BatchResumeTests(unittest.TestCase):
+    def test_completed_batch_resume_does_not_append_paid_ledger_events(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps(
+                    [
+                        {
+                            "record_id": "arxiv:a",
+                            "publication_allowed": True,
+                            "page_count": 1,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = module.BatchConfig(
+                rights_manifest=manifest,
+                pdf_root=root / "pdf",
+                output_root=root / "output",
+                control_dir=root / "control",
+                stage="baseline",
+                explicit_ids=("arxiv:a",),
+                max_articles=None,
+                project_max_cost_rmb=1000.0,
+                stage_max_cost_rmb=10.0,
+                usd_cny_rate=7.2,
+                chunk_concurrency=1,
+                article_concurrency=1,
+                through_stage="packaged",
+                translation_version="test",
+                packaged_on="2026-08-13",
+                historical_roots=(),
+            )
+            checkpoint = root / "output" / "article.complete"
+
+            def checkpointed_article(_config, record, _run_id, _client, budget):
+                if not checkpoint.is_file():
+                    reservation = budget.reserve("source", 64)
+                    budget.settle(
+                        reservation,
+                        {
+                            "input_tokens": 10,
+                            "cached_tokens": 0,
+                            "output_tokens": 5,
+                            "total_tokens": 15,
+                        },
+                    )
+                    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                    checkpoint.write_text("complete", encoding="utf-8")
+                return {
+                    "record_id": record["record_id"],
+                    "status": "packaged",
+                    "source_characters": 100,
+                }
+
+            patches = (
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_run_article", side_effect=checkpointed_article),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            )
+            with patches[0], patches[1], patches[2]:
+                first = module.run_batch(config, client=object())
+                ledger = config.control_dir / "budget_ledger.jsonl"
+                first_events = [json.loads(line) for line in ledger.read_text().splitlines()]
+                second = module.run_batch(config, client=object())
+                second_events = [json.loads(line) for line in ledger.read_text().splitlines()]
+
+            paid_kinds = {"settle", "commit_estimate", "recover_orphan"}
+            self.assertEqual(first["status"], "complete")
+            self.assertEqual(second["status"], "complete")
+            self.assertEqual(
+                [event for event in first_events if event["kind"] in paid_kinds],
+                [event for event in second_events if event["kind"] in paid_kinds],
+            )
+
+
 class PromotionGateTests(unittest.TestCase):
     def test_packaged_clean_run_reports_cost_efficiency_and_allows_next_stage(self) -> None:
         module = load_module()

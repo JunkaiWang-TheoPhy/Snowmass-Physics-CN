@@ -983,6 +983,20 @@ def checkpoint_is_reusable_after_contract_change(
     return text_hash(output_path.read_text(encoding="utf-8")) == output_hash
 
 
+def checkpoint_policy_matches(status: dict[str, Any], expected_policy: str) -> bool:
+    """Reject checkpoints created under a different model/passthrough policy."""
+
+    recorded = status.get("execution_policy")
+    if isinstance(recorded, str) and recorded:
+        return recorded == expected_policy
+    decision = status.get("decision")
+    if isinstance(decision, dict) and decision.get("action") == "copy_prior_text":
+        reason = str(decision.get("reason") or "")
+        if reason.endswith("_passthrough"):
+            return expected_policy == f"passthrough:{reason}"
+    return expected_policy == "model_pipeline"
+
+
 def stage_output_path(article_dir: Path, chunk_id: str, final_output_file: str, stage: str) -> Path:
     if stage == "translate":
         return article_dir / f"stage1_{chunk_id}.md"
@@ -1119,12 +1133,28 @@ def complete_style_fallback(
     stage_status: dict[str, Any],
     qc_terms: list[dict[str, Any]],
     reason: str,
+    budget_guard: BudgetGuard | None = None,
+    uncertainty_prefix: str | None = None,
 ) -> bool:
     """Complete an optional style pass with its QC-valid input after a bad candidate."""
 
     qc_report = validate_chunk(source, prior_text, {}, qc_terms)
     if not qc_report.ok:
         return False
+    resolved_uncertainties: list[str] = []
+    if budget_guard is not None and uncertainty_prefix:
+        for segment_index, subrequest in enumerate(stage_status.get("subrequests", []), 1):
+            if not isinstance(subrequest, dict) or subrequest.get("status") not in {
+                "running",
+                "uncertain",
+            }:
+                continue
+            uncertainty_key = str(
+                subrequest.get("uncertainty_key")
+                or f"{uncertainty_prefix}:segment{segment_index:04d}"
+            )
+            if budget_guard.resolve_uncertain(uncertainty_key):
+                resolved_uncertainties.append(uncertainty_key)
     previous_status = stage_status.get("status")
     previous_error = stage_status.get("error")
     atomic_text(output_path, prior_text)
@@ -1142,6 +1172,8 @@ def complete_style_fallback(
     stage_status.pop("error", None)
     if previous_error:
         stage_status["fallback_previous_error"] = previous_error
+    if resolved_uncertainties:
+        stage_status["resolved_discarded_uncertainties"] = resolved_uncertainties
     return True
 
 
@@ -1362,6 +1394,7 @@ def process_chunk(
     for stage in stage_sequence:
         output_path = stage_output_path(article_dir, chunk_id, chunk["output_file"], stage)
         stage_status = status.setdefault("stages", {}).setdefault(stage, {})
+        uncertainty_prefix = f"{task['record_id']}:{chunk_id}:{stage}"
         instructions = stage_instructions(stage, glossary)
         model_current = localize_source_month_years(current) if stage == "translate" else current
         protected_current, mapping, typed_nodes = protect_stage_text(model_current)
@@ -1526,7 +1559,14 @@ def process_chunk(
         max_output = max_outputs[0]
         passthrough = bool(task.get("passthrough"))
         qc_terms = [] if passthrough else selected_terms
-        if checkpoint_is_valid(stage_status, output_path, expected_key):
+        expected_policy = (
+            f"passthrough:{task.get('passthrough_reason')}"
+            if bool(task.get("passthrough"))
+            else "model_pipeline"
+        )
+        if checkpoint_policy_matches(stage_status, expected_policy) and checkpoint_is_valid(
+            stage_status, output_path, expected_key
+        ):
             current = output_path.read_text(encoding="utf-8")
             continue
         stable_paper_context = (
@@ -1541,6 +1581,7 @@ def process_chunk(
         )
         if (
             context_allows_reuse
+            and checkpoint_policy_matches(stage_status, expected_policy)
             and checkpoint_is_reusable_after_contract_change(stage_status, output_path)
         ):
             candidate = output_path.read_text(encoding="utf-8")
@@ -1569,6 +1610,8 @@ def process_chunk(
                 stage_status=stage_status,
                 qc_terms=qc_terms,
                 reason="prior attempt did not produce a QC-valid optional style candidate",
+                budget_guard=budget_guard,
+                uncertainty_prefix=uncertainty_prefix,
             )
         ):
             atomic_json(status_path, status)
@@ -1631,6 +1674,7 @@ def process_chunk(
                 "request_key": expected_key,
                 "output_file": output_path.name,
                 "decision": decision.to_dict(),
+                "execution_policy": expected_policy,
             }
         )
         if stage == "revision":
@@ -2060,6 +2104,8 @@ def process_chunk(
                         stage_status=stage_status,
                         qc_terms=qc_terms,
                         reason=str(exc),
+                        budget_guard=budget_guard,
+                        uncertainty_prefix=uncertainty_prefix,
                     ):
                         style_fallback = True
                         break
@@ -2098,6 +2144,8 @@ def process_chunk(
                         stage_status=stage_status,
                         qc_terms=qc_terms,
                         reason=str(exc),
+                        budget_guard=budget_guard,
+                        uncertainty_prefix=uncertainty_prefix,
                     ):
                         style_fallback = True
                         break
@@ -2134,6 +2182,8 @@ def process_chunk(
                     stage_status=stage_status,
                     qc_terms=qc_terms,
                     reason=str(error),
+                    budget_guard=budget_guard,
+                    uncertainty_prefix=uncertainty_prefix,
                 ):
                     style_fallback = True
                     break
@@ -2248,6 +2298,8 @@ def process_chunk(
                 stage_status=stage_status,
                 qc_terms=qc_terms,
                 reason=f"QC failed: {', '.join(qc_report.failures)}",
+                budget_guard=budget_guard,
+                uncertainty_prefix=uncertainty_prefix,
             ):
                 atomic_json(status_path, status)
                 current = output_path.read_text(encoding="utf-8")

@@ -636,6 +636,23 @@ class RequestKeyAndCheckpointTests(unittest.TestCase):
                 RUNNER.checkpoint_is_reusable_after_contract_change(status, output)
             )
 
+    def test_passthrough_checkpoint_cannot_be_reused_after_policy_changes_to_model(self) -> None:
+        status = {
+            "status": "complete",
+            "decision": {
+                "action": "copy_prior_text",
+                "reason": "reference_section_passthrough",
+            },
+        }
+
+        self.assertFalse(RUNNER.checkpoint_policy_matches(status, "model_pipeline"))
+        self.assertTrue(
+            RUNNER.checkpoint_policy_matches(
+                status,
+                "passthrough:reference_section_passthrough",
+            )
+        )
+
 
 class ProcessChunkTests(unittest.TestCase):
     def test_refinement_input_does_not_expose_original_literals_or_unrelated_text(self) -> None:
@@ -1032,6 +1049,74 @@ class ProcessChunkTests(unittest.TestCase):
         status = json.loads((status_dir / "chunk0001.json").read_text(encoding="utf-8"))
         self.assertEqual(status["stages"]["academic"]["status"], "complete")
         self.assertTrue(status["stages"]["academic"]["fallback_to_prior_stage"])
+
+    def test_style_fallback_resolves_discarded_uncertain_request_without_refund(self) -> None:
+        source = "PUMA has 50% occupancy.\n"
+        prior = "PUMA的占用率为50%。\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage3_chunk0001.md"
+        initial.write_text(prior, encoding="utf-8")
+        status_dir = self.article_dir / "chunk_status"
+        status_dir.mkdir()
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "chunk_id": "chunk0001",
+                    "stages": {
+                        "academic": {
+                            "status": "running",
+                            "subrequests": [
+                                {
+                                    "status": "uncertain",
+                                    "request_key": "stale-request",
+                                    "uncertainty_key": (
+                                        "arxiv:allowed:chunk0001:academic:segment0001"
+                                    ),
+                                    "conservative_cost_rmb": 0.125,
+                                }
+                            ],
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class RecordingGuard:
+            resolved: list[str] = []
+
+            def resolve_uncertain(self, uncertainty_key: str) -> bool:
+                self.resolved.append(uncertainty_key)
+                return True
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("verified style fallback must not call the model")
+
+        guard = RecordingGuard()
+        result = RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            stages=("academic",),
+            initial_text_path=initial,
+            budget_guard=guard,
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            guard.resolved,
+            ["arxiv:allowed:chunk0001:academic:segment0001"],
+        )
+        status = json.loads((status_dir / "chunk0001.json").read_text(encoding="utf-8"))
+        fallback = status["stages"]["academic"]
+        self.assertTrue(fallback["fallback_to_prior_stage"])
+        self.assertEqual(
+            fallback["resolved_discarded_uncertainties"],
+            ["arxiv:allowed:chunk0001:academic:segment0001"],
+        )
 
     def test_style_candidate_qc_failure_falls_back_in_same_run(self) -> None:
         source = "PUMA has 50% occupancy.\n"

@@ -50,6 +50,40 @@ def completed_response(text: str, response_id: str) -> dict[str, object]:
 
 
 class RefinedOrchestratorTests(unittest.TestCase):
+    def test_reference_detection_ignores_table_of_contents_entry(self) -> None:
+        module = load_module()
+        chunks = []
+        rows = [
+            ("chunk0001", "CONTENTS\n", "title", 1),
+            ("chunk0002", "References\n", "fallback_line", 1),
+            ("chunk0003", "I. INTRODUCTION\n", "title", 2),
+            ("chunk0004", "Body text.\n", "plain text", 2),
+            ("chunk0005", "ACKNOWLEDGMENTS\n", "title", 18),
+            ("chunk0006", "Supported by the collaboration.\n", "plain text", 18),
+            ("chunk0007", "References\n", "title", 18),
+            ("chunk0008", "A. Author. Paper title. Journal 1 (2022) 1.\n", "plain text", 18),
+            ("chunk0009", "B. Author. Another title. arXiv:2201.00001 (2022).\n", "plain text", 19),
+            ("chunk0010", "DATA AVAILABILITY\n", "title", 19),
+            ("chunk0011", "Data are available on request.\n", "plain text", 19),
+        ]
+        for order, (chunk_id, text, label, page) in enumerate(rows, 1):
+            source_file = f"{chunk_id}.md"
+            (self.article / source_file).write_text(text, encoding="utf-8")
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": order,
+                    "source_file": source_file,
+                    "layout_label": label,
+                    "page_number": page,
+                }
+            )
+
+        self.assertEqual(
+            module._reference_chunk_ids(self.article, chunks),
+            {"chunk0008", "chunk0009"},
+        )
+
     def test_sharded_critique_covers_late_chunks_and_is_resumable(self) -> None:
         module = load_module()
         chunks = []
