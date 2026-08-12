@@ -281,6 +281,15 @@ class CommunityPagesTest(unittest.TestCase):
         self.assertIsNone(re.search(r"\b\d+@qq\.com\b", html))
         self.assertIn("开放申请", html)
 
+    def test_contributors_are_presented_as_a_compact_directory(self):
+        html = self.read("contributors/index.html")
+        self.assertIn('<ul class="contributor-list"', html)
+        self.assertIn('<li class="contributor-row">', html)
+        self.assertIn('class="contributor-name"', html)
+        self.assertIn('class="contributor-role"', html)
+        self.assertIn('class="contributor-profile"', html)
+        self.assertNotIn('class="contributor-card"', html)
+
     def test_contributor_claims_and_private_applications_use_verified_channels(self):
         html = self.read("contributors/index.html")
         self.assertIn('href="https://github.com/JunkaiWang-TheoPhy"', html)
