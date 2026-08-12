@@ -820,14 +820,43 @@ class ProcessChunkTests(unittest.TestCase):
             )
         )
 
-    def test_structure_failure_retries_with_one_anchor_per_segment(self) -> None:
+    def test_structure_failure_keeps_bounded_multi_anchor_segments(self) -> None:
         self.assertEqual(RUNNER.structure_segment_limit({}), 4)
         self.assertEqual(
             RUNNER.structure_segment_limit(
                 {"error": "Anchor-template response changed anchor identity or count"}
             ),
-            1,
+            4,
         )
+
+    def test_fidelity_qc_retry_keeps_bounded_multi_anchor_segments(self) -> None:
+        for failure in (
+            "numbers_mismatch",
+            "units_mismatch",
+            "parentheses_mismatch",
+            "locked_terms_mismatch",
+        ):
+            with self.subTest(failure=failure):
+                self.assertEqual(
+                    RUNNER.structure_segment_limit(
+                        {"error": f"QC failed: {failure}"}
+                    ),
+                    4,
+                )
+
+    def test_structure_dense_input_prefers_clause_boundary_before_hard_split(self) -> None:
+        protected = (
+            "first [[SM_0001_0000000001]] second [[SM_0002_0000000002]], "
+            "third [[SM_0003_0000000003]] fourth [[SM_0004_0000000004]] "
+            "fifth [[SM_0005_0000000005]]"
+        )
+
+        segments = RUNNER.split_protected_model_input(protected, 4)
+
+        self.assertEqual("".join(segments), protected)
+        self.assertEqual(len(segments), 2)
+        self.assertTrue(segments[0].endswith(", "))
+        self.assertTrue(all(len(RUNNER._MODEL_SENTINEL_RE.findall(x)) <= 4 for x in segments))
 
     def test_english_month_names_do_not_invent_arabic_month_numbers(self) -> None:
         source = "For reference, the January 2021 capacity was 558 PB."
@@ -1361,6 +1390,37 @@ class ProcessChunkTests(unittest.TestCase):
             "初稿段落\n",
         )
         self.assertFalse((self.article_dir / "output_chunk0001.md").exists())
+
+    def test_translate_qc_retry_omits_paper_analysis_and_neighbor_context(self) -> None:
+        (self.article_dir / "chunk0002.md").write_text(
+            "Neighbor-only evidence contains 999 detectors.\n",
+            encoding="utf-8",
+        )
+        observed_inputs: list[str] = []
+
+        class FakeClient:
+            def complete(self, _instructions: str, input_text: str, _maximum: int):
+                observed_inputs.append(input_text)
+                return completed_response("原始源段落。\n"), 0.1
+
+        RUNNER.process_chunk(
+            self.task,
+            FakeClient(),
+            [],
+            stages=("translate",),
+            paper_context=(
+                "PAPER ANALYSIS CONTEXT WITH 12345\n\n"
+                "# QC-CORRECTION RETRY 1\n"
+                "Correct the reported structural defect without adding content."
+            ),
+        )
+
+        self.assertEqual(len(observed_inputs), 1)
+        self.assertNotIn("PAPER ANALYSIS CONTEXT", observed_inputs[0])
+        self.assertNotIn("12345", observed_inputs[0])
+        self.assertNotIn("Neighbor-only evidence", observed_inputs[0])
+        self.assertNotIn("999", observed_inputs[0])
+        self.assertIn("QC-CORRECTION RETRY 1", observed_inputs[0])
 
     def test_process_chunk_revision_uses_terminology_draft_and_local_critique(self) -> None:
         terminology = self.article_dir / "stage2_chunk0001.md"

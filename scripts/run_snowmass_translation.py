@@ -77,7 +77,9 @@ _MONTH_NAMES_ZH = {
 _MODEL_SENTINEL_RE = re.compile(
     r"\[\[(?:SM_[0-9]{4}_[0-9a-f]{5,10}|SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10})\]\]"
 )
-_SAFE_SEGMENT_BOUNDARY_RE = re.compile(r"(?:\n+|(?<=[.!?;:。！？；：])\s+)")
+_SAFE_SEGMENT_BOUNDARY_RE = re.compile(
+    r"(?:\n+|(?<=[.!?;:,。！？；：，])\s+|(?<=[,，;；:：]))"
+)
 _USAGE_LEDGER_LOCK = threading.Lock()
 RETRYABLE_HTTP_CODES = {408, 409, 429, 500, 502, 503, 504}
 # Official DeepSeek V4 Flash rates, USD per million tokens:
@@ -675,9 +677,6 @@ def should_use_structure_anchor_fallback(
 
 
 def structure_segment_limit(stage_status: dict[str, Any]) -> int:
-    error = str(stage_status.get("error") or "")
-    if "Structure-slot response" in error or "Anchor-template response" in error:
-        return 1
     return MODEL_STRUCTURE_SEGMENT_LIMIT
 
 
@@ -1377,10 +1376,13 @@ def process_chunk(
             if compact_source and not is_retry_request:
                 context_for_request = ""
             if context_for_request:
-                input_text += (
-                    "\n\nREAD-ONLY PAPER ANALYSIS CONTEXT — apply it to this paragraph; "
-                    "do not reproduce it:\n" + context_for_request
-                )
+                if is_retry_request:
+                    input_text += "\n\nRETRY INSTRUCTIONS:\n" + context_for_request
+                else:
+                    input_text += (
+                        "\n\nREAD-ONLY PAPER ANALYSIS CONTEXT — apply it to this paragraph; "
+                        "do not reproduce it:\n" + context_for_request
+                    )
             if (
                 anchor_protocol is None
                 and not bounded_segmented_retry
