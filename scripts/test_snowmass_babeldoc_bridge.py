@@ -463,7 +463,11 @@ class BabelDocWorkspaceTests(unittest.TestCase):
 
         write_pdf(
             source,
-            ["SOURCE BODY", "[1] REFERENCE ONE", "[2] REFERENCE TWO"],
+            [
+                "SOURCE BODY",
+                "[1] REFERENCE ONE\n[2] REFERENCE TWO",
+                "[3] REFERENCE THREE",
+            ],
             running_header="RUNNING HEADER",
             section_headings={2: "References"},
         )
@@ -488,7 +492,7 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         self.assertEqual(report["page_numbers"], [2, 3])
         self.assertEqual(
             report["reference_numbers"],
-            {"count": 2, "first": 1, "last": 2, "sequential": True},
+            {"count": 3, "first": 1, "last": 3, "sequential": True},
         )
         self.assertEqual(report["canonical_header_occurrences"], 2)
         self.assertEqual(report["section_heading_occurrences"], 1)

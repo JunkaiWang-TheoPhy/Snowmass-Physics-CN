@@ -660,6 +660,7 @@ def restore_verbatim_pages(
     os.replace(dual_temporary, dual_pdf)
 
     selected_source_text: list[str] = []
+    selected_source_reference_text: list[str] = []
     with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono:
         for page_number in selected:
             source_page = source[page_number - 1]
@@ -687,7 +688,8 @@ def restore_verbatim_pages(
                     f"source={source_text!r}, output={output_text!r}"
                 )
             selected_source_text.append(source_text)
-    numbers = reference_entry_numbers("\n".join(selected_source_text))
+            selected_source_reference_text.append(source_page.get_text(clip=source_body))
+    numbers = reference_entry_numbers("\n".join(selected_source_reference_text))
     sequential = not numbers or numbers == list(range(1, numbers[-1] + 1))
     if not sequential:
         raise RuntimeError("Reference numbering self-check failed")
