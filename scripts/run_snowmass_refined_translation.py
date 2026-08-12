@@ -934,14 +934,20 @@ def _run_chunk_barrier(
     record_id: str,
     max_qc_retries: int = 4,
     stop_event: Any = None,
+    progress_callback: Any = None,
+    heartbeat_every: int = 50,
 ) -> None:
     """Run independent chunks concurrently and stop before the next paper phase on failure."""
 
+    if heartbeat_every <= 0:
+        raise ValueError("heartbeat_every must be positive")
     pending = list(chunks)
+    total = len(chunks)
     failures: dict[str, str] = {}
     terminal_failures: dict[str, str] = {}
     for attempt in range(max_qc_retries + 1):
         retryable: list[dict[str, Any]] = []
+        completed_this_attempt = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
             iterator = iter(pending)
             future_map: dict[concurrent.futures.Future[Any], dict[str, Any]] = {}
@@ -980,6 +986,26 @@ def _run_chunk_barrier(
                             stop_event.set()
                         failures[chunk_id] = f"{type(exc).__name__}:{exc}"
                         retryable.append(chunk)
+                    completed_this_attempt += 1
+                    if (
+                        progress_callback is not None
+                        and (
+                            completed_this_attempt % heartbeat_every == 0
+                            or completed_this_attempt == len(pending)
+                        )
+                    ):
+                        progress_callback(
+                            {
+                                "record_id": record_id,
+                                "phase": phase,
+                                "attempt": attempt,
+                                "completed": completed_this_attempt,
+                                "total": len(pending),
+                                "paper_total": total,
+                                "retryable": len(retryable),
+                                "terminal_failures": len(terminal_failures),
+                            }
+                        )
                 if terminal_failures or (stop_event is not None and stop_event.is_set()):
                     for queued in future_map:
                         queued.cancel()
@@ -1002,6 +1028,16 @@ def _run_chunk_barrier(
             f"{phase} barrier failed for {record_id}: "
             + "; ".join(f"{key}:{value}" for key, value in sorted(failures.items())[:20])
         )
+
+
+def _print_barrier_progress(event: dict[str, Any]) -> None:
+    print(
+        "PAPER_PROGRESS "
+        f"{event['record_id']} phase={event['phase']} attempt={event['attempt']} "
+        f"{event['completed']}/{event['total']} retryable={event['retryable']} "
+        f"terminal={event['terminal_failures']}",
+        flush=True,
+    )
 
 
 def _qc_retry_context(
@@ -1219,6 +1255,7 @@ Identify the paper's argument, domain-specific meanings, preferred terminology, 
         concurrency=concurrency,
         phase="draft",
         record_id=record_id,
+        progress_callback=_print_barrier_progress,
         stop_event=getattr(budget_guard, "stop_event", None),
         invoke=lambda chunk, attempt: runner.process_chunk(
             chunk_task(chunk),
@@ -1294,6 +1331,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         concurrency=concurrency,
         phase="revision",
         record_id=record_id,
+        progress_callback=_print_barrier_progress,
         stop_event=getattr(budget_guard, "stop_event", None),
         invoke=lambda chunk, attempt: runner.process_chunk(
             chunk_task(chunk),
@@ -1334,6 +1372,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         concurrency=concurrency,
         phase="final",
         record_id=record_id,
+        progress_callback=_print_barrier_progress,
         stop_event=getattr(budget_guard, "stop_event", None),
         invoke=lambda chunk, attempt: runner.process_chunk(
             chunk_task(chunk),

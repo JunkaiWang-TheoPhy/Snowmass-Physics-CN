@@ -1096,6 +1096,26 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(calls, [0, 1, 2, 3, 4])
 
+    def test_chunk_barrier_emits_bounded_progress_heartbeats(self) -> None:
+        module = load_module()
+        chunks = [{"id": f"chunk{index:04d}"} for index in range(1, 6)]
+        events: list[dict[str, object]] = []
+
+        module._run_chunk_barrier(
+            chunks,
+            concurrency=2,
+            invoke=lambda _chunk, _attempt: {"status": "complete"},
+            phase="revision",
+            record_id="arxiv:allowed",
+            progress_callback=events.append,
+            heartbeat_every=2,
+        )
+
+        self.assertEqual([event["completed"] for event in events], [2, 4, 5])
+        self.assertTrue(all(event["total"] == 5 for event in events))
+        self.assertTrue(all(event["phase"] == "revision" for event in events))
+        self.assertTrue(all(event["attempt"] == 0 for event in events))
+
     def test_retry_context_reports_literal_parenthesis_and_term_differences(self) -> None:
         module = load_module()
         chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
