@@ -92,6 +92,28 @@ class TypedProtectionTests(unittest.TestCase):
             ],
         )
 
+    def test_hyphenated_scientific_identifiers_are_single_immutable_nodes(self) -> None:
+        units = load_units()
+
+        protected = units.protect_translation_unit(
+            "DESI-2, PUMA-32K, and CMB-S4 span the first 1-2 years."
+        )
+
+        self.assertEqual(
+            [(node.kind, node.value) for node in protected.nodes],
+            [
+                ("identifier", "DESI-2"),
+                ("identifier", "PUMA-32K"),
+                ("identifier", "CMB-S4"),
+                ("number", "1"),
+                ("number", "-2"),
+            ],
+        )
+        self.assertEqual(
+            units.restore_translation_unit(protected.text, protected.nodes),
+            "DESI-2, PUMA-32K, and CMB-S4 span the first 1-2 years.",
+        )
+
     def test_number_unit_literals_are_one_immutable_node(self) -> None:
         units = load_units()
 
@@ -122,8 +144,12 @@ class TypedProtectionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            [node.value for node in protected.nodes],
-            ["0.2", "11973", "-32"],
+            [(node.kind, node.value) for node in protected.nodes],
+            [
+                ("number", "0.2"),
+                ("number", "11973"),
+                ("identifier", "PUMA-32K"),
+            ],
         )
         self.assertIn(sentinel, protected.text)
         self.assertEqual(units.restore_translation_unit(protected.text, protected.nodes), f"with0.2 GHz, NY11973, PUMA-32K and {sentinel}")

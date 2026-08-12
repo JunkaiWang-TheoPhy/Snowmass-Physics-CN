@@ -64,6 +64,11 @@ _BARE_URL_RE = re.compile(
     r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
 )
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_SCIENTIFIC_IDENTIFIER_RE = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+"
+    r"(?![A-Za-z0-9_])"
+)
 _TOKEN_RE = re.compile(r"\[\[SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10}\]\]")
 _EXISTING_PROTECTED_TOKEN_RE = re.compile(
     r"\[\[(?:SM_[0-9]{4}_[0-9a-f]{5,10}|SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10})\]\]"
@@ -161,10 +166,12 @@ def _candidate_spans(text: str) -> list[tuple[int, int, str]]:
         candidates.append((match.start(), match.end(), "url", 2))
     for match in _EMAIL_RE.finditer(text):
         candidates.append((match.start(), match.end(), "email", 3))
+    for match in _SCIENTIFIC_IDENTIFIER_RE.finditer(text):
+        candidates.append((match.start(), match.end(), "identifier", 4))
     for match in _UNIT_VALUE_RE.finditer(text):
-        candidates.append((match.start(), match.end(), "unit", 4))
+        candidates.append((match.start(), match.end(), "unit", 5))
     for match in _NUMBER_RE.finditer(text):
-        candidates.append((match.start(), match.end(), "number", 5))
+        candidates.append((match.start(), match.end(), "number", 6))
 
     accepted: list[tuple[int, int, str]] = []
     occupied = [(match.start(), match.end()) for match in _EXISTING_PROTECTED_TOKEN_RE.finditer(text)]
