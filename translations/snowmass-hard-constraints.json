@@ -48,7 +48,7 @@
         },
         {
           "source": "{v1}University of Mississippi, University, Mississippi 38677{v2}Deutsches Elektronen–Synchrotron, 22607 Hamburg, Germany{v3}Brookhaven National Laboratory, Upton, New York 11973{v4}High Energy Accelerator Research Organization (KEK), Tsukuba 305-0801,Japan",
-          "target": "{v1}密西西比大学，美国密西西比州 University，邮编 38677；{v2}德国电子同步加速器，德国汉堡，邮编 22607；{v3}布鲁克海文国家实验室，美国纽约州厄普顿，邮编 11973；{v4}高能加速器研究机构（KEK），日本筑波，邮编 305-0801",
+          "target": "{v1}密西西比大学，美国密西西比州大学城，邮编 38677；{v2}德国电子同步加速器，德国汉堡，邮编 22607；{v3}布鲁克海文国家实验室，美国纽约州厄普顿，邮编 11973；{v4}高能加速器研究机构（KEK），日本筑波，邮编 305-0801",
           "scope": "all_occurrences",
           "reason": "Restore affiliation separators that the source PDF encodes only through superscript formula nodes."
         },

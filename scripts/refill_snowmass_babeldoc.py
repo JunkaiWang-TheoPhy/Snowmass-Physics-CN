@@ -305,14 +305,27 @@ def prepare_publication_translations(
 
     eligible_first_use_indices: list[int] = []
     in_references = False
+    has_abstract_heading = any(
+        str(chunk.get("layout_label", "")) == "title"
+        and _normalized_phrase(translation.source_text).rstrip(":") == "abstract"
+        for chunk, translation in zip(chunks, translations, strict=True)
+    )
+    abstract_seen = False
     for index, (chunk, translation) in enumerate(zip(chunks, translations, strict=True)):
         normalized_source = _normalized_phrase(translation.source_text).rstrip(":")
         if normalized_source in {"references", "bibliography"}:
             in_references = True
+        if str(chunk.get("layout_label", "")) == "title" and normalized_source == "abstract":
+            abstract_seen = True
         if (
             not in_references
             and str(chunk.get("layout_label", "")) != "title"
             and str(chunk["id"]) not in passthrough_chunk_ids
+            and (
+                not has_abstract_heading
+                or abstract_seen
+                or int(chunk.get("page_number") or 0) > 1
+            )
         ):
             eligible_first_use_indices.append(index)
     first_use = _first_use_terms(

@@ -676,6 +676,30 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
             "暗物质（dark matter）塑造晕。",
         )
 
+    def test_first_use_definition_skips_front_matter_before_abstract(self) -> None:
+        module = load_module()
+        chunks = [
+            {"id": "chunk0001", "order": 1, "page_number": 1, "layout_label": "plain text"},
+            {"id": "chunk0002", "order": 2, "page_number": 1, "layout_label": "title"},
+            {"id": "chunk0003", "order": 3, "page_number": 1, "layout_label": "plain text"},
+        ]
+        translations = [
+            module.BRIDGE.RefillTranslation(1, 0, "Accelerator Laboratory", "加速器实验室"),
+            module.BRIDGE.RefillTranslation(1, 1, "ABSTRACT", "摘要"),
+            module.BRIDGE.RefillTranslation(1, 2, "The accelerator operates.", "该加速器运行。"),
+        ]
+
+        prepared, _report = module.prepare_publication_translations(
+            self.article,
+            {"chunks": chunks},
+            translations,
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[{"source": "accelerator", "target": "加速器", "first_use": True}],
+        )
+
+        self.assertEqual(prepared[0].translated_text, "加速器实验室")
+        self.assertEqual(prepared[2].translated_text, "该加速器（accelerator）运行。")
+
     def test_verbatim_reference_pages_require_a_canonical_repeated_header(self) -> None:
         module = load_module()
         chunks = []
