@@ -859,7 +859,10 @@ def restore_verbatim_pages(
                     f"source={source_text!r}, output={output_text!r}"
                 )
             selected_source_text.append(source_text)
-            selected_source_reference_text.append(source_page.get_text(clip=source_body))
+            # Reference entries can begin inside the top 10% on continuation
+            # pages.  The body clip above intentionally excludes running headers
+            # for layout equality, but numbering must inspect the full raw page.
+            selected_source_reference_text.append(source_page.get_text())
     numbers = reference_entry_numbers("\n".join(selected_source_reference_text))
     sequential = not numbers or numbers == list(range(1, numbers[-1] + 1))
     if not sequential:

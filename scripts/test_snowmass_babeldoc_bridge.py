@@ -539,6 +539,43 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             [1, 2],
         )
 
+    def test_restore_verbatim_pages_counts_reference_at_top_of_continuation_page(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "top-reference-source.pdf"
+        mono = self.root / "top-reference-mono.pdf"
+        dual = self.root / "top-reference-dual.pdf"
+
+        document = pymupdf.open()
+        first = document.new_page(width=300, height=400)
+        first.insert_text((30, 60), "References")
+        first.insert_text((30, 85), "[1] FIRST")
+        second = document.new_page(width=300, height=400)
+        second.insert_text((30, 28), "[2] SECOND")
+        document.save(source)
+        document.close()
+
+        for path, width in ((mono, 300), (dual, 600)):
+            document = pymupdf.open()
+            for _ in range(2):
+                page = document.new_page(width=width, height=400)
+                page.insert_text((30, 80), "BROKEN")
+            document.save(path)
+            document.close()
+
+        report = bridge.restore_verbatim_pages(
+            source_pdf=source,
+            mono_pdf=mono,
+            dual_pdf=dual,
+            page_numbers={1, 2},
+        )
+
+        self.assertEqual(
+            report["reference_numbers"],
+            {"count": 2, "first": 1, "last": 2, "sequential": True},
+        )
+
     def test_restore_verbatim_regions_replaces_rendered_figure_and_table_content(self) -> None:
         bridge = load_bridge()
         import pymupdf
