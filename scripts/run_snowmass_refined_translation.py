@@ -40,6 +40,8 @@ CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS = CRITIQUE_SHARD_MAX_FINDINGS * 3
 CRITIQUE_SHARD_MAX_FINDING_CHARACTERS = 160
 CRITIQUE_SHARD_MAX_OUTPUT_TOKENS = 900
 CRITIQUE_GLOBAL_MAX_FINDINGS = 30
+CRITIQUE_DRAFT_MAX_SOURCE_RATIO = 3
+CRITIQUE_DRAFT_MAX_EXTRA_CHARACTERS = 512
 ANALYSIS_MAX_OUTPUT_TOKENS = 4000
 CRITIQUE_MAX_OUTPUT_TOKENS = 4000
 
@@ -442,6 +444,60 @@ def _critique_shard_count(
     if has_items:
         count += 1
     return count
+
+
+def _critique_draft_character_bound(source_text: str) -> int:
+    source_length = len(source_text.rstrip())
+    return max(
+        source_length * CRITIQUE_DRAFT_MAX_SOURCE_RATIO,
+        source_length + CRITIQUE_DRAFT_MAX_EXTRA_CHARACTERS,
+    )
+
+
+def _projected_unknown_critique_shard_count(
+    chunks: list[dict[str, Any]],
+    *,
+    source_texts: dict[str, str],
+    shard_char_limit: int = CRITIQUE_SHARD_CHAR_LIMIT,
+) -> int:
+    """Bound critique shards before translated drafts exist.
+
+    Execution enforces the same per-chunk bound before critique, so this is a
+    launch-budget invariant rather than a heuristic request estimate.
+    """
+
+    bounded_drafts = {
+        str(chunk["id"]): "中" * _critique_draft_character_bound(
+            source_texts[str(chunk["id"])]
+        )
+        for chunk in chunks
+    }
+    return _critique_shard_count(
+        chunks,
+        source_texts=source_texts,
+        draft_texts=bounded_drafts,
+        shard_char_limit=shard_char_limit,
+    )
+
+
+def _require_critique_drafts_within_projection_bound(
+    chunks: list[dict[str, Any]],
+    *,
+    source_texts: dict[str, str],
+    draft_texts: dict[str, str],
+) -> None:
+    oversized = []
+    for chunk in chunks:
+        chunk_id = str(chunk["id"])
+        actual = len(draft_texts[chunk_id].rstrip())
+        allowed = _critique_draft_character_bound(source_texts[chunk_id])
+        if actual > allowed:
+            oversized.append(f"{chunk_id} ({actual}>{allowed})")
+    if oversized:
+        raise RuntimeError(
+            "Critique draft exceeds the preflight projection bound: "
+            + ", ".join(oversized)
+        )
 
 
 def _critique_shards(
@@ -1518,6 +1574,23 @@ def _critique_context_for_chunk(critique: str, chunk_id: str) -> str:
     return "# Actionable critique for this chunk only\n" + "\n".join(findings)
 
 
+def _require_critique_revision_targets_within_bound(
+    critique: str,
+    chunks: list[dict[str, Any]],
+) -> None:
+    known_ids = {str(chunk["id"]) for chunk in chunks}
+    target_ids = {
+        match.lower()
+        for match in re.findall(r"\bchunk\d{4}\b", critique, flags=re.I)
+        if match.lower() in known_ids
+    }
+    if len(target_ids) > CRITIQUE_GLOBAL_MAX_FINDINGS:
+        raise RuntimeError(
+            "Critique exceeds the revision target cap: "
+            f"{len(target_ids)}>{CRITIQUE_GLOBAL_MAX_FINDINGS}"
+        )
+
+
 def _revision_context_signature(chunk_id: str, context: str) -> str:
     return runner.text_hash(
         json.dumps(
@@ -2175,7 +2248,13 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
     if critique_valid:
         report["missing_stage_api_calls"]["critique"] = 0
     elif unknown_critique_inputs:
-        report["missing_stage_api_calls"]["critique"] = max(1, len(chunks)) * 2
+        report["missing_stage_api_calls"]["critique"] = 2 * (
+            _projected_unknown_critique_shard_count(
+                chunks,
+                source_texts=source_texts,
+                shard_char_limit=CRITIQUE_SHARD_CHAR_LIMIT,
+            )
+        )
     else:
         projected_draft = _merge_tagged_outputs(chunks, predicted_terminology_texts)
         if len(source) + len(projected_draft) <= CRITIQUE_SHARD_CHAR_LIMIT:
@@ -2191,6 +2270,7 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
     if not critique_valid:
         critique_text = ""
 
+    projected_unknown_revision_calls: list[int] = []
     for chunk in chunks:
         chunk_id = str(chunk["id"])
         state = chunk_runtime[chunk_id]
@@ -2226,10 +2306,25 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
             paper_context=revision_projection_context,
             stage_status=revision_stage if isinstance(revision_stage, dict) else {},
         )
-        report["missing_stage_api_calls"]["revision"] += (
-            revision_plan["model_subrequest_count"]
-            if not revision_valid
-            else 0
+        if not revision_valid:
+            if critique_valid:
+                report["missing_stage_api_calls"]["revision"] += revision_plan[
+                    "model_subrequest_count"
+                ]
+            else:
+                projected_unknown_revision_calls.append(
+                    revision_plan["model_subrequest_count"]
+                )
+
+    if not critique_valid:
+        # The deterministic critique merge keeps at most one routable finding
+        # per selected line and caps the paper globally. The conservative
+        # revision reserve therefore takes the costliest possible distinct
+        # chunk targets, rather than pretending every chunk will be revised.
+        report["missing_stage_api_calls"]["revision"] = sum(
+            sorted(projected_unknown_revision_calls, reverse=True)[
+                :CRITIQUE_GLOBAL_MAX_FINDINGS
+            ]
         )
 
     chunk_model_calls = sum(
@@ -2538,6 +2633,24 @@ def run_refined_article(
     if legacy_critique is not None:
         critique = legacy_critique
     elif len(source) + len(draft) > CRITIQUE_SHARD_CHAR_LIMIT:
+        _require_critique_drafts_within_projection_bound(
+            chunks,
+            source_texts={
+                str(chunk["id"]): runner.article_artifact_path(
+                    article_dir, str(chunk["source_file"])
+                ).read_text(encoding="utf-8")
+                for chunk in chunks
+            },
+            draft_texts={
+                str(chunk["id"]): runner.stage_output_path(
+                    article_dir,
+                    str(chunk["id"]),
+                    str(chunk["output_file"]),
+                    "terminology",
+                ).read_text(encoding="utf-8")
+                for chunk in chunks
+            },
+        )
         critique = _run_sharded_critique(
             article_dir=article_dir,
             chunks=chunks,
@@ -2571,6 +2684,7 @@ def run_refined_article(
         raise RuntimeError(
             f"{CRITIQUE_FILE} contains no body chunk tags"
         )
+    _require_critique_revision_targets_within_bound(critique, chunks)
 
     revision_contexts = {
         str(chunk["id"]): _revision_context_preserving_completed_checkpoint(

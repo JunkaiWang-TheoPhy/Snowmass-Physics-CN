@@ -1021,6 +1021,34 @@ class RefinedOrchestratorTests(unittest.TestCase):
         manifest["chunks"][0]["source_hash"] = source_hash
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
+    def _replace_with_short_chunks(self, count: int) -> None:
+        chunks = []
+        for index in range(1, count + 1):
+            chunk_id = f"chunk{index:04d}"
+            source_file = f"{chunk_id}.md"
+            source = f"Original paragraph {index}.\n"
+            (self.article / source_file).write_text(source, encoding="utf-8")
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": index,
+                    "source_file": source_file,
+                    "output_file": f"output_{chunk_id}.md",
+                    "source_hash": hashlib.sha256(source.encode()).hexdigest(),
+                    "babeldoc_unit_id": f"p{index:04d}-i0000",
+                }
+            )
+        (self.article / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "record_id": "arxiv:allowed",
+                    "input_mode": "babeldoc_ir",
+                    "chunks": chunks,
+                }
+            ),
+            encoding="utf-8",
+        )
+
     def _write_chunk_stage(
         self,
         module,
@@ -1099,6 +1127,99 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertEqual(report["qc_retry_reserve_api_calls"], 3)
         self.assertEqual(report["identity_diagnostics"]["record_identity_mismatches"], [])
         self.assertEqual(report["identity_diagnostics"]["blocking_uncertain_checkpoints"], [])
+
+    def test_revision_ready_projection_shards_unknown_critique_inputs(self) -> None:
+        module = load_module()
+        self._replace_with_short_chunks(40)
+        self._write_local_glossary([])
+
+        report = module.revision_ready_projection(self.article)
+
+        chunks = json.loads((self.article / "manifest.json").read_text(encoding="utf-8"))["chunks"]
+        expected_shards = module._projected_unknown_critique_shard_count(
+            chunks,
+            source_texts={
+                chunk["id"]: (self.article / chunk["source_file"]).read_text(encoding="utf-8")
+                for chunk in chunks
+            },
+        )
+        self.assertEqual(report["missing_stage_api_calls"]["critique"], 2 * expected_shards)
+        self.assertLess(report["missing_stage_api_calls"]["critique"], 80)
+
+    def test_revision_ready_projection_caps_unknown_revision_targets(self) -> None:
+        module = load_module()
+        self._replace_with_short_chunks(40)
+        self._write_local_glossary([])
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertEqual(
+            report["missing_stage_api_calls"]["revision"],
+            module.CRITIQUE_GLOBAL_MAX_FINDINGS,
+        )
+
+    def test_revision_ready_projection_uses_costliest_thirty_revision_targets(self) -> None:
+        module = load_module()
+        self._replace_with_short_chunks(40)
+        self._write_local_glossary([])
+        original_plan = module._planned_stage_model_subrequests
+
+        def weighted_plan(**kwargs):
+            plan = original_plan(**kwargs)
+            if kwargs["stage"] == "revision":
+                chunk_number = int(str(kwargs["chunk"]["id"])[-4:])
+                plan["model_subrequest_count"] = 2 if chunk_number <= 5 else 1
+            return plan
+
+        with mock.patch.object(
+            module,
+            "_planned_stage_model_subrequests",
+            side_effect=weighted_plan,
+        ):
+            report = module.revision_ready_projection(self.article)
+
+        self.assertEqual(report["missing_stage_api_calls"]["revision"], 35)
+
+    def test_critique_draft_projection_bound_is_enforced(self) -> None:
+        module = load_module()
+        chunks = json.loads(
+            (self.article / "manifest.json").read_text(encoding="utf-8")
+        )["chunks"]
+        source_texts = {"chunk0001": "short source"}
+        allowed = module._critique_draft_character_bound(source_texts["chunk0001"])
+
+        module._require_critique_drafts_within_projection_bound(
+            chunks,
+            source_texts=source_texts,
+            draft_texts={"chunk0001": "中" * allowed},
+        )
+        with self.assertRaisesRegex(RuntimeError, "exceeds the preflight projection bound"):
+            module._require_critique_drafts_within_projection_bound(
+                chunks,
+                source_texts=source_texts,
+                draft_texts={"chunk0001": "中" * (allowed + 1)},
+            )
+
+    def test_critique_revision_target_cap_is_enforced_before_revision(self) -> None:
+        module = load_module()
+        self._replace_with_short_chunks(module.CRITIQUE_GLOBAL_MAX_FINDINGS + 1)
+        chunks = json.loads(
+            (self.article / "manifest.json").read_text(encoding="utf-8")
+        )["chunks"]
+        critique = "\n".join(
+            f"- {chunk['id']}: revise" for chunk in chunks
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "exceeds the revision target cap"):
+            module._require_critique_revision_targets_within_bound(critique, chunks)
+
+        module._require_critique_revision_targets_within_bound(
+            "\n".join(
+                f"- {chunk['id']}: revise"
+                for chunk in chunks[: module.CRITIQUE_GLOBAL_MAX_FINDINGS]
+            ),
+            chunks,
+        )
 
     def test_revision_ready_projection_reuses_valid_translate_checkpoint_only(self) -> None:
         module = load_module()
@@ -1501,12 +1622,17 @@ class RefinedOrchestratorTests(unittest.TestCase):
             def complete(self, instructions: str, input_text: str, max_output_tokens: int):
                 raise AssertionError("valid refined checkpoints must resume without API calls")
 
-        resumed = module.run_refined_article(
-            self.article,
-            client=NoCallClient(),
-            terms=[{"source": "Original", "target": "原文"}],
-            run_id="run-two",
-        )
+        with mock.patch.object(
+            module,
+            "_require_critique_drafts_within_projection_bound",
+            side_effect=AssertionError("legacy critique reuse must bypass a new shard bound"),
+        ):
+            resumed = module.run_refined_article(
+                self.article,
+                client=NoCallClient(),
+                terms=[{"source": "Original", "target": "原文"}],
+                run_id="run-two",
+            )
         self.assertEqual(resumed["status"], "complete")
         status = json.loads((self.article / "paper_status.json").read_text(encoding="utf-8"))
         self.assertTrue(all(item["status"] == "complete" for item in status["phases"].values()))
