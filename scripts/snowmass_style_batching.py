@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import re
-from typing import Iterable
+from pathlib import Path
+from typing import Any, Callable, Iterable
 
+from scripts import run_snowmass_translation as runner
 from scripts.run_snowmass_translation import text_hash
 
 
@@ -34,6 +36,16 @@ class StyleBatch:
     recovery: bool = False
 
 
+@dataclass(frozen=True)
+class StyleStagePlan:
+    reused: tuple[str, ...]
+    local: tuple[str, ...]
+    model_items: tuple[StyleBatchItem, ...]
+    normal_batches: tuple[StyleBatch, ...]
+    worst_case_requests: int
+    restoration_data: dict[str, tuple[dict[str, str], Any]] = field(default_factory=dict)
+
+
 class StyleBatchProtocolError(ValueError):
     """Raised when a style-batch response violates the exact-ID protocol."""
 
@@ -45,6 +57,152 @@ def _validate_chunk_id(chunk_id: object) -> str:
     if not isinstance(chunk_id, str) or _CHUNK_ID_RE.fullmatch(chunk_id) is None:
         raise StyleBatchProtocolError(f"invalid chunk_id: {chunk_id!r}")
     return chunk_id
+
+
+def _status_path(article_dir: Path, chunk_id: str) -> Path:
+    return article_dir / "chunk_status" / f"{chunk_id}.json"
+
+
+def _default_status(task: dict[str, Any], chunk: dict[str, Any], source_hash: str) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "record_id": str(task.get("record_id") or ""),
+        "chunk_id": str(chunk["id"]),
+        "source_file": str(chunk["source_file"]),
+        "source_hash": source_hash,
+        "stages": {},
+    }
+
+
+def _load_status(
+    article_dir: Path,
+    task: dict[str, Any],
+    chunk: dict[str, Any],
+    source_hash: str,
+) -> tuple[Path, dict[str, Any]]:
+    status_path = _status_path(article_dir, str(chunk["id"]))
+    try:
+        status = (
+            json.loads(status_path.read_text(encoding="utf-8"))
+            if status_path.exists()
+            else _default_status(task, chunk, source_hash)
+        )
+    except json.JSONDecodeError:
+        status = _default_status(task, chunk, source_hash)
+    if not isinstance(status, dict):
+        status = _default_status(task, chunk, source_hash)
+    status.setdefault("stages", {})
+    return status_path, status
+
+
+def _execution_policy(task: dict[str, Any], fixed_translation: str | None) -> tuple[str, str]:
+    if bool(task.get("passthrough")):
+        reason = str(task.get("passthrough_reason") or "reference_section_passthrough")
+        return f"passthrough:{reason}", reason
+    if fixed_translation is not None:
+        reason = str(task.get("fixed_translation_reason") or "hard_exact_translation")
+        return (
+            "fixed_translation:"
+            + text_hash(fixed_translation)
+            + ":"
+            + str(task.get("constraint_plan_sha256") or "legacy"),
+            reason,
+        )
+    return "model_pipeline", "style_batch_model_pipeline"
+
+
+def _item_key(
+    *,
+    stage: str,
+    chunk_id: str,
+    source: str,
+    prior: str,
+    glossary_terms: list[dict[str, Any]],
+    context_identity: str,
+    policy: str,
+) -> str:
+    return text_hash(
+        json.dumps(
+            {
+                "protocol": STYLE_BATCH_PROTOCOL,
+                "stage": stage,
+                "chunk_id": chunk_id,
+                "source_hash": text_hash(source),
+                "prior_hash": text_hash(prior),
+                "glossary": glossary_terms,
+                "context_identity": context_identity,
+                "policy": policy,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+
+
+def _checkpoint_matches(
+    stage_status: dict[str, Any],
+    output_path: Path,
+    *,
+    item_key: str,
+    policy: str,
+) -> bool:
+    if stage_status.get("status") != "complete":
+        return False
+    if stage_status.get("item_key") != item_key:
+        return False
+    if not runner.checkpoint_policy_matches(stage_status, policy):
+        return False
+    qc = stage_status.get("qc")
+    if not isinstance(qc, dict) or qc.get("ok") is not True:
+        return False
+    output_hash = stage_status.get("output_hash")
+    if not isinstance(output_hash, str) or not output_hash or not runner.nonempty(output_path):
+        return False
+    return text_hash(output_path.read_text(encoding="utf-8")) == output_hash
+
+
+def _complete_local_stage(
+    *,
+    article_dir: Path,
+    stage: str,
+    task: dict[str, Any],
+    chunk: dict[str, Any],
+    source: str,
+    output_text: str,
+    glossary_terms: list[dict[str, Any]],
+    item_key: str,
+    policy: str,
+    decision_reason: str,
+    status_path: Path,
+    status: dict[str, Any],
+) -> None:
+    qc_terms = [] if bool(task.get("passthrough")) else glossary_terms
+    qc = runner.validate_chunk(source, output_text, {}, qc_terms)
+    if not qc.ok:
+        failures = ", ".join(qc.failures)
+        raise RuntimeError(
+            f"local style policy failed QC for {chunk['id']} at {stage}: {failures}"
+        )
+    output_path = runner.stage_output_path(
+        article_dir,
+        str(chunk["id"]),
+        str(chunk["output_file"]),
+        stage,
+    )
+    runner.atomic_text(output_path, output_text)
+    stage_status = status.setdefault("stages", {}).setdefault(stage, {})
+    stage_status.update(
+        {
+            "status": "complete",
+            "item_key": item_key,
+            "execution_policy": policy,
+            "decision": {"action": "copy_prior_text", "reason": decision_reason},
+            "output_file": output_path.name,
+            "output_hash": text_hash(output_text),
+            "qc": qc.to_dict(),
+        }
+    )
+    runner.atomic_json(status_path, status)
 
 
 def plan_style_batches(
@@ -187,3 +345,117 @@ def style_batch_request_key(
         separators=(",", ":"),
     )
     return text_hash(serialized_identity)
+
+
+def prepare_style_items(
+    *,
+    article_dir: Path,
+    chunks: Iterable[dict[str, Any]],
+    task_factory: Callable[[dict[str, Any]], dict[str, Any]],
+    terms: list[dict[str, Any]],
+    stage: str,
+    input_stage: str,
+    context_factory: Callable[[dict[str, Any]], str],
+) -> StyleStagePlan:
+    reused: list[str] = []
+    local: list[str] = []
+    model_items: list[StyleBatchItem] = []
+    restoration_data: dict[str, tuple[dict[str, str], Any]] = {}
+
+    for chunk in chunks:
+        task = dict(task_factory(chunk))
+        chunk_id = _validate_chunk_id(chunk["id"])
+        source_path = runner.article_artifact_path(article_dir, str(chunk["source_file"]))
+        source = source_path.read_text(encoding="utf-8")
+        prior_path = runner.stage_output_path(article_dir, chunk_id, str(chunk["output_file"]), input_stage)
+        if not runner.nonempty(prior_path):
+            raise RuntimeError(f"style stage input is missing or blank: {prior_path}")
+        prior = prior_path.read_text(encoding="utf-8")
+        selected_terms = runner.compile_glossary_terms(source, terms)
+        context_identity = str(context_factory(chunk) or "")
+        fixed_translation = task.get("fixed_translation")
+        if fixed_translation is not None:
+            fixed_translation = str(fixed_translation)
+            if not fixed_translation.strip():
+                raise RuntimeError(f"Fixed translation is blank for {chunk_id}")
+        policy, decision_reason = _execution_policy(task, fixed_translation)
+        item_key = _item_key(
+            stage=stage,
+            chunk_id=chunk_id,
+            source=source,
+            prior=prior,
+            glossary_terms=selected_terms,
+            context_identity=context_identity,
+            policy=policy,
+        )
+        status_path, status = _load_status(article_dir, task, chunk, text_hash(source))
+        stage_status = status.setdefault("stages", {}).setdefault(stage, {})
+        output_path = runner.stage_output_path(article_dir, chunk_id, str(chunk["output_file"]), stage)
+
+        if _checkpoint_matches(stage_status, output_path, item_key=item_key, policy=policy):
+            reused.append(chunk_id)
+            continue
+
+        if bool(task.get("passthrough")):
+            _complete_local_stage(
+                article_dir=article_dir,
+                stage=stage,
+                task=task,
+                chunk=chunk,
+                source=source,
+                output_text=source,
+                glossary_terms=selected_terms,
+                item_key=item_key,
+                policy=policy,
+                decision_reason=decision_reason,
+                status_path=status_path,
+                status=status,
+            )
+            local.append(chunk_id)
+            continue
+
+        if fixed_translation is not None:
+            _complete_local_stage(
+                article_dir=article_dir,
+                stage=stage,
+                task=task,
+                chunk=chunk,
+                source=source,
+                output_text=fixed_translation,
+                glossary_terms=selected_terms,
+                item_key=item_key,
+                policy=policy,
+                decision_reason=decision_reason,
+                status_path=status_path,
+                status=status,
+            )
+            local.append(chunk_id)
+            continue
+
+        protected_text, mapping, typed_nodes = runner.protect_stage_text(prior)
+        restoration_data[chunk_id] = (mapping, typed_nodes)
+        model_items.append(
+            StyleBatchItem(
+                chunk_id=chunk_id,
+                protected_text=protected_text,
+                source_hash=text_hash(source),
+                prior_hash=text_hash(prior),
+                glossary_text=runner.glossary_text(selected_terms),
+                context=context_identity,
+                item_key=item_key,
+            )
+        )
+
+    planned_items = tuple(model_items)
+    normal_batches = plan_style_batches(planned_items)
+    worst_case_requests = len(normal_batches) + len(
+        plan_style_batches(planned_items, recovery=True)
+    )
+    return StyleStagePlan(
+        reused=tuple(reused),
+        local=tuple(local),
+        model_items=planned_items,
+        normal_batches=normal_batches,
+        worst_case_requests=worst_case_requests,
+        restoration_data=restoration_data,
+    )

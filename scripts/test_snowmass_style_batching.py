@@ -3,20 +3,32 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
 MODULE_PATH = Path(__file__).with_name("snowmass_style_batching.py")
+RUNNER_MODULE_PATH = Path(__file__).with_name("run_snowmass_translation.py")
 
 
 def load_batching():
     if not MODULE_PATH.exists():
         raise AssertionError("style batching planner is not implemented")
     spec = importlib.util.spec_from_file_location("snowmass_style_batching", MODULE_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_runner():
+    spec = importlib.util.spec_from_file_location("run_snowmass_translation", RUNNER_MODULE_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -165,3 +177,240 @@ class StyleBatchProtocolTests(unittest.TestCase):
                     json.dumps({"translations": {chunk_id: "甲"}}, ensure_ascii=False),
                     ("chunk0001",),
                 )
+
+
+class StylePreparationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.batching = load_batching()
+        self.runner = load_runner()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.article_dir = Path(self.temporary.name)
+        self.chunk = {
+            "id": "chunk0001",
+            "source_file": "chunk0001.md",
+            "output_file": "output_chunk0001.md",
+        }
+        (self.article_dir / self.chunk["source_file"]).write_text(
+            "Original source paragraph.\n",
+            encoding="utf-8",
+        )
+        self._write_stage_text("revision", "Prior refined paragraph.\n")
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _status_path(self) -> Path:
+        return self.article_dir / "chunk_status" / "chunk0001.json"
+
+    def _write_stage_text(self, stage: str, text: str) -> Path:
+        path = self.runner.stage_output_path(
+            self.article_dir,
+            self.chunk["id"],
+            self.chunk["output_file"],
+            stage,
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def _stage_status(self) -> dict[str, object]:
+        return json.loads(self._status_path().read_text(encoding="utf-8"))["stages"]["anti_ai"]
+
+    def _item_key(
+        self,
+        *,
+        source: str,
+        prior: str,
+        glossary: list[dict[str, object]] | None = None,
+        context: str = "",
+        policy: str = "model_pipeline",
+    ) -> str:
+        glossary = glossary or []
+        return self.runner.text_hash(
+            json.dumps(
+                {
+                    "protocol": self.batching.STYLE_BATCH_PROTOCOL,
+                    "stage": "anti_ai",
+                    "chunk_id": self.chunk["id"],
+                    "source_hash": self.runner.text_hash(source),
+                    "prior_hash": self.runner.text_hash(prior),
+                    "glossary": glossary,
+                    "context_identity": context,
+                    "policy": policy,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+
+    def _write_checkpoint(
+        self,
+        *,
+        item_key: str,
+        policy: str,
+        output_text: str,
+    ) -> None:
+        output_path = self._write_stage_text("anti_ai", output_text)
+        status = {
+            "schema_version": 1,
+            "record_id": "arxiv:test",
+            "chunk_id": self.chunk["id"],
+            "source_file": self.chunk["source_file"],
+            "stages": {
+                "anti_ai": {
+                    "status": "complete",
+                    "item_key": item_key,
+                    "execution_policy": policy,
+                    "output_file": output_path.name,
+                    "output_hash": hashlib.sha256(output_text.encode("utf-8")).hexdigest(),
+                    "qc": {"ok": True, "failures": []},
+                }
+            },
+        }
+        self._status_path().parent.mkdir(parents=True, exist_ok=True)
+        self._status_path().write_text(
+            json.dumps(status, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _prepare(
+        self,
+        *,
+        task_factory=None,
+        terms=None,
+        context="chunk-local critique",
+    ):
+        return self.batching.prepare_style_items(
+            article_dir=self.article_dir,
+            chunks=(self.chunk,),
+            task_factory=task_factory or (lambda _chunk: {"record_id": "arxiv:test"}),
+            terms=terms or [],
+            stage="anti_ai",
+            input_stage="revision",
+            context_factory=lambda _chunk: context,
+        )
+
+    def test_stale_prior_hash_schedules_a_model_item_and_keeps_checkpoint_metadata(self) -> None:
+        old_prior = "Prior refined paragraph.\n"
+        current_prior = "Changed refined paragraph.\n"
+        source = "Original source paragraph.\n"
+        self._write_stage_text("revision", current_prior)
+        self._write_checkpoint(
+            item_key=self._item_key(
+                source=source,
+                prior=old_prior,
+                context="chunk-local critique",
+            ),
+            policy="model_pipeline",
+            output_text="Old style output.\n",
+        )
+
+        plan = self._prepare()
+
+        self.assertEqual(plan.reused, ())
+        self.assertEqual(plan.local, ())
+        self.assertEqual([item.chunk_id for item in plan.model_items], ["chunk0001"])
+        self.assertEqual([len(batch.items) for batch in plan.normal_batches], [1])
+        self.assertEqual(plan.worst_case_requests, 2)
+        self.assertEqual(plan.model_items[0].prior_hash, self.runner.text_hash(current_prior))
+        stage = self._stage_status()
+        self.assertEqual(stage["execution_policy"], "model_pipeline")
+        self.assertEqual(
+            stage["output_hash"],
+            hashlib.sha256("Old style output.\n".encode("utf-8")).hexdigest(),
+        )
+
+    def test_valid_batch_item_checkpoint_is_reused_without_paid_batches(self) -> None:
+        source = "Original source paragraph.\n"
+        prior = "Prior refined paragraph.\n"
+        output_text = "Checkpoint style output.\n"
+        self._write_checkpoint(
+            item_key=self._item_key(
+                source=source,
+                prior=prior,
+                context="chunk-local critique",
+            ),
+            policy="model_pipeline",
+            output_text=output_text,
+        )
+
+        plan = self._prepare()
+
+        self.assertEqual(plan.reused, ("chunk0001",))
+        self.assertEqual(plan.local, ())
+        self.assertEqual(plan.model_items, ())
+        self.assertEqual(plan.normal_batches, ())
+        self.assertEqual(plan.worst_case_requests, 0)
+        stage = self._stage_status()
+        self.assertEqual(stage["execution_policy"], "model_pipeline")
+        self.assertEqual(
+            stage["output_hash"],
+            hashlib.sha256(output_text.encode("utf-8")).hexdigest(),
+        )
+
+    def test_hard_exact_translation_writes_local_output_with_fixed_policy(self) -> None:
+        fixed_translation = "统一运行页眉\n"
+
+        plan = self._prepare(
+            task_factory=lambda _chunk: {
+                "record_id": "arxiv:test",
+                "fixed_translation": fixed_translation,
+                "fixed_translation_reason": "hard_exact_translation",
+                "constraint_plan_sha256": "constraint-plan",
+            }
+        )
+
+        self.assertEqual(plan.reused, ())
+        self.assertEqual(plan.local, ("chunk0001",))
+        self.assertEqual(plan.model_items, ())
+        self.assertEqual(plan.worst_case_requests, 0)
+        output_path = self.runner.stage_output_path(
+            self.article_dir,
+            self.chunk["id"],
+            self.chunk["output_file"],
+            "anti_ai",
+        )
+        self.assertEqual(output_path.read_text(encoding="utf-8"), fixed_translation)
+        stage = self._stage_status()
+        self.assertEqual(
+            stage["execution_policy"],
+            "fixed_translation:"
+            + self.runner.text_hash(fixed_translation)
+            + ":constraint-plan",
+        )
+        self.assertEqual(stage["decision"]["reason"], "hard_exact_translation")
+        self.assertEqual(stage["output_hash"], self.runner.text_hash(fixed_translation))
+
+    def test_reference_passthrough_writes_local_output_with_passthrough_policy(self) -> None:
+        plan = self._prepare(
+            task_factory=lambda _chunk: {
+                "record_id": "arxiv:test",
+                "passthrough": True,
+                "passthrough_reason": "reference_section_passthrough",
+            }
+        )
+
+        self.assertEqual(plan.reused, ())
+        self.assertEqual(plan.local, ("chunk0001",))
+        self.assertEqual(plan.model_items, ())
+        self.assertEqual(plan.worst_case_requests, 0)
+        output_path = self.runner.stage_output_path(
+            self.article_dir,
+            self.chunk["id"],
+            self.chunk["output_file"],
+            "anti_ai",
+        )
+        self.assertEqual(
+            output_path.read_text(encoding="utf-8"),
+            "Original source paragraph.\n",
+        )
+        stage = self._stage_status()
+        self.assertEqual(
+            stage["execution_policy"],
+            "passthrough:reference_section_passthrough",
+        )
+        self.assertEqual(stage["decision"]["reason"], "reference_section_passthrough")
+        self.assertEqual(
+            stage["output_hash"],
+            self.runner.text_hash("Original source paragraph.\n"),
+        )
