@@ -1622,6 +1622,7 @@ def run_refined_article(
     budget_guard: runner.BudgetGuard | None = None,
     concurrency: int = 8,
     retry_uncertain: bool = False,
+    stop_after_revision: bool = False,
 ) -> dict[str, Any]:
     """Run all causally ordered paper and chunk passes for one prepared article."""
 
@@ -1851,6 +1852,11 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         status=status,
         status_path=status_path,
     )
+    if stop_after_revision:
+        status["status"] = "revision_ready"
+        status["finished_at"] = runner.now()
+        _persist_status(status_path, status)
+        return {"record_id": record_id, "status": "revision_ready", "chunks": len(chunks)}
 
     run_batched_final_style_passes(
         article_dir,
@@ -1894,6 +1900,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Conservatively charge and replay stale in-flight requests after operator review",
     )
     parser.add_argument("--style-projection-only", action="store_true")
+    parser.add_argument("--stop-after-revision", action="store_true")
     args = parser.parse_args(argv)
     if not math.isfinite(args.max_cost_rmb) or args.max_cost_rmb <= 0:
         parser.error("--max-cost-rmb must be finite and greater than zero")
@@ -1901,6 +1908,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--usd-cny-rate must be finite and greater than zero")
     if args.concurrency < 1 or args.concurrency > 64:
         parser.error("--concurrency must be between 1 and 64")
+    if args.stop_after_revision and args.style_projection_only:
+        parser.error("--stop-after-revision cannot be combined with --style-projection-only")
 
     manifest = _load_json(args.article_dir / "manifest.json")
     record_id = manifest.get("record_id")
@@ -1937,6 +1946,7 @@ def main(argv: list[str] | None = None) -> int:
         budget_guard=budget,
         concurrency=args.concurrency,
         retry_uncertain=args.retry_uncertain,
+        stop_after_revision=args.stop_after_revision,
     )
     result.update({"run_id": run_id, "budget": budget.snapshot()})
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)

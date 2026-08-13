@@ -1126,6 +1126,55 @@ class RefinedOrchestratorTests(unittest.TestCase):
         status = json.loads((self.article / "paper_status.json").read_text(encoding="utf-8"))
         self.assertTrue(all(item["status"] == "complete" for item in status["phases"].values()))
 
+    def test_stop_after_revision_returns_revision_ready_without_running_style_passes(self) -> None:
+        module = load_module()
+
+        class FakeClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                if "paper-level content analysis" in instructions:
+                    return completed_response(
+                        "## Content Summary\n测试论文。\n\n## Terminology\nOriginal → 原文\n\n"
+                        "## Tone & Style\n学术。\n\n## Translation Challenges\n- 无。\n",
+                        "analysis",
+                    ), 0.1
+                if "critical review" in instructions:
+                    return completed_response(
+                        "## Accuracy\n- chunk0001: 无。\n\n## Native Voice\n- chunk0001: 调整句法。\n\n"
+                        "## Notes & Adaptation\n- 无。\n\n## Summary\n- 完成。\n",
+                        "critique",
+                    ), 0.1
+                if "first faithful translation pass" in instructions:
+                    return completed_response("原文初稿段落。\n", "draft"), 0.1
+                if "refined revision pass" in instructions:
+                    return completed_response("原文修订段落。\n", "revision"), 0.1
+                raise AssertionError(instructions)
+
+        with mock.patch.object(
+            module,
+            "run_batched_final_style_passes",
+            side_effect=AssertionError("style passes must not run"),
+        ):
+            result = module.run_refined_article(
+                self.article,
+                client=FakeClient(),
+                terms=[{"source": "Original", "target": "原文"}],
+                run_id="run-stop-after-revision",
+                stop_after_revision=True,
+            )
+
+        self.assertEqual(
+            result,
+            {"record_id": "arxiv:allowed", "status": "revision_ready", "chunks": 1},
+        )
+        self.assertEqual(
+            (self.article / "05-revision.md").read_text(encoding="utf-8"),
+            "<!-- chunk0001 p0001-i0000 -->\n原文修订段落。\n",
+        )
+        status = json.loads((self.article / "paper_status.json").read_text(encoding="utf-8"))
+        self.assertEqual(status["status"], "revision_ready")
+        self.assertEqual(status["phases"]["revision_merge"]["status"], "complete")
+        self.assertFalse((self.article / "translation.md").exists())
+
     def test_final_style_uses_ordered_exact_id_batches(self) -> None:
         module = load_module()
         module.load_neighbor_context = lambda *_args, **_kwargs: ""
@@ -1594,6 +1643,41 @@ class RefinedOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual(report["projected_normal_api_calls"], 2)
         self.assertEqual(report["projected_worst_case_api_calls"], 4)
+
+    def test_cli_rejects_stop_after_revision_with_style_projection_only(self) -> None:
+        module = load_module()
+
+        error = io.StringIO()
+        with (
+            mock.patch.object(
+                module.runner,
+                "load_api_key",
+                side_effect=AssertionError("must not load credentials"),
+            ),
+            mock.patch.object(
+                module.runner,
+                "DeepSeekClient",
+                side_effect=AssertionError("must not create client"),
+            ),
+            mock.patch("sys.stderr", error),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                module.main(
+                    [
+                        "--article-dir",
+                        str(self.article),
+                        "--max-cost-rmb",
+                        "1",
+                        "--style-projection-only",
+                        "--stop-after-revision",
+                    ]
+                )
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn(
+            "--stop-after-revision cannot be combined with --style-projection-only",
+            error.getvalue(),
+        )
 
     def test_style_projection_only_reports_missing_revision_chunks_without_guessing(self) -> None:
         module = load_module()
