@@ -153,7 +153,12 @@ def _extract_urls(text: str) -> tuple[str, ...]:
 
 def _extract_unit_values(text: str) -> tuple[str, ...]:
     values: list[str] = []
-    for match in _UNIT_VALUE_RE.findall(text):
+    normalized = re.sub(
+        r"(?<=\d)(eV|keV|MeV|GeV|TeV|PeV|kHz|MHz|GHz)(?=[A-Z][a-z])",
+        r"\1 ",
+        text,
+    )
+    for match in _UNIT_VALUE_RE.findall(normalized):
         if re.fullmatch(r"[12]\d{3}s", match):
             continue
         values.append(re.sub(r"\s+", "", match))

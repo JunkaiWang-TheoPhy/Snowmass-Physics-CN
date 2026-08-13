@@ -169,6 +169,17 @@ class ValidateChunkTests(unittest.TestCase):
 
         self.assertTrue(report.ok)
 
+    def test_validate_chunk_recovers_unit_before_pdf_glued_capitalized_word(self) -> None:
+        report = QC.validate_chunk(
+            source="Production at a 250GeVHiggs factory.\n",
+            translated="在 250GeV希格斯工厂产生。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("units_mismatch", report.failures)
+
     def test_validate_chunk_does_not_treat_decade_suffix_as_seconds(self) -> None:
         report = QC.validate_chunk(
             source="The metric was retired in the 2020s.\n",
