@@ -50,6 +50,38 @@ def item(chunk_id: str, protected_text: str):
 
 
 class StyleBatchPlanningTests(unittest.TestCase):
+    def test_parser_accepts_exactly_one_redundant_trailing_closing_brace(self) -> None:
+        batching = load_batching()
+        text = '{"translations":{"chunk0001":"译文"}}}'
+        self.assertEqual(
+            batching.parse_style_batch_response(text, ["chunk0001"]),
+            {"chunk0001": "译文"},
+        )
+
+    def test_parser_rejects_other_trailing_content_and_multiple_braces(self) -> None:
+        batching = load_batching()
+        for suffix in ("explanation", "}}", "```", " extra"):
+            with self.subTest(suffix=suffix), self.assertRaises(
+                batching.StyleBatchProtocolError
+            ):
+                batching.parse_style_batch_response(
+                    '{"translations":{"chunk0001":"译文"}}' + suffix,
+                    ["chunk0001"],
+                )
+
+    def test_trailing_brace_salvage_rejects_duplicate_keys_and_nonobjects(self) -> None:
+        batching = load_batching()
+        candidates = (
+            '{"translations":{"chunk0001":"甲","chunk0001":"乙"}}}',
+            "1}",
+            "[]}",
+        )
+        for candidate in candidates:
+            with self.subTest(candidate=candidate), self.assertRaises(
+                batching.StyleBatchProtocolError
+            ):
+                batching.parse_style_batch_response(candidate, ["chunk0001"])
+
     def test_style_batch_instructions_override_plain_text_output_contract(self) -> None:
         batching = load_batching()
         instructions = batching.style_batch_instructions(

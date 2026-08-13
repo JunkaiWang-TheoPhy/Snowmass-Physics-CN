@@ -412,15 +412,32 @@ def parse_style_batch_response(
     expected = tuple(_validate_chunk_id(chunk_id) for chunk_id in expected_ids)
     if len(expected) != len(set(expected)):
         raise StyleBatchProtocolError("expected IDs must be unique")
+    candidate = response_text.strip()
     try:
         response = json.loads(
-            response_text,
+            candidate,
             object_pairs_hook=_reject_duplicate_json_keys,
             parse_constant=lambda value: (_ for _ in ()).throw(
                 ValueError(f"non-standard JSON constant: {value}")
             ),
         )
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+    except json.JSONDecodeError as exc:
+        if candidate.endswith("}") and exc.msg == "Extra data" and candidate[exc.pos:] == "}":
+            try:
+                response = json.loads(
+                    candidate[:exc.pos],
+                    object_pairs_hook=_reject_duplicate_json_keys,
+                    parse_constant=lambda value: (_ for _ in ()).throw(
+                        ValueError(f"non-standard JSON constant: {value}")
+                    ),
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as retry_exc:
+                raise StyleBatchProtocolError("response must be standard JSON") from retry_exc
+            if not isinstance(response, dict) or not isinstance(response.get("translations"), dict):
+                raise StyleBatchProtocolError("response must contain a translations object")
+        else:
+            raise StyleBatchProtocolError("response must be standard JSON") from exc
+    except (TypeError, ValueError) as exc:
         raise StyleBatchProtocolError("response must be standard JSON") from exc
     if not isinstance(response, dict) or not isinstance(response.get("translations"), dict):
         raise StyleBatchProtocolError("response must contain a translations object")
