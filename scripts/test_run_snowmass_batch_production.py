@@ -436,6 +436,7 @@ class ArticleQCTests(unittest.TestCase):
                 json.dumps(
                     {
                         "status": "complete",
+                        "refill_schema_version": module.refill.REFILL_SCHEMA_VERSION,
                         "chunks": {"chunk0001": {"source_sha256": source_hash, "output_sha256": output_hash}},
                         "mono_pdf_sha256": hashlib.sha256(b"mono").hexdigest(),
                         "dual_pdf_sha256": hashlib.sha256(b"dual").hexdigest(),
@@ -521,6 +522,34 @@ class ArticleQCTests(unittest.TestCase):
 
             self.assertIn("figure_region_classification_missing", report["failures"])
             self.assertIn("table_region_classification_missing", report["failures"])
+
+    def test_qc_rejects_stale_refill_contract_before_package_only_resume(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "manifest.json").write_text(
+                json.dumps({"record_id": "arxiv:a", "chunks": []}), encoding="utf-8"
+            )
+            (article / "paper_status.json").write_text('{"status":"complete"}', encoding="utf-8")
+            (article / "refill_status.json").write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "refill_schema_version": module.refill.REFILL_SCHEMA_VERSION - 1,
+                        "publication_qc": {"ok": True},
+                        "reference_qc": {"verified": True},
+                        "figure_region_count": 0,
+                        "figure_regions_not_applicable": True,
+                        "table_region_count": 0,
+                        "table_regions_not_applicable": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = module.evaluate_article_qc(article)
+
+            self.assertIn("refill_contract_stale", report["failures"])
 
     def test_manifest_output_path_cannot_escape_article_directory(self) -> None:
         module = load_module()

@@ -428,6 +428,8 @@ def evaluate_article_qc(article_dir: Path) -> dict[str, Any]:
             failures.append(f"publication_chunk_hash_mismatch:{chunk_id}")
     if refill_status.get("status") != "complete":
         failures.append("refill_not_complete")
+    if refill_status.get("refill_schema_version") != refill.REFILL_SCHEMA_VERSION:
+        failures.append("refill_contract_stale")
     if refill_status.get("publication_qc", {}).get("ok") is not True:
         failures.append("publication_qc_failed")
     if refill_status.get("reference_qc", {}).get("verified") is not True:
