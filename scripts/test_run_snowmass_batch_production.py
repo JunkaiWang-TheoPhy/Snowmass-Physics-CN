@@ -540,6 +540,10 @@ class RunLockTests(unittest.TestCase):
 
         self.assertIsInstance(environment["lock_sha256"], str)
         self.assertEqual(environment["contracts"]["model"], module.runner.MODEL)
+        self.assertIn(
+            "snowmass_babeldoc_bridge.py",
+            environment["contracts"]["versions"]["source_sha256"],
+        )
         self.assertEqual(module.production_contract._environment_lock_errors(environment), [])
 
     def test_same_run_cannot_be_started_twice(self) -> None:

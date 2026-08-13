@@ -26,7 +26,7 @@ import snowmass_constraint_compiler as constraint_compiler
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
 DEFAULT_GLOSSARY = ROOT / "translations/snowmass-global-glossary.json"
 DEFAULT_HARD_CONSTRAINTS = ROOT / "translations/snowmass-hard-constraints.json"
-REFILL_SCHEMA_VERSION = 11
+REFILL_SCHEMA_VERSION = 12
 
 
 def _load_bridge():

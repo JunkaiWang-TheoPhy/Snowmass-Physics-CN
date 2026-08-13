@@ -71,6 +71,7 @@ def _production_environment_lock() -> dict[str, Any]:
         Path(runner.__file__),
         Path(refined.__file__),
         Path(refill.__file__),
+        Path(prepare.BRIDGE.__file__),
         Path(packager.__file__),
         Path(qc_contract.__file__),
         Path(production_contract.__file__),
