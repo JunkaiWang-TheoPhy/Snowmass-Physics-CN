@@ -1107,6 +1107,7 @@ def _run_chunk_barrier(
     total = len(chunks)
     failures: dict[str, str] = {}
     terminal_failures: dict[str, str] = {}
+    budget_failure: runner.BudgetExceededError | None = None
     for attempt in range(max_qc_retries + 1):
         retryable: list[dict[str, Any]] = []
         completed_this_attempt = 0
@@ -1142,6 +1143,8 @@ def _run_chunk_barrier(
                     except runner.BudgetExceededError as exc:
                         if stop_event is not None:
                             stop_event.set()
+                        if budget_failure is None:
+                            budget_failure = exc
                         terminal_failures[chunk_id] = f"{type(exc).__name__}:{exc}"
                     except Exception as exc:
                         failures[chunk_id] = f"{type(exc).__name__}:{exc}"
@@ -1181,6 +1184,8 @@ def _run_chunk_barrier(
             break
         pending = retryable
     failures.update(terminal_failures)
+    if budget_failure is not None:
+        raise budget_failure
     if failures:
         raise RuntimeError(
             f"{phase} barrier failed for {record_id}: "
@@ -2227,7 +2232,14 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
             else 0
         )
 
-    report["projected_worst_case_api_calls"] = sum(report["missing_stage_api_calls"].values())
+    chunk_model_calls = sum(
+        report["missing_stage_api_calls"][stage_name]
+        for stage_name in ("translate", "terminology", "revision")
+    )
+    report["qc_retry_reserve_api_calls"] = chunk_model_calls
+    report["projected_worst_case_api_calls"] = (
+        sum(report["missing_stage_api_calls"].values()) + chunk_model_calls
+    )
     report["projection_ready"] = True
     return report
 

@@ -1509,6 +1509,46 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
         self.assertEqual(summary["launch_projection"]["projected_worst_case_api_calls"], 7)
         self.assertEqual(summary["launch_projection"]["revision_ready_record_ids"], ["arxiv:a"])
 
+    def test_style_projection_revalidates_revision_dependencies_before_launch(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = module._article_dir(config, "arxiv:a")
+            article.mkdir(parents=True)
+            (article / "manifest.json").write_text("{}", encoding="utf-8")
+            (article / "chunking_status.json").write_text("{}", encoding="utf-8")
+            with (
+                mock.patch.object(
+                    module.refined,
+                    "revision_ready_projection",
+                    return_value={
+                        "record_id": "arxiv:a",
+                        "projection_ready": True,
+                        "projected_worst_case_api_calls": 2,
+                        "missing_stage_api_calls": {
+                            "analysis": 0,
+                            "translate": 0,
+                            "terminology": 0,
+                            "critique": 0,
+                            "revision": 1,
+                        },
+                        "identity_diagnostics": {},
+                    },
+                ),
+                mock.patch.object(
+                    module.refined,
+                    "style_projection_report",
+                    side_effect=AssertionError("style projection must wait for revision repair"),
+                ),
+            ):
+                report = module._projection_report_for_record(config, record)
+
+        self.assertFalse(report["projection_ready"])
+        self.assertEqual(report["missing_revision_chunk_ids"], ["checkpoint_dependency_revalidation"])
+        self.assertEqual(report["revision_projection"]["projected_worst_case_api_calls"], 2)
+
     def test_style_projection_error_is_not_misclassified_as_missing_revision(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

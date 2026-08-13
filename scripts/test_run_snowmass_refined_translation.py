@@ -1095,7 +1095,8 @@ class RefinedOrchestratorTests(unittest.TestCase):
                 "revision": 1,
             },
         )
-        self.assertEqual(report["projected_worst_case_api_calls"], 6)
+        self.assertEqual(report["projected_worst_case_api_calls"], 9)
+        self.assertEqual(report["qc_retry_reserve_api_calls"], 3)
         self.assertEqual(report["identity_diagnostics"]["record_identity_mismatches"], [])
         self.assertEqual(report["identity_diagnostics"]["blocking_uncertain_checkpoints"], [])
 
@@ -1117,7 +1118,8 @@ class RefinedOrchestratorTests(unittest.TestCase):
                 "revision": 1,
             },
         )
-        self.assertEqual(report["projected_worst_case_api_calls"], 4)
+        self.assertEqual(report["projected_worst_case_api_calls"], 6)
+        self.assertEqual(report["qc_retry_reserve_api_calls"], 2)
 
     def test_revision_ready_projection_returns_zero_after_complete_revision_ready_state(self) -> None:
         module = load_module()
@@ -2313,6 +2315,48 @@ class RefinedOrchestratorTests(unittest.TestCase):
                 record_id="arxiv:allowed",
             )
         self.assertEqual(uncertain_calls, [0])
+
+    def test_chunk_barrier_preserves_budget_failure_type(self) -> None:
+        module = load_module()
+        chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
+
+        def exhausted(_chunk, _attempt):
+            raise module.runner.BudgetExceededError("request cap exhausted")
+
+        with self.assertRaisesRegex(
+            module.runner.BudgetExceededError,
+            "request cap exhausted",
+        ):
+            module._run_chunk_barrier(
+                [chunk],
+                concurrency=1,
+                invoke=exhausted,
+                phase="revision",
+                record_id="arxiv:allowed",
+            )
+
+    def test_revision_projection_reserves_one_qc_retry_for_chunk_model_work(self) -> None:
+        module = load_module()
+        with mock.patch.object(
+            module,
+            "_planned_stage_model_subrequests",
+            wraps=module._planned_stage_model_subrequests,
+        ):
+            report = module.revision_ready_projection(self.article)
+
+        chunk_calls = sum(
+            report["missing_stage_api_calls"][name]
+            for name in ("translate", "terminology", "revision")
+        )
+        paper_calls = sum(
+            report["missing_stage_api_calls"][name]
+            for name in ("analysis", "critique")
+        )
+        self.assertEqual(
+            report["projected_worst_case_api_calls"],
+            paper_calls + 2 * chunk_calls,
+        )
+        self.assertEqual(report["qc_retry_reserve_api_calls"], chunk_calls)
 
     def test_retry_uncertain_requires_recorded_budget_contract(self) -> None:
         module = load_module()

@@ -776,6 +776,22 @@ def _projection_report_for_record(
             "projected_worst_case_api_calls": 0,
         }
     try:
+        revision_projection = refined.revision_ready_projection(article_dir)
+        if revision_projection.get("projection_ready") is not True:
+            return {
+                "record_id": record_id,
+                "projection_ready": False,
+                "missing_revision_chunk_ids": [],
+                "revision_projection": revision_projection,
+                "error": "revision checkpoint dependency validation failed",
+            }
+        if int(revision_projection.get("projected_worst_case_api_calls") or 0) > 0:
+            return {
+                "record_id": record_id,
+                "projection_ready": False,
+                "missing_revision_chunk_ids": ["checkpoint_dependency_revalidation"],
+                "revision_projection": revision_projection,
+            }
         glossary_path = runner.resolve_glossary_path(config.output_root, None)
         terms = runner.merge_glossary_terms(
             runner.load_glossary(glossary_path),
