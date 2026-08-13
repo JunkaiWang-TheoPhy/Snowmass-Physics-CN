@@ -55,6 +55,12 @@ class RunAlreadyActiveError(RuntimeError):
     pass
 
 
+class ProjectionGateRefusedError(RuntimeError):
+    def __init__(self, message: str, *, reason_code: str = "projection_not_ready") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
 _LOCAL_RUN_LOCKS: set[Path] = set()
 _LOCAL_RUN_LOCK_GUARD = threading.Lock()
 
@@ -662,6 +668,24 @@ def _package_article(config: BatchConfig, record: dict[str, Any], article_dir: P
     )
 
 
+def _package_only_result(
+    config: BatchConfig,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    article_dir = _article_dir(config, str(record["record_id"]))
+    qc = evaluate_article_qc(article_dir)
+    if not qc["ok"]:
+        raise RuntimeError("publication QC failed: " + ", ".join(qc["failures"]))
+    return {
+        "record_id": str(record["record_id"]),
+        "status": "packaged",
+        "source_characters": _source_character_count(article_dir),
+        "qc": qc,
+        "package": _package_article(config, record, article_dir),
+        "resumed_from_verified_translation": True,
+    }
+
+
 def _resume_article_result(
     config: BatchConfig,
     record: dict[str, Any],
@@ -699,6 +723,27 @@ def _resume_article_result(
         return None
     result.update({"status": "packaged", "package": receipt})
     return result
+
+
+def _classify_selected_records(
+    config: BatchConfig,
+    selected: Iterable[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    recoverable: list[dict[str, Any]] = []
+    package_only: list[dict[str, Any]] = []
+    paid_pending: list[dict[str, Any]] = []
+    for record in selected:
+        resumed = _resume_article_result(config, record)
+        if resumed is not None:
+            recoverable.append(resumed)
+            continue
+        if config.through_stage == "packaged" and evaluate_article_qc(
+            _article_dir(config, str(record["record_id"]))
+        )["ok"]:
+            package_only.append(record)
+            continue
+        paid_pending.append(record)
+    return recoverable, package_only, paid_pending
 
 
 def resolve_babeldoc_python(console_script: Path | None = None) -> Path:
@@ -877,22 +922,9 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
     }
     historical_roots = tuple(dict.fromkeys((*config.historical_roots, config.output_root)))
     if config.preflight_only:
-        projection_summary = _aggregate_style_projection(config, selected)
-        recoverable = [
-            result
-            for record in selected
-            if (result := _resume_article_result(config, record)) is not None
-        ]
-        recoverable_ids = {str(result["record_id"]) for result in recoverable}
-        package_only_ids = [
-            str(record["record_id"])
-            for record in selected
-            if str(record["record_id"]) not in recoverable_ids
-            and config.through_stage == "packaged"
-            and evaluate_article_qc(
-                _article_dir(config, str(record["record_id"]))
-            )["ok"]
-        ]
+        recoverable, package_only_records, paid_pending = _classify_selected_records(config, selected)
+        projection_summary = _aggregate_style_projection(config, paid_pending)
+        package_only_ids = [str(record["record_id"]) for record in package_only_records]
         return {
             **snapshot,
             **projection_summary,
@@ -904,9 +936,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
             "verified_resume_record_ids": [result["record_id"] for result in recoverable],
             "verified_package_only_count": len(package_only_ids),
             "verified_package_only_record_ids": package_only_ids,
-            "paid_translation_pending_count": (
-                len(selected) - len(recoverable) - len(package_only_ids)
-            ),
+            "paid_translation_pending_count": len(paid_pending),
             "pending_record_count": len(selected) - len(recoverable),
         }
     run_dir = config.control_dir / "runs" / run_id
@@ -955,13 +985,8 @@ def _run_batch_locked(
     consecutive_content_failures = 0
     resolved_content_outcomes: dict[int, bool] = {}
     next_outcome_ordinal = 0
-    pending_records: list[dict[str, Any]] = []
-    for record in selected:
-        resumed = _resume_article_result(config, record)
-        if resumed is None:
-            pending_records.append(record)
-        else:
-            results.append(resumed)
+    recoverable, package_only_records, pending_records = _classify_selected_records(config, selected)
+    results.extend(recoverable)
     projection_summary = _aggregate_style_projection(config, pending_records)
     snapshot.update(projection_summary)
     if run_snapshot_path.is_file():
@@ -970,23 +995,36 @@ def _run_batch_locked(
     else:
         _atomic_json(run_snapshot_path, snapshot)
 
-    stage_remaining_api_calls = max(
-        0,
-        int(budget.snapshot().get("stage_remaining_api_calls") or 0),
-    )
-    if not projection_summary["style_projection"]["projection_ready"]:
-        missing = projection_summary["style_projection"]["missing_revision_chunk_ids"]
-        raise RuntimeError(
-            "style projection is not ready for paid launch: "
-            + json.dumps(missing, ensure_ascii=False, sort_keys=True)
+    for record in package_only_records:
+        try:
+            results.append(_package_only_result(config, record))
+        except Exception as error:
+            failures.append(
+                {
+                    "record_id": str(record["record_id"]),
+                    "error": f"{type(error).__name__}: {error}",
+                }
+            )
+
+    actual_client = None
+    if pending_records:
+        stage_remaining_api_calls = max(
+            0,
+            int(budget.snapshot().get("stage_remaining_api_calls") or 0),
         )
-    projected_worst_case = int(projection_summary["projected_worst_case_api_calls"] or 0)
-    if projected_worst_case > stage_remaining_api_calls:
-        raise RequestLimitExceededError(
-            "style projection worst case would exceed the remaining stage request cap: "
-            f"{projected_worst_case} > {stage_remaining_api_calls}"
-        )
-    actual_client = client or runner.DeepSeekClient(runner.load_api_key())
+        if not projection_summary["style_projection"]["projection_ready"]:
+            missing = projection_summary["style_projection"]["missing_revision_chunk_ids"]
+            raise ProjectionGateRefusedError(
+                "style projection is not ready for paid launch: "
+                + json.dumps(missing, ensure_ascii=False, sort_keys=True),
+            )
+        projected_worst_case = int(projection_summary["projected_worst_case_api_calls"] or 0)
+        if projected_worst_case > stage_remaining_api_calls:
+            raise RequestLimitExceededError(
+                "style projection worst case would exceed the remaining stage request cap: "
+                f"{projected_worst_case} > {stage_remaining_api_calls}"
+            )
+        actual_client = client or runner.DeepSeekClient(runner.load_api_key())
 
     def persist() -> None:
         with state_lock:
@@ -1176,7 +1214,36 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
 
 def main(argv: list[str] | None = None) -> int:
     config = _parse_args(argv)
-    summary = run_batch(config)
+    try:
+        summary = run_batch(config)
+    except ProjectionGateRefusedError as error:
+        print(
+            json.dumps(
+                {
+                    "status": "gate_refused",
+                    "reason_code": error.reason_code,
+                    "message": str(error),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            flush=True,
+        )
+        return 2
+    except RequestLimitExceededError as error:
+        print(
+            json.dumps(
+                {
+                    "status": "gate_refused",
+                    "reason_code": "stage_request_limit",
+                    "message": str(error),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            flush=True,
+        )
+        return 2
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
     return 0 if summary["status"] in {"preflight", "complete", "complete_with_quarantine"} else 2
 

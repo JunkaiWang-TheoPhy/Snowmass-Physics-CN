@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import importlib.util
 import json
 from pathlib import Path
@@ -341,6 +343,148 @@ class BatchResumeTests(unittest.TestCase):
             self.assertEqual(result["verified_package_only_record_ids"], ["arxiv:a"])
             self.assertEqual(result["paid_translation_pending_count"], 1)
             self.assertEqual(result["pending_record_count"], 2)
+
+    def test_preflight_projection_excludes_package_only_records(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = module.BatchConfig(
+                **{**self._two_record_config(module, root).__dict__, "preflight_only": True}
+            )
+
+            def qc(article_dir):
+                return {"ok": article_dir.name == "arxiv_a", "failures": []}
+
+            projected_records: list[str] = []
+
+            def projection(_config, record):
+                projected_records.append(record["record_id"])
+                return {
+                    "record_id": record["record_id"],
+                    "projection_ready": True,
+                    "projected_normal_api_calls": 3,
+                    "projected_worst_case_api_calls": 5,
+                    "style_projection": {
+                        "planned": {
+                            "anti_ai": {"normal_requests": 1, "worst_case_requests": 2},
+                            "academic": {"normal_requests": 2, "worst_case_requests": 3},
+                        }
+                    },
+                }
+
+            with (
+                mock.patch.object(module, "_resume_article_result", return_value=None),
+                mock.patch.object(module, "evaluate_article_qc", side_effect=qc),
+                mock.patch.object(module, "_projection_report_for_record", side_effect=projection),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(projected_records, ["arxiv:b"])
+            self.assertEqual(result["projected_normal_api_calls"], 3)
+            self.assertEqual(result["projected_worst_case_api_calls"], 5)
+
+    def test_preflight_package_only_selection_has_zero_paid_projection(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps([{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]),
+                encoding="utf-8",
+            )
+            config = module.BatchConfig(
+                rights_manifest=manifest,
+                pdf_root=root / "pdf",
+                output_root=root / "output",
+                control_dir=root / "control",
+                stage="baseline",
+                explicit_ids=("arxiv:a",),
+                max_articles=None,
+                project_max_cost_rmb=1000.0,
+                stage_max_cost_rmb=10.0,
+                usd_cny_rate=7.2,
+                chunk_concurrency=1,
+                article_concurrency=1,
+                through_stage="packaged",
+                translation_version="test",
+                packaged_on="2026-08-13",
+                historical_roots=(),
+                preflight_only=True,
+            )
+
+            with (
+                mock.patch.object(module, "_resume_article_result", return_value=None),
+                mock.patch.object(module, "evaluate_article_qc", return_value={"ok": True, "failures": []}),
+                mock.patch.object(module, "_projection_report_for_record", side_effect=AssertionError("package-only must not project as paid")),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertTrue(result["style_projection"]["projection_ready"])
+            self.assertEqual(result["verified_package_only_count"], 1)
+            self.assertEqual(result["paid_translation_pending_count"], 0)
+            self.assertEqual(result["projected_normal_api_calls"], 0)
+            self.assertEqual(result["projected_worst_case_api_calls"], 0)
+
+    def test_locked_run_excludes_package_only_records_from_projection_gate(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            projected_records: list[str] = []
+            attempted: list[str] = []
+
+            def resume(_config, record):
+                if record["record_id"] == "arxiv:a":
+                    return None
+                return None
+
+            def qc(article_dir):
+                return {"ok": article_dir.name == "arxiv_a", "failures": []}
+
+            def projection(_config, record):
+                projected_records.append(record["record_id"])
+                return {
+                    "record_id": record["record_id"],
+                    "projection_ready": True,
+                    "projected_normal_api_calls": 2,
+                    "projected_worst_case_api_calls": 4,
+                    "style_projection": {
+                        "planned": {
+                            "anti_ai": {"normal_requests": 1, "worst_case_requests": 2},
+                            "academic": {"normal_requests": 1, "worst_case_requests": 2},
+                        }
+                    },
+                }
+
+            def process(_config, record, _run_id, _client, _budget):
+                attempted.append(record["record_id"])
+                return {"record_id": record["record_id"], "status": "packaged", "source_characters": 1}
+
+            with (
+                mock.patch.object(module, "_resume_article_result", side_effect=resume),
+                mock.patch.object(module, "evaluate_article_qc", side_effect=qc),
+                mock.patch.object(
+                    module,
+                    "_package_only_result",
+                    return_value={
+                        "record_id": "arxiv:a",
+                        "status": "packaged",
+                        "source_characters": 1,
+                        "resumed_from_verified_translation": True,
+                    },
+                ),
+                mock.patch.object(module, "_projection_report_for_record", side_effect=projection),
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_run_article", side_effect=process),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(projected_records, ["arxiv:b"])
+            self.assertEqual(attempted, ["arxiv:b"])
+            self.assertEqual(result["status"], "complete")
 
     def test_budget_failure_stops_before_next_record(self) -> None:
         module = load_module()
@@ -989,6 +1133,84 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
         self.assertEqual(usage["cached_tokens"], 3)
         self.assertEqual(usage["output_tokens"], 12)
         self.assertEqual(usage["total_tokens"], 36)
+
+    def test_cli_returns_structured_status_for_projection_not_ready_gate(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps([{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            error = io.StringIO()
+            with (
+                mock.patch.object(
+                    module,
+                    "run_batch",
+                    side_effect=module.ProjectionGateRefusedError(
+                        "style projection is not ready for paid launch: {\"arxiv:a\": [\"chunk0007\"]}"
+                    ),
+                ),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(error),
+            ):
+                exit_code = module.main(
+                    [
+                        "--rights-manifest", str(manifest),
+                        "--output-root", str(root / "output"),
+                        "--control-dir", str(root / "control"),
+                        "--stage", "baseline",
+                        "--project-max-cost-rmb", "1000",
+                        "--stage-max-cost-rmb", "10",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 2)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["status"], "gate_refused")
+        self.assertEqual(payload["reason_code"], "projection_not_ready")
+        self.assertIn("chunk0007", payload["message"])
+
+    def test_cli_returns_structured_status_for_request_limit_gate(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps([{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            error = io.StringIO()
+            with (
+                mock.patch.object(
+                    module,
+                    "run_batch",
+                    side_effect=module.RequestLimitExceededError(
+                        "style projection worst case would exceed the remaining stage request cap: 17 > 16"
+                    ),
+                ),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(error),
+            ):
+                exit_code = module.main(
+                    [
+                        "--rights-manifest", str(manifest),
+                        "--output-root", str(root / "output"),
+                        "--control-dir", str(root / "control"),
+                        "--stage", "baseline",
+                        "--project-max-cost-rmb", "1000",
+                        "--stage-max-cost-rmb", "10",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 2)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["status"], "gate_refused")
+        self.assertEqual(payload["reason_code"], "stage_request_limit")
+        self.assertIn("17 > 16", payload["message"])
 
 
 if __name__ == "__main__":
