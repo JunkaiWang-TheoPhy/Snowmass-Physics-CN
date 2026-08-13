@@ -26,7 +26,7 @@ import snowmass_constraint_compiler as constraint_compiler
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
 DEFAULT_GLOSSARY = ROOT / "translations/snowmass-global-glossary.json"
 DEFAULT_HARD_CONSTRAINTS = ROOT / "translations/snowmass-hard-constraints.json"
-REFILL_SCHEMA_VERSION = 10
+REFILL_SCHEMA_VERSION = 11
 
 
 def _load_bridge():
@@ -686,8 +686,10 @@ def main(argv: list[str] | None = None) -> int:
             "table_text_verbatim_count": result.table_text_verbatim_count,
             "figure_region_count": rendered.figure_region_count,
             "figure_regions_verified": rendered.figure_regions_verified,
+            "figure_regions_not_applicable": rendered.figure_region_count == 0,
             "table_region_count": rendered.table_region_count,
             "table_regions_verified": rendered.table_regions_verified,
+            "table_regions_not_applicable": rendered.table_region_count == 0,
             "output_xml_file": output_xml.name,
             "output_xml_sha256": _sha256(output_xml),
             "mono_pdf_file": str(rendered.mono_pdf_path.relative_to(args.article_dir)),

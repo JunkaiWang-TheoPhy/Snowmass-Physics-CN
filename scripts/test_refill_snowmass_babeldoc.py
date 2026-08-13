@@ -120,6 +120,8 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertIn("dual_pdf_sha256", status)
         self.assertTrue(status["publication_qc"]["ok"])
         self.assertEqual(status["reference_qc"]["page_numbers"], [])
+        self.assertTrue(status["figure_regions_not_applicable"])
+        self.assertTrue(status["table_regions_not_applicable"])
 
     def test_reference_heading_marks_all_following_pages_verbatim(self) -> None:
         module = load_module()
