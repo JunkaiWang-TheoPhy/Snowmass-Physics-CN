@@ -1652,6 +1652,175 @@ def _valid_sharded_critique_checkpoint(
     )
 
 
+def _planned_stage_model_subrequests(
+    *,
+    article_dir: Path,
+    chunk: dict[str, Any],
+    stage: str,
+    current: str,
+    terms: list[dict[str, Any]],
+    paper_context: str,
+    stage_status: dict[str, Any],
+) -> dict[str, Any]:
+    """Mirror process_chunk request planning to count model-bearing subrequests."""
+
+    article_dir = Path(article_dir)
+    source = runner.article_artifact_path(
+        article_dir, str(chunk["source_file"])
+    ).read_text(encoding="utf-8")
+    neighbor_context = runner.load_neighbor_context(article_dir, str(chunk["source_file"]))
+    selected_terms = runner.compile_glossary_terms(source, terms)
+    glossary = runner.glossary_text(selected_terms)
+    instructions = runner.stage_instructions(stage, glossary)
+    model_current = runner.localize_source_month_years(current) if stage == "translate" else current
+    protected_current, _mapping, _typed_nodes = runner.protect_stage_text(model_current)
+    protected_segments = runner.split_protected_model_input(
+        protected_current,
+        runner.structure_segment_limit(stage_status),
+    )
+    use_anchor_fallback = runner.should_use_structure_anchor_fallback(
+        stage,
+        stage_status,
+        paper_context,
+    )
+    bounded_segmented_retry = (
+        len(protected_segments) > 1
+        and stage_status.get("status") in {"failed", "uncertain", "running"}
+        and (
+            bool(stage_status.get("bounded_segmented_retry"))
+            or bool(stage_status.get("error"))
+        )
+    )
+    compact_source = len(source.strip()) <= 12
+    retry_marker = "# QC-CORRECTION RETRY"
+    is_retry_request = retry_marker in paper_context
+    context_for_request = (
+        paper_context[paper_context.index(retry_marker) :]
+        if is_retry_request
+        else paper_context
+    )
+    if compact_source and not is_retry_request:
+        context_for_request = ""
+
+    segments: list[dict[str, Any]] = []
+    for segment_index, protected_segment in enumerate(protected_segments, 1):
+        segment_instructions = instructions
+        segment_passthrough = False
+        if runner._MODEL_SENTINEL_RE.search(protected_segment):
+            _payload, _anchors, structure_parts = runner.build_structure_slot_input(
+                protected_segment
+            )
+            has_translatable_slots = any(
+                runner._TRANSLATABLE_SLOT_RE.search(part) for part in structure_parts
+            )
+            if not has_translatable_slots:
+                model_segment = protected_segment
+                segment_instructions = "STRUCTURE-ONLY PASSTHROUGH"
+                segment_passthrough = True
+            elif use_anchor_fallback or stage in runner.OPTIONAL_STYLE_STAGES:
+                model_segment, _anchors, _markers = runner.build_structure_anchor_input(
+                    protected_segment
+                )
+                segment_instructions += (
+                    "\n\nSTRUCTURE-ANCHOR FALLBACK PROTOCOL: The input JSON contains a "
+                    "source_template with synthetic <ANCHOR_0000> markers replacing protected "
+                    "structures. Translate the complete template faithfully and return exactly "
+                    'one JSON object {"translation":"..."}. Every supplied anchor marker must '
+                    "appear exactly once. They may be reordered within the sentence as Chinese "
+                    "syntax requires. Do not output commentary or any "
+                    "real formula, number, URL, or protected node."
+                )
+            else:
+                model_segment, _anchors, _source_parts = runner.build_structure_slot_input(
+                    protected_segment
+                )
+                segment_instructions += (
+                    "\n\nSTRUCTURE-SLOT PROTOCOL: The input is a JSON object whose slots are "
+                    "independent text islands surrounding protected document structures. "
+                    "Use source_context to understand complete sentence syntax; its synthetic "
+                    "<ANCHOR_0000> markers show immutable structure boundaries and must not "
+                    "appear in output. Translate/revise every supplied slot completely without "
+                    "summarizing, merging, or reordering IDs. "
+                    "Return exactly one JSON object of the form "
+                    '{"translations":{"T0000":"..."}} with exactly the supplied IDs. '
+                    "Do not output Markdown fences, commentary, source fields, or any protected "
+                    "structure."
+                )
+        else:
+            model_segment = protected_segment
+        input_text = (
+            model_segment
+            if stage == "translate"
+            else runner.stage_input(
+                stage,
+                source,
+                model_segment,
+                glossary,
+                include_source=not bounded_segmented_retry,
+            )
+        )
+        if len(protected_segments) > 1:
+            input_text += (
+                f"\n\nSTRUCTURE-DENSITY SEGMENT {segment_index}/{len(protected_segments)}. "
+                "Output only the complete translation/revision of this segment. "
+                "Do not reproduce source or context from another segment."
+            )
+        if context_for_request:
+            if is_retry_request:
+                input_text += "\n\nRETRY INSTRUCTIONS:\n" + context_for_request
+            else:
+                input_text += (
+                    "\n\nREAD-ONLY PAPER ANALYSIS CONTEXT — apply it to this paragraph; "
+                    "do not reproduce it:\n" + context_for_request
+                )
+        if (
+            not segment_passthrough
+            and "STRUCTURE-ANCHOR FALLBACK PROTOCOL" not in segment_instructions
+            and not bounded_segmented_retry
+            and neighbor_context
+            and not compact_source
+            and not is_retry_request
+        ):
+            input_text += (
+                "\n\nREAD-ONLY NEIGHBOR CONTEXT — use only for disambiguation; "
+                "do not translate or reproduce it:\n"
+                + neighbor_context
+            )
+        max_output_tokens = max(4096, min(20000, int(max(len(protected_segment), 4000) * 0.8)))
+        segments.append(
+            {
+                "segment_index": segment_index,
+                "request_key": runner.request_key(
+                    stage=stage,
+                    model=runner.MODEL,
+                    instructions=segment_instructions,
+                    input_text=input_text,
+                    max_output_tokens=max_output_tokens,
+                ),
+                "segment_passthrough": segment_passthrough,
+                "instructions": segment_instructions,
+                "input_text": input_text,
+                "max_output_tokens": max_output_tokens,
+            }
+        )
+
+    decision = runner.stage_decision(stage, current, selected_terms)
+    if stage == "revision" and NO_ACTIONABLE_CRITIQUE in paper_context:
+        decision = runner.StageDecision(False, "revision_no_actionable_chunk_critique")
+
+    return {
+        "decision": decision,
+        "selected_terms": selected_terms,
+        "segments": segments,
+        "structure_segment_count": len(protected_segments),
+        "model_subrequest_count": (
+            sum(0 if item["segment_passthrough"] else 1 for item in segments)
+            if decision.should_call_model
+            else 0
+        ),
+    }
+
+
 def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
     article_dir = Path(article_dir)
     diagnostics = {
@@ -1790,7 +1959,6 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
         chunk_status = chunk_statuses.get(chunk_id, {})
         stages = chunk_status.get("stages", {}) if isinstance(chunk_status, dict) else {}
         source_text = source_texts[chunk_id]
-        selected_terms = runner.compile_glossary_terms(source_text, terms)
         normalized_source = " ".join(source_text.split()).casefold()
         fixed_translation = hard_exact_translations.get(normalized_source)
         if fixed_translation is not None and source_text.endswith("\n"):
@@ -1814,9 +1982,6 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
         ):
             diagnostics["invalid_checkpoint_hashes"].append(f"{chunk_id}/translate")
         translate_requires_model = not passthrough and fixed_translation is None
-        report["missing_stage_api_calls"]["translate"] += int(
-            translate_requires_model and not translate_valid
-        )
         translate_reusable = translate_valid or not translate_requires_model
         if translate_valid:
             translate_text = runner.stage_output_path(
@@ -1829,6 +1994,20 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
             translate_text = fixed_translation
         else:
             translate_text = source_text
+        translate_plan = _planned_stage_model_subrequests(
+            article_dir=article_dir,
+            chunk=chunk,
+            stage="translate",
+            current=source_text,
+            terms=terms,
+            paper_context="",
+            stage_status=translate_stage if isinstance(translate_stage, dict) else {},
+        )
+        report["missing_stage_api_calls"]["translate"] += (
+            translate_plan["model_subrequest_count"]
+            if translate_requires_model and not translate_valid
+            else 0
+        )
 
         terminology_stage = stages.get("terminology", {}) if isinstance(stages, dict) else {}
         terminology_valid = isinstance(terminology_stage, dict) and _valid_chunk_stage_checkpoint(
@@ -1840,14 +2019,41 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
             and not terminology_valid
         ):
             diagnostics["invalid_checkpoint_hashes"].append(f"{chunk_id}/terminology")
+        terminology_current = translate_text
+        if not translate_reusable:
+            terminology_current = source_text
+            unknown_critique_inputs = True
         terminology_requires_model = (
             not passthrough
             and fixed_translation is None
-            and runner.stage_decision("terminology", translate_text, selected_terms).should_call_model
+            and _planned_stage_model_subrequests(
+                article_dir=article_dir,
+                chunk=chunk,
+                stage="terminology",
+                current=terminology_current,
+                terms=terms,
+                paper_context="",
+                stage_status=(
+                    terminology_stage if isinstance(terminology_stage, dict) else {}
+                ),
+            )["decision"].should_call_model
         )
         terminology_reusable = translate_reusable and terminology_valid
-        report["missing_stage_api_calls"]["terminology"] += int(
-            terminology_requires_model and not terminology_reusable
+        terminology_plan = _planned_stage_model_subrequests(
+            article_dir=article_dir,
+            chunk=chunk,
+            stage="terminology",
+            current=terminology_current,
+            terms=terms,
+            paper_context="",
+            stage_status=(
+                terminology_stage if isinstance(terminology_stage, dict) else {}
+            ),
+        )
+        report["missing_stage_api_calls"]["terminology"] += (
+            terminology_plan["model_subrequest_count"]
+            if terminology_requires_model and not terminology_reusable
+            else 0
         )
         if terminology_reusable:
             terminology_text = runner.stage_output_path(
@@ -1862,16 +2068,16 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
             actual_terminology_complete = False
         else:
             actual_terminology_complete = False
-            unknown_critique_inputs = True
+            predicted_terminology_texts[chunk_id] = terminology_current
 
         chunk_runtime[chunk_id] = {
             "passthrough": passthrough,
             "fixed_translation": fixed_translation,
             "translate_reusable": translate_reusable,
             "translate_text": translate_text,
+            "revision_surrogate_text": terminology_current,
             "terminology_requires_model": terminology_requires_model,
             "terminology_reusable": terminology_reusable,
-            "selected_terms": selected_terms,
             "stages": stages,
         }
 
@@ -1969,11 +2175,24 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
             and not revision_valid
         ):
             diagnostics["invalid_checkpoint_hashes"].append(f"{chunk_id}/revision")
-        revision_requires_model = critique_valid and NO_ACTIONABLE_CRITIQUE not in revision_context
-        if not critique_valid:
-            revision_requires_model = True
-        report["missing_stage_api_calls"]["revision"] += int(
-            revision_requires_model and not revision_valid
+        revision_projection_context = (
+            revision_context
+            if critique_valid
+            else f"# Actionable critique for this chunk only\n- {chunk_id}: critique pending"
+        )
+        revision_plan = _planned_stage_model_subrequests(
+            article_dir=article_dir,
+            chunk=chunk,
+            stage="revision",
+            current=str(state["revision_surrogate_text"]),
+            terms=terms,
+            paper_context=revision_projection_context,
+            stage_status=revision_stage if isinstance(revision_stage, dict) else {},
+        )
+        report["missing_stage_api_calls"]["revision"] += (
+            revision_plan["model_subrequest_count"]
+            if not revision_valid
+            else 0
         )
 
     report["projected_worst_case_api_calls"] = sum(report["missing_stage_api_calls"].values())

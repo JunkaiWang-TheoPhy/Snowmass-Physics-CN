@@ -995,6 +995,15 @@ class RefinedOrchestratorTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _rewrite_manifest_source_hash(self, source_file: str = "chunk0001.md") -> None:
+        manifest_path = self.article / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        source_hash = hashlib.sha256(
+            (self.article / source_file).read_text(encoding="utf-8").encode("utf-8")
+        ).hexdigest()
+        manifest["chunks"][0]["source_hash"] = source_hash
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
     def _write_chunk_stage(
         self,
         module,
@@ -1087,11 +1096,11 @@ class RefinedOrchestratorTests(unittest.TestCase):
                 "analysis": 1,
                 "translate": 0,
                 "terminology": 1,
-                "critique": 2,
+                "critique": 1,
                 "revision": 1,
             },
         )
-        self.assertEqual(report["projected_worst_case_api_calls"], 5)
+        self.assertEqual(report["projected_worst_case_api_calls"], 4)
 
     def test_revision_ready_projection_returns_zero_after_complete_revision_ready_state(self) -> None:
         module = load_module()
@@ -1176,6 +1185,175 @@ class RefinedOrchestratorTests(unittest.TestCase):
             "chunk0001/translate",
             report["identity_diagnostics"]["blocking_uncertain_checkpoints"],
         )
+
+    def test_structure_dense_projection_matches_actual_stage_subrequest_fanout(self) -> None:
+        module = load_module()
+        source = " ".join(f"part $x_{{{index}}}$" for index in range(30)) + "\n"
+        (self.article / "chunk0001.md").write_text(source, encoding="utf-8")
+        self._rewrite_manifest_source_hash()
+        self._write_local_glossary([{"source": "part", "target": "部分"}])
+        chunk = json.loads((self.article / "manifest.json").read_text(encoding="utf-8"))["chunks"][0]
+
+        translate_plan = module._planned_stage_model_subrequests(
+            article_dir=self.article,
+            chunk=chunk,
+            stage="translate",
+            current=source,
+            terms=[{"source": "part", "target": "部分"}],
+            paper_context="",
+            stage_status={},
+        )
+        terminology_plan = module._planned_stage_model_subrequests(
+            article_dir=self.article,
+            chunk=chunk,
+            stage="terminology",
+            current=source,
+            terms=[{"source": "part", "target": "部分"}],
+            paper_context="",
+            stage_status={},
+        )
+        revision_plan = module._planned_stage_model_subrequests(
+            article_dir=self.article,
+            chunk=chunk,
+            stage="revision",
+            current=source,
+            terms=[{"source": "part", "target": "部分"}],
+            paper_context="# Actionable critique for this chunk only\n- chunk0001: refine wording",
+            stage_status={},
+        )
+
+        self.assertGreater(translate_plan["model_subrequest_count"], 1)
+        self.assertEqual(translate_plan["model_subrequest_count"], 2)
+        self.assertEqual(terminology_plan["model_subrequest_count"], 2)
+        self.assertEqual(revision_plan["model_subrequest_count"], 2)
+
+        class DenseClient:
+            def __init__(self, *, replace_part: bool) -> None:
+                self.calls = 0
+                self.replace_part = replace_part
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                self.calls += 1
+                match = re.search(r'(\{"protocol":.+)', input_text, re.S)
+                if match is None:
+                    raise AssertionError("missing structure-slot payload")
+                payload, _offset = json.JSONDecoder().raw_decode(match.group(1))
+                translations = {}
+                for item in payload["slots"]:
+                    text = item["text"]
+                    if self.replace_part:
+                        text = text.replace("part", "部分")
+                    translations[item["id"]] = text
+                return completed_response(
+                    json.dumps({"translations": translations}, ensure_ascii=False),
+                    f"dense-{self.calls}",
+                ), 0.1
+
+        def task() -> dict[str, object]:
+            return {
+                "article_dir": self.article,
+                "record_id": "arxiv:allowed",
+                "chunk": chunk,
+                "passthrough": False,
+                "passthrough_reason": None,
+                "fixed_translation": None,
+                "fixed_translation_reason": None,
+                "retry_uncertain": False,
+            }
+
+        translate_client = DenseClient(replace_part=False)
+        module.runner.process_chunk(
+            task(),
+            translate_client,
+            [],
+            run_id="dense-translate",
+            stages=("translate",),
+        )
+        self.assertEqual(translate_client.calls, translate_plan["model_subrequest_count"])
+
+        translate_path = module.runner.stage_output_path(
+            self.article,
+            "chunk0001",
+            "output_chunk0001.md",
+            "translate",
+        )
+        terminology_client = DenseClient(replace_part=True)
+        module.runner.process_chunk(
+            task(),
+            terminology_client,
+            [{"source": "part", "target": "部分"}],
+            run_id="dense-terminology",
+            stages=("terminology",),
+            initial_text_path=translate_path,
+        )
+        self.assertEqual(
+            terminology_client.calls,
+            terminology_plan["model_subrequest_count"],
+        )
+
+        terminology_path = module.runner.stage_output_path(
+            self.article,
+            "chunk0001",
+            "output_chunk0001.md",
+            "terminology",
+        )
+        revision_client = DenseClient(replace_part=True)
+        module.runner.process_chunk(
+            task(),
+            revision_client,
+            [{"source": "part", "target": "部分"}],
+            run_id="dense-revision",
+            stages=("revision",),
+            paper_context="# Actionable critique for this chunk only\n- chunk0001: refine wording",
+            paper_context_identity="# Actionable critique for this chunk only\n- chunk0001: refine wording",
+            initial_text_path=terminology_path,
+        )
+        self.assertEqual(revision_client.calls, revision_plan["model_subrequest_count"])
+
+        for stage_name in ("translate", "terminology", "revision"):
+            status = json.loads(
+                (self.article / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                len(status["stages"][stage_name]["subrequests"]),
+                module._planned_stage_model_subrequests(
+                    article_dir=self.article,
+                    chunk=chunk,
+                    stage=stage_name,
+                    current=source,
+                    terms=[{"source": "part", "target": "部分"}],
+                    paper_context=(
+                        "# Actionable critique for this chunk only\n- chunk0001: refine wording"
+                        if stage_name == "revision"
+                        else ""
+                    ),
+                    stage_status={},
+                )["model_subrequest_count"],
+            )
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertTrue(report["projection_ready"])
+        self.assertEqual(report["missing_stage_api_calls"]["analysis"], 1)
+        self.assertEqual(report["missing_stage_api_calls"]["translate"], 0)
+        self.assertEqual(report["missing_stage_api_calls"]["terminology"], 0)
+        self.assertEqual(report["missing_stage_api_calls"]["critique"], 1)
+        self.assertEqual(report["missing_stage_api_calls"]["revision"], 2)
+
+    def test_structure_dense_projection_uses_source_bound_when_downstream_stage_input_is_missing(self) -> None:
+        module = load_module()
+        source = " ".join(f"part $x_{{{index}}}$" for index in range(30)) + "\n"
+        (self.article / "chunk0001.md").write_text(source, encoding="utf-8")
+        self._rewrite_manifest_source_hash()
+        self._write_local_glossary([{"source": "part", "target": "部分"}])
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertTrue(report["projection_ready"])
+        self.assertEqual(report["missing_stage_api_calls"]["translate"], 2)
+        self.assertEqual(report["missing_stage_api_calls"]["terminology"], 2)
+        self.assertEqual(report["missing_stage_api_calls"]["revision"], 2)
+        self.assertGreaterEqual(report["projected_worst_case_api_calls"], 7)
 
     def test_refined_artifacts_causally_gate_final_translation_and_resume(self) -> None:
         module = load_module()
