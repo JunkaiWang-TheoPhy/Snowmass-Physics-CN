@@ -739,6 +739,40 @@ def _has_unresolved_uncertain_attempt(article_dir: Path, stage: str, request_key
     )
 
 
+def _recover_paid_protocol_response(
+    article_dir: Path,
+    stage: str,
+    request_key: str,
+    expected_ids: Iterable[str],
+) -> tuple[dict[str, str], dict[str, Any]] | None:
+    expected = tuple(expected_ids)
+    for attempt in reversed(_batch_attempt_history(article_dir, stage, request_key)):
+        if attempt.get("status") not in {"protocol_failed", "recovered_offline"}:
+            continue
+        if tuple(attempt.get("chunk_ids") or ()) != expected:
+            continue
+        relative_name = attempt.get("rejected_response_file")
+        expected_hash = attempt.get("rejected_response_hash")
+        if not isinstance(relative_name, str) or not isinstance(expected_hash, str):
+            continue
+        relative_path = Path(relative_name)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            continue
+        response_path = (article_dir / relative_path).resolve()
+        rejected_root = (article_dir / "rejected_style_responses").resolve()
+        if response_path.parent != rejected_root or not response_path.is_file():
+            continue
+        response_text = response_path.read_text(encoding="utf-8")
+        if text_hash(response_text) != expected_hash:
+            continue
+        try:
+            parsed = parse_style_batch_response(response_text, expected)
+        except StyleBatchProtocolError:
+            continue
+        return parsed, attempt
+    return None
+
+
 def _stage_record_id(
     article_dir: Path,
     chunks: Iterable[dict[str, Any]],
@@ -806,11 +840,6 @@ def execute_style_stage(
 
     def process_batch(batch: StyleBatch) -> tuple[str, ...]:
         nonlocal normal_requests, recovery_requests
-
-        if batch.recovery:
-            recovery_requests += 1
-        else:
-            normal_requests += 1
         request_key = style_batch_request_key(
             batch=batch,
             stage=stage,
@@ -823,6 +852,30 @@ def execute_style_stage(
                 f"style stage {stage} has unresolved uncertain paid request for {record_id}; "
                 "explicit retry authorization required"
             )
+        offline_recovery = _recover_paid_protocol_response(
+            article_dir,
+            stage,
+            request_key,
+            (item.chunk_id for item in batch.items),
+        )
+        if offline_recovery is not None:
+            parsed, request_status = offline_recovery
+            request_status.update(
+                {
+                    "status": "recovered_offline",
+                    "finished_at": runner.now(),
+                    "offline_recovery_protocol": STYLE_BATCH_PROTOCOL,
+                }
+            )
+            _persist_batch_request(article_dir, stage, request_status)
+        else:
+            parsed = None
+
+        if parsed is None:
+            if batch.recovery:
+                recovery_requests += 1
+            else:
+                normal_requests += 1
         attempt_id, attempt_ordinal = _next_attempt_identity(
             article_dir=article_dir,
             stage=stage,
@@ -832,19 +885,20 @@ def execute_style_stage(
         uncertainty_key = f"{stage}:{request_key}"
         payload = build_style_batch_payload(batch, stage=stage)
         input_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        request_status = {
-            "attempt_id": attempt_id,
-            "attempt_ordinal": attempt_ordinal,
-            "stage": stage,
-            "request_key": request_key,
-            "recovery": batch.recovery,
-            "chunk_ids": [item.chunk_id for item in batch.items],
-            "started_at": runner.now(),
-            "status": "running",
-        }
-        _persist_batch_request(article_dir, stage, request_status)
+        if parsed is None:
+            request_status = {
+                "attempt_id": attempt_id,
+                "attempt_ordinal": attempt_ordinal,
+                "stage": stage,
+                "request_key": request_key,
+                "recovery": batch.recovery,
+                "chunk_ids": [item.chunk_id for item in batch.items],
+                "started_at": runner.now(),
+                "status": "running",
+            }
+            _persist_batch_request(article_dir, stage, request_status)
 
-        for item in batch.items:
+        for item in batch.items if parsed is None else ():
             chunk = chunk_map[item.chunk_id]
             task = dict(task_factory(chunk))
             _update_stage_status(
@@ -867,6 +921,8 @@ def execute_style_stage(
 
         reservation: str | None = None
         try:
+            if parsed is not None:
+                raise StopIteration
             if budget_guard is not None:
                 reservation = budget_guard.reserve(
                     instructions + "\n" + input_text,
@@ -874,6 +930,8 @@ def execute_style_stage(
                     uncertainty_key=uncertainty_key,
                 )
             response, _latency = client.complete(instructions, input_text, max_output_tokens)
+        except StopIteration:
+            response = {}
         except runner.AmbiguousTransportError as exc:
             conservative_cost_rmb = (
                 float(budget_guard.commit_estimate(reservation))
@@ -972,7 +1030,10 @@ def execute_style_stage(
                 )
             raise
 
-        billed_usage = runner.coarse_response_usage(response)
+        if parsed is not None:
+            billed_usage = {}
+        else:
+            billed_usage = runner.coarse_response_usage(response)
         if reservation is not None and budget_guard is not None:
             budget_guard.settle(reservation, billed_usage)
             if hasattr(budget_guard, "resolve_uncertain"):
@@ -988,7 +1049,8 @@ def execute_style_stage(
         totals["output_tokens"] += _token_count(billed_usage.get("output_tokens"))
         totals["total_tokens"] += _token_count(billed_usage.get("total_tokens"))
         totals["cost_rmb"] += cost_rmb
-        request_status.update(
+        if parsed is None:
+            request_status.update(
             {
                 "status": "settled",
                 "finished_at": runner.now(),
@@ -997,58 +1059,57 @@ def execute_style_stage(
                 "cost_rmb": cost_rmb,
                 "response": runner.response_metadata(response),
             }
-        )
-        _persist_batch_request(article_dir, stage, request_status)
-        runner.append_cost_ledger(
-            article_dir,
-            {
-                "event_id": request_status["response_id"],
-                "kind": "style_batch_settled_response",
-                "stage": stage,
-                "request_key": request_key,
-                "attempt_id": attempt_id,
-                "chunk_ids": request_status["chunk_ids"],
-                "usage": billed_usage,
-                "cost_rmb": cost_rmb,
-            },
-        )
-
-        response_text = _response_text(response)
-        try:
-            parsed = parse_style_batch_response(
-                response_text,
-                (item.chunk_id for item in batch.items),
-            )
-        except StyleBatchProtocolError as exc:
-            request_status.update(
-                {
-                    "status": "protocol_failed",
-                    "finished_at": runner.now(),
-                    "error": str(exc),
-                    **_persist_rejected_batch_response(
-                        article_dir, stage, attempt_id, response_text
-                    ),
-                }
             )
             _persist_batch_request(article_dir, stage, request_status)
-            for item in batch.items:
-                chunk = chunk_map[item.chunk_id]
-                task = dict(task_factory(chunk))
-                _update_stage_status(
-                    article_dir=article_dir,
-                    task=task,
-                    chunk=chunk,
-                    source_hash=item.source_hash,
-                    stage=stage,
-                    mutate=lambda stage_status, exc=exc: stage_status.update(
-                        {
-                            "status": "failed",
-                            "finished_at": runner.now(),
-                            "error": str(exc),
-                        }
-                    ),
+            runner.append_cost_ledger(
+                article_dir,
+                {
+                    "event_id": request_status["response_id"],
+                    "kind": "style_batch_settled_response",
+                    "stage": stage,
+                    "request_key": request_key,
+                    "attempt_id": attempt_id,
+                    "chunk_ids": request_status["chunk_ids"],
+                    "usage": billed_usage,
+                    "cost_rmb": cost_rmb,
+                },
+            )
+            response_text = _response_text(response)
+            try:
+                parsed = parse_style_batch_response(
+                    response_text,
+                    (item.chunk_id for item in batch.items),
                 )
-            return tuple(item.chunk_id for item in batch.items)
+            except StyleBatchProtocolError as exc:
+                request_status.update(
+                    {
+                        "status": "protocol_failed",
+                        "finished_at": runner.now(),
+                        "error": str(exc),
+                        **_persist_rejected_batch_response(
+                            article_dir, stage, attempt_id, response_text
+                        ),
+                    }
+                )
+                _persist_batch_request(article_dir, stage, request_status)
+                for item in batch.items:
+                    chunk = chunk_map[item.chunk_id]
+                    task = dict(task_factory(chunk))
+                    _update_stage_status(
+                        article_dir=article_dir,
+                        task=task,
+                        chunk=chunk,
+                        source_hash=item.source_hash,
+                        stage=stage,
+                        mutate=lambda stage_status, exc=exc: stage_status.update(
+                            {
+                                "status": "failed",
+                                "finished_at": runner.now(),
+                                "error": str(exc),
+                            }
+                        ),
+                    )
+                return tuple(item.chunk_id for item in batch.items)
 
         failed_ids: list[str] = []
         for item in batch.items:

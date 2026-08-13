@@ -1093,6 +1093,169 @@ class StyleExecutionTests(unittest.TestCase):
         self.assertTrue(rejected_path.is_file())
         self.assertEqual(requests[0]["rejected_response_hash"], self.runner.text_hash(rejected_path.read_text(encoding="utf-8")))
 
+    def test_replays_matching_paid_rejected_response_offline_before_client_call(self) -> None:
+        plan = self._prepare()
+        protected = {item.chunk_id: item.protected_text for item in plan.model_items}
+        instructions = self.batching.style_batch_instructions("clean the prose")
+        batch = plan.normal_batches[0]
+        request_key = self.batching.style_batch_request_key(
+            batch=batch,
+            stage="anti_ai",
+            model="fake-style-model",
+            instructions=instructions,
+            max_output_tokens=256,
+        )
+        attempt_id = f"{request_key}:normal:1"
+        response_text = json.dumps(
+            {"translations": protected}, ensure_ascii=False
+        ) + "}"
+        rejected = self.batching._persist_rejected_batch_response(
+            self.article_dir,
+            "anti_ai",
+            attempt_id,
+            response_text,
+        )
+        self.batching._persist_batch_request(
+            self.article_dir,
+            "anti_ai",
+            {
+                "attempt_id": attempt_id,
+                "attempt_ordinal": 1,
+                "stage": "anti_ai",
+                "request_key": request_key,
+                "recovery": False,
+                "chunk_ids": [item.chunk_id for item in batch.items],
+                "status": "protocol_failed",
+                "response_id": "resp-already-paid",
+                **rejected,
+            },
+        )
+
+        class NoCallClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, _instructions: str, _input_text: str, _maximum: int):
+                self.calls += 1
+                raise AssertionError("a verified paid response must be replayed offline")
+
+        client = NoCallClient()
+        result = self.batching.execute_style_stage(
+            article_dir=self.article_dir,
+            chunks=self.chunks,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            plan=plan,
+            client=client,
+            instructions="clean the prose",
+            max_output_tokens=256,
+            budget_guard=None,
+            run_id="run-offline-replay",
+            model="fake-style-model",
+        )
+
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(result.normal_requests, 0)
+        self.assertEqual(result.recovery_requests, 0)
+        self.assertEqual(result.total_tokens, 0)
+        self.assertEqual(result.total_cost_rmb, 0.0)
+        self.assertTrue(self._output_path("chunk0001").is_file())
+        self.assertTrue(self._output_path("chunk0002").is_file())
+        request = self._batch_requests()[0]
+        self.assertEqual(request["status"], "recovered_offline")
+        self.assertEqual(request["offline_recovery_protocol"], self.batching.STYLE_BATCH_PROTOCOL)
+
+        for chunk in self.chunks:
+            self._output_path(chunk["id"]).unlink()
+        rebuilt_plan = self._prepare()
+        rebuilt = self.batching.execute_style_stage(
+            article_dir=self.article_dir,
+            chunks=self.chunks,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            plan=rebuilt_plan,
+            client=client,
+            instructions="clean the prose",
+            max_output_tokens=256,
+            budget_guard=None,
+            run_id="run-offline-replay-again",
+            model="fake-style-model",
+        )
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(rebuilt.normal_requests, 0)
+        self.assertTrue(self._output_path("chunk0001").is_file())
+        self.assertTrue(self._output_path("chunk0002").is_file())
+
+    def test_offline_replay_rejects_response_file_outside_dedicated_store(self) -> None:
+        plan = self._prepare()
+        protected = {item.chunk_id: item.protected_text for item in plan.model_items}
+        instructions = self.batching.style_batch_instructions("clean the prose")
+        batch = plan.normal_batches[0]
+        request_key = self.batching.style_batch_request_key(
+            batch=batch,
+            stage="anti_ai",
+            model="fake-style-model",
+            instructions=instructions,
+            max_output_tokens=256,
+        )
+        response_text = json.dumps({"translations": protected}, ensure_ascii=False) + "}"
+        sibling_path = self.article_dir / "untrusted-response.txt"
+        sibling_path.write_text(response_text, encoding="utf-8")
+        self.batching._persist_batch_request(
+            self.article_dir,
+            "anti_ai",
+            {
+                "attempt_id": f"{request_key}:normal:1",
+                "attempt_ordinal": 1,
+                "stage": "anti_ai",
+                "request_key": request_key,
+                "recovery": False,
+                "chunk_ids": [item.chunk_id for item in batch.items],
+                "status": "protocol_failed",
+                "response_id": "resp-untrusted",
+                "rejected_response_file": sibling_path.name,
+                "rejected_response_hash": self.runner.text_hash(response_text),
+            },
+        )
+
+        test_case = self
+
+        class ValidClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, _instructions: str, _input_text: str, _maximum: int):
+                self.calls += 1
+                return (
+                    test_case._response(
+                        "resp-new",
+                        protected,
+                        input_tokens=10,
+                        output_tokens=5,
+                    ),
+                    0.1,
+                )
+
+        client = ValidClient()
+        result = self.batching.execute_style_stage(
+            article_dir=self.article_dir,
+            chunks=self.chunks,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            plan=plan,
+            client=client,
+            instructions="clean the prose",
+            max_output_tokens=256,
+            budget_guard=None,
+            run_id="run-untrusted-path",
+            model="fake-style-model",
+        )
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(result.normal_requests, 1)
+
     def test_rejects_before_first_client_call_when_remaining_calls_cannot_cover_worst_case(self) -> None:
         from scripts import snowmass_batch_budget as budget_module
 
