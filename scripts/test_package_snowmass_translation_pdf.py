@@ -177,6 +177,25 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         self.assertFalse((self.root / "source-alias.cover.pdf").exists())
         self.assertFalse((self.root / "source-alias.json").exists())
 
+    def test_accepts_explicit_portable_font_and_prebuilt_paper_qr(self) -> None:
+        packager = self.require_module()
+        qr = self.root / "paper-qr.png"
+        qr.write_bytes(packager.DEFAULT_QR_IMAGE_PATH.read_bytes())
+
+        receipt = packager.package_translation_pdf(
+            record=self.visual_record(),
+            chinese_title="可移植装订测试",
+            source_pdf_path=self.source_pdf,
+            output_pdf_path=self.output_pdf,
+            version="v3.1",
+            packaged_on=dt.date(2026, 8, 13),
+            cjk_font_path=packager.SYSTEM_CJK_FONT,
+            paper_qr_image_path=qr,
+        )
+
+        self.assertTrue(self.output_pdf.is_file())
+        self.assertEqual(receipt["packaged_pdf_sha256"], sha256_file(self.output_pdf))
+
     def test_blocks_known_mistranslation_in_source_pdf_before_packaging(self) -> None:
         packager = self.require_module()
         self.write_cjk_source_pdf(

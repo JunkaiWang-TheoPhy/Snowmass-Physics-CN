@@ -48,6 +48,8 @@ def package_translation_pdf(
     packaged_on: str | dt.date | dt.datetime,
     qr_image_path: str | Path = DEFAULT_QR_IMAGE_PATH,
     mountain_svg_path: str | Path = DEFAULT_MOUNTAIN_SVG_PATH,
+    cjk_font_path: str | Path = SYSTEM_CJK_FONT,
+    paper_qr_image_path: str | Path | None = None,
 ) -> dict[str, object]:
     """Create a cover-prefixed PDF and a JSON receipt for one translation."""
 
@@ -64,6 +66,7 @@ def package_translation_pdf(
     receipt_path = output_pdf.with_suffix(".json")
     qr_image = Path(qr_image_path)
     mountain_asset = Path(mountain_svg_path)
+    cjk_font = Path(cjk_font_path)
 
     if not source_pdf.is_file():
         raise FileNotFoundError(f"source PDF not found: {source_pdf}")
@@ -71,8 +74,8 @@ def package_translation_pdf(
         raise FileNotFoundError(f"QR fallback image not found: {qr_image}")
     if not mountain_asset.is_file():
         raise FileNotFoundError(f"mountain cover asset not found: {mountain_asset}")
-    if not SYSTEM_CJK_FONT.is_file():
-        raise FileNotFoundError(f"required system font not found: {SYSTEM_CJK_FONT}")
+    if not cjk_font.is_file():
+        raise FileNotFoundError(f"required CJK font not found: {cjk_font}")
 
     validate_pdf_forbidden_translations(
         source_pdf,
@@ -81,8 +84,16 @@ def package_translation_pdf(
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     packaged_on_text = _normalize_packaged_on(packaged_on)
-    paper_qr_image = output_pdf.with_name(f".{output_pdf.stem}.paper-qr.png")
-    _generate_paper_qr(_translation_page_url(record), paper_qr_image)
+    generated_qr = paper_qr_image_path is None
+    paper_qr_image = (
+        output_pdf.with_name(f".{output_pdf.stem}.paper-qr.png")
+        if generated_qr
+        else Path(paper_qr_image_path)
+    )
+    if generated_qr:
+        _generate_paper_qr(_translation_page_url(record), paper_qr_image)
+    elif not paper_qr_image.is_file():
+        raise FileNotFoundError(f"prebuilt paper QR not found: {paper_qr_image}")
     try:
         _render_cover_pdf(
             record=record,
@@ -92,9 +103,11 @@ def package_translation_pdf(
             packaged_on=packaged_on_text,
             qr_image_path=paper_qr_image,
             mountain_svg_path=mountain_asset,
+            cjk_font_path=cjk_font,
         )
     finally:
-        paper_qr_image.unlink(missing_ok=True)
+        if generated_qr:
+            paper_qr_image.unlink(missing_ok=True)
     _prepend_cover_pdf(cover_pdf, source_pdf, output_pdf)
 
     receipt = {
@@ -168,6 +181,7 @@ def _render_cover_pdf(
     packaged_on: str,
     qr_image_path: Path,
     mountain_svg_path: Path,
+    cjk_font_path: Path,
 ) -> None:
     document = fitz.open()
     page = document.new_page(width=595, height=842)
@@ -180,9 +194,9 @@ def _render_cover_pdf(
     page.insert_image(banner_rect, filename=str(mountain_svg_path), keep_proportion=False)
 
     y = 192.0
-    y = _write_textbox(page, (48, y, 547, y + 24), PROJECT_NAME, 14, text_color) + 12
+    y = _write_textbox(page, (48, y, 547, y + 24), PROJECT_NAME, 14, text_color, cjk_font_path) + 12
     y = _write_fitted_textbox(
-        page, (48, y, 547, y + 56), chinese_title, 20, 13, text_color
+        page, (48, y, 547, y + 56), chinese_title, 20, 13, text_color, cjk_font_path
     ) + 10
     y = _write_fitted_textbox(
         page,
@@ -191,8 +205,9 @@ def _render_cover_pdf(
         13,
         9,
         muted_color,
+        cjk_font_path,
     ) + 10
-    y = _write_textbox(page, (48, y, 547, y + 20), f"原作者：{record.get('authors_as_listed', '')}", 12, text_color) + 20
+    y = _write_textbox(page, (48, y, 547, y + 20), f"原作者：{record.get('authors_as_listed', '')}", 12, text_color, cjk_font_path) + 20
 
     source_url = str(record.get("source_url", ""))
     arxiv_id = _derive_arxiv_identifier(record)
@@ -217,6 +232,7 @@ def _render_cover_pdf(
         arxiv_url,
         10,
         link_color if arxiv_url else muted_color,
+        cjk_font_path,
     ) + 8
     metadata_y = _write_link_line(
         page,
@@ -225,6 +241,7 @@ def _render_cover_pdf(
         source_url,
         8.5,
         link_color,
+        cjk_font_path,
     ) + 8
     metadata_y = _write_link_line(
         page,
@@ -233,28 +250,30 @@ def _render_cover_pdf(
         doi_url,
         10,
         link_color if doi_url else muted_color,
+        cjk_font_path,
     ) + 8
-    metadata_y = _write_textbox(page, (48, metadata_y, left_column_right, metadata_y + 18), CONTRIBUTOR_LABEL, 11, text_color) + 8
-    metadata_y = _write_textbox(page, (48, metadata_y, left_column_right, metadata_y + 18), "TRANSLATION PAGE / 本论文译文页", 10, muted_color) + 4
-    metadata_y = _write_link_line(page, (48, metadata_y, 398, metadata_y + 22), translation_page_label, translation_page_url, 9.5, link_color) + 8
+    metadata_y = _write_textbox(page, (48, metadata_y, left_column_right, metadata_y + 18), CONTRIBUTOR_LABEL, 11, text_color, cjk_font_path) + 8
+    metadata_y = _write_textbox(page, (48, metadata_y, left_column_right, metadata_y + 18), "TRANSLATION PAGE / 本论文译文页", 10, muted_color, cjk_font_path) + 4
+    metadata_y = _write_link_line(page, (48, metadata_y, 398, metadata_y + 22), translation_page_label, translation_page_url, 9.5, link_color, cjk_font_path) + 8
     metadata_y = _write_textbox(
         page,
         (48, metadata_y, left_column_right, metadata_y + 18),
         f"翻译版本：{version}    日期：{packaged_on}",
         11,
         text_color,
+        cjk_font_path,
     )
 
     page.insert_image(qr_rect, filename=str(qr_image_path), keep_proportion=True)
     page.insert_link({"kind": fitz.LINK_URI, "from": qr_rect, "uri": translation_page_url})
 
     footer_y = max(metadata_y + 24, qr_rect.y1 + 24)
-    footer_y = _write_textbox(page, (48, footer_y, 547, footer_y + 48), DISCLAIMER_TEXT, 11, text_color) + 10
-    footer_y = _write_textbox(page, (48, footer_y, 547, footer_y + 18), f"原文许可证：{license_name}", 11, text_color) + 8
-    footer_y = _write_textbox(page, (48, footer_y, 547, footer_y + 18), f"适用条件：{conditions}", 11, text_color) + 8
+    footer_y = _write_textbox(page, (48, footer_y, 547, footer_y + 48), DISCLAIMER_TEXT, 11, text_color, cjk_font_path) + 10
+    footer_y = _write_textbox(page, (48, footer_y, 547, footer_y + 18), f"原文许可证：{license_name}", 11, text_color, cjk_font_path) + 8
+    footer_y = _write_textbox(page, (48, footer_y, 547, footer_y + 18), f"适用条件：{conditions}", 11, text_color, cjk_font_path) + 8
     if license_url:
-        footer_y = _write_link_line(page, (48, footer_y, 547, footer_y + 24), f"许可证链接：{license_url}", license_url, 10, link_color)
-    y = _write_textbox(page, (48, 782, 547, 812), CONTACT_TEXT, 10, muted_color)
+        footer_y = _write_link_line(page, (48, footer_y, 547, footer_y + 24), f"许可证链接：{license_url}", license_url, 10, link_color, cjk_font_path)
+    y = _write_textbox(page, (48, 782, 547, 812), CONTACT_TEXT, 10, muted_color, cjk_font_path)
 
     document.set_metadata(
         {
@@ -287,12 +306,13 @@ def _write_textbox(
     text: str,
     fontsize: float,
     color: tuple[float, float, float],
+    cjk_font_path: Path = SYSTEM_CJK_FONT,
 ) -> float:
     box = fitz.Rect(rect)
     spare_height = page.insert_textbox(
         box,
         text,
-        fontfile=str(SYSTEM_CJK_FONT),
+        fontfile=str(cjk_font_path),
         fontname="snowmasscover",
         fontsize=fontsize,
         lineheight=1.25,
@@ -311,6 +331,7 @@ def _write_fitted_textbox(
     fontsize: float,
     minimum_fontsize: float,
     color: tuple[float, float, float],
+    cjk_font_path: Path = SYSTEM_CJK_FONT,
 ) -> float:
     """Write complete title text at the largest deterministic fitting size."""
 
@@ -325,7 +346,7 @@ def _write_fitted_textbox(
         spare_height = measurement_page.insert_textbox(
             box,
             text,
-            fontfile=str(SYSTEM_CJK_FONT),
+            fontfile=str(cjk_font_path),
             fontname="snowmasscover",
             fontsize=candidate,
             lineheight=1.25,
@@ -339,7 +360,7 @@ def _write_fitted_textbox(
     if selected is None:
         preview = text if len(text) <= 80 else f"{text[:77]}..."
         raise ValueError(f"text overflow for rect {tuple(box)}: {preview}")
-    return _write_textbox(page, rect, text, selected, color)
+    return _write_textbox(page, rect, text, selected, color, cjk_font_path)
 
 
 def _write_link_line(
@@ -349,9 +370,10 @@ def _write_link_line(
     url: str | None,
     fontsize: float,
     color: tuple[float, float, float],
+    cjk_font_path: Path = SYSTEM_CJK_FONT,
 ) -> float:
     box = fitz.Rect(rect)
-    bottom = _write_textbox(page, rect, text, fontsize, color)
+    bottom = _write_textbox(page, rect, text, fontsize, color, cjk_font_path)
     if url:
         page.insert_link({"kind": fitz.LINK_URI, "from": box, "uri": url})
     return bottom
