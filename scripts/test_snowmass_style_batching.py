@@ -673,6 +673,9 @@ class StyleExecutionTests(unittest.TestCase):
     def _batch_status(self) -> dict[str, object]:
         return json.loads((self.article_dir / "style_batch_status.json").read_text(encoding="utf-8"))
 
+    def _batch_requests(self) -> list[dict[str, object]]:
+        return list(self._batch_status()["requests"])
+
     def _cost_events(self) -> list[dict[str, object]]:
         return [
             json.loads(line)
@@ -880,6 +883,14 @@ class StyleExecutionTests(unittest.TestCase):
         self.assertEqual(result.completed_chunks, 2)
         self.assertEqual(result.recovery_requests, 1)
         self.assertEqual(client.requested_ids, [("chunk0001", "chunk0002"), ("chunk0001", "chunk0002")])
+        requests = self._batch_requests()
+        self.assertEqual(len(requests), 2)
+        self.assertEqual([request["request_key"] for request in requests], [requests[0]["request_key"]] * 2)
+        self.assertNotEqual(requests[0]["attempt_id"], requests[1]["attempt_id"])
+        self.assertEqual(
+            [(request["status"], request["recovery"], request["attempt_ordinal"]) for request in requests],
+            [("protocol_failed", False, 1), ("settled", True, 2)],
+        )
 
     def test_rejects_before_first_client_call_when_remaining_calls_cannot_cover_worst_case(self) -> None:
         from scripts import snowmass_batch_budget as budget_module
@@ -990,3 +1001,183 @@ class StyleExecutionTests(unittest.TestCase):
         events = self._cost_events()
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["kind"], "style_batch_ambiguous_transport_reservation")
+
+    def test_failed_transport_commits_estimate_once_marks_batch_failed_and_clears_running_chunks(self) -> None:
+        class RecordingBudgetGuard:
+            usd_cny_rate = self.runner.DEFAULT_USD_CNY_RATE
+
+            def __init__(self) -> None:
+                self.reservations: list[str] = []
+                self.committed: list[str] = []
+                self.settled: list[str] = []
+
+            def reserve(self, _input: str, _maximum: int, *, uncertainty_key=None):
+                reservation = f"reservation-{len(self.reservations) + 1}"
+                self.reservations.append(reservation)
+                return reservation
+
+            def commit_estimate(self, reservation: str) -> float:
+                self.committed.append(reservation)
+                return 0.25
+
+            def settle(self, reservation: str, _usage: dict[str, object]) -> None:
+                self.settled.append(reservation)
+
+            def snapshot(self) -> dict[str, object]:
+                return {"stage_remaining_api_calls": 8}
+
+        class ExplodingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, _instructions: str, _input_text: str, _maximum: int):
+                self.calls += 1
+                raise RuntimeError("socket closed")
+
+        plan = self._prepare()
+        guard = RecordingBudgetGuard()
+        client = ExplodingClient()
+
+        with self.assertRaisesRegex(RuntimeError, "socket closed"):
+            self.batching.execute_style_stage(
+                article_dir=self.article_dir,
+                chunks=self.chunks,
+                task_factory=self._task,
+                terms=[],
+                stage="anti_ai",
+                plan=plan,
+                client=client,
+                instructions="clean the prose",
+                max_output_tokens=256,
+                budget_guard=guard,
+                run_id="run-transport-failure",
+            )
+
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(guard.committed, ["reservation-1"])
+        self.assertEqual(guard.settled, [])
+        requests = self._batch_requests()
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["status"], "failed")
+        self.assertEqual(requests[0]["conservative_cost_rmb"], 0.25)
+        self.assertEqual(self._status("chunk0001")["status"], "failed")
+        self.assertEqual(self._status("chunk0002")["status"], "failed")
+        self.assertEqual(self._status("chunk0001")["error"], "RuntimeError('socket closed')")
+        self.assertEqual(self._status("chunk0002")["error"], "RuntimeError('socket closed')")
+        events = self._cost_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["kind"], "style_batch_failed_transport_reservation")
+
+    def test_reserve_failure_does_not_commit_missing_reservation(self) -> None:
+        class ReserveFailingBudgetGuard:
+            def __init__(self) -> None:
+                self.commit_calls = 0
+
+            def reserve(self, _input: str, _maximum: int, *, uncertainty_key=None):
+                raise RuntimeError("reserve gate closed")
+
+            def commit_estimate(self, reservation: str) -> float:
+                self.commit_calls += 1
+                raise AssertionError(f"commit_estimate must not run for {reservation!r}")
+
+            def snapshot(self) -> dict[str, object]:
+                return {"stage_remaining_api_calls": 8}
+
+        class NoCallClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, _instructions: str, _input_text: str, _maximum: int):
+                self.calls += 1
+                raise AssertionError("client.complete must not run when reserve fails")
+
+        guard = ReserveFailingBudgetGuard()
+        client = NoCallClient()
+
+        with self.assertRaisesRegex(RuntimeError, "reserve gate closed"):
+            self.batching.execute_style_stage(
+                article_dir=self.article_dir,
+                chunks=self.chunks,
+                task_factory=self._task,
+                terms=[],
+                stage="anti_ai",
+                plan=self._prepare(),
+                client=client,
+                instructions="clean the prose",
+                max_output_tokens=256,
+                budget_guard=guard,
+                run_id="run-reserve-failure",
+            )
+
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(guard.commit_calls, 0)
+        self.assertFalse((self.article_dir / "api_cost_ledger.jsonl").exists())
+
+    def test_unresolved_ambiguous_request_blocks_replay_before_second_client_call(self) -> None:
+        single_chunk = self.chunks[:1]
+        test_case = self
+
+        class RecordingBudgetGuard:
+            usd_cny_rate = self.runner.DEFAULT_USD_CNY_RATE
+
+            def __init__(self) -> None:
+                self.reservations = 0
+                self.commits = 0
+
+            def reserve(self, _input: str, _maximum: int, *, uncertainty_key=None):
+                self.reservations += 1
+                return f"reservation-{self.reservations}"
+
+            def commit_estimate(self, reservation: str) -> float:
+                self.commits += 1
+                return 0.25
+
+            def snapshot(self) -> dict[str, object]:
+                return {"stage_remaining_api_calls": 8}
+
+        class AmbiguousOnceClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, _instructions: str, input_text: str, _maximum: int):
+                payload = json.loads(input_text)
+                self.calls += 1
+                test_case.assertEqual(tuple(chunk["id"] for chunk in payload["chunks"]), ("chunk0001",))
+                raise test_case.batching.runner.AmbiguousTransportError("response may have been generated")
+
+        plan = self._prepare(single_chunk)
+        guard = RecordingBudgetGuard()
+        client = AmbiguousOnceClient()
+
+        with self.assertRaises(self.batching.runner.AmbiguousTransportError):
+            self.batching.execute_style_stage(
+                article_dir=self.article_dir,
+                chunks=single_chunk,
+                task_factory=self._task,
+                terms=[],
+                stage="anti_ai",
+                plan=plan,
+                client=client,
+                instructions="clean the prose",
+                max_output_tokens=256,
+                budget_guard=guard,
+                run_id="run-uncertain-1",
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "explicit retry authorization"):
+            self.batching.execute_style_stage(
+                article_dir=self.article_dir,
+                chunks=single_chunk,
+                task_factory=self._task,
+                terms=[],
+                stage="anti_ai",
+                plan=plan,
+                client=client,
+                instructions="clean the prose",
+                max_output_tokens=256,
+                budget_guard=guard,
+                run_id="run-uncertain-2",
+            )
+
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(guard.reservations, 1)

@@ -534,7 +534,7 @@ def _persist_batch_request(article_dir: Path, stage: str, request_status: dict[s
         for entry in payload["requests"]
         if not (
             isinstance(entry, dict)
-            and entry.get("request_key") == request_status.get("request_key")
+            and entry.get("attempt_id") == request_status.get("attempt_id")
         )
     ]
     requests.append(request_status)
@@ -571,6 +571,34 @@ def _update_stage_status(
     mutate(stage_status)
     runner.atomic_json(status_path, status)
     return stage_status
+
+
+def _batch_attempt_history(article_dir: Path, stage: str, request_key: str) -> list[dict[str, Any]]:
+    payload = _load_batch_status(article_dir, stage)
+    return [
+        entry
+        for entry in payload["requests"]
+        if isinstance(entry, dict) and entry.get("request_key") == request_key
+    ]
+
+
+def _next_attempt_identity(
+    *,
+    article_dir: Path,
+    stage: str,
+    request_key: str,
+    recovery: bool,
+) -> tuple[str, int]:
+    attempt_ordinal = len(_batch_attempt_history(article_dir, stage, request_key)) + 1
+    attempt_kind = "recovery" if recovery else "normal"
+    return f"{request_key}:{attempt_kind}:{attempt_ordinal}", attempt_ordinal
+
+
+def _has_unresolved_uncertain_attempt(article_dir: Path, stage: str, request_key: str) -> bool:
+    return any(
+        entry.get("status") == "uncertain"
+        for entry in _batch_attempt_history(article_dir, stage, request_key)
+    )
 
 
 def execute_style_stage(
@@ -624,10 +652,22 @@ def execute_style_stage(
             instructions=instructions,
             max_output_tokens=max_output_tokens,
         )
+        if _has_unresolved_uncertain_attempt(article_dir, stage, request_key):
+            raise RuntimeError(
+                "stale running paid request requires explicit retry authorization"
+            )
+        attempt_id, attempt_ordinal = _next_attempt_identity(
+            article_dir=article_dir,
+            stage=stage,
+            request_key=request_key,
+            recovery=batch.recovery,
+        )
         uncertainty_key = f"{stage}:{request_key}"
         payload = build_style_batch_payload(batch, stage=stage)
         input_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         request_status = {
+            "attempt_id": attempt_id,
+            "attempt_ordinal": attempt_ordinal,
             "request_key": request_key,
             "recovery": batch.recovery,
             "chunk_ids": [item.chunk_id for item in batch.items],
@@ -687,10 +727,11 @@ def execute_style_stage(
                 runner.append_cost_ledger(
                     article_dir,
                     {
-                        "event_id": request_key,
+                        "event_id": attempt_id,
                         "kind": "style_batch_ambiguous_transport_reservation",
                         "stage": stage,
                         "request_key": request_key,
+                        "attempt_id": attempt_id,
                         "chunk_ids": request_status["chunk_ids"],
                         "cost_rmb": conservative_cost_rmb,
                     },
@@ -716,9 +757,51 @@ def execute_style_stage(
                     ),
                 )
             raise
-        except Exception:
-            if reservation is not None and budget_guard is not None:
-                budget_guard.commit_estimate(reservation)
+        except Exception as exc:
+            conservative_cost_rmb = (
+                float(budget_guard.commit_estimate(reservation))
+                if reservation is not None and budget_guard is not None
+                else 0.0
+            )
+            request_status.update(
+                {
+                    "status": "failed",
+                    "finished_at": runner.now(),
+                    "error": repr(exc),
+                    "conservative_cost_rmb": conservative_cost_rmb,
+                }
+            )
+            _persist_batch_request(article_dir, stage, request_status)
+            if conservative_cost_rmb > 0:
+                runner.append_cost_ledger(
+                    article_dir,
+                    {
+                        "event_id": attempt_id,
+                        "kind": "style_batch_failed_transport_reservation",
+                        "stage": stage,
+                        "request_key": request_key,
+                        "attempt_id": attempt_id,
+                        "chunk_ids": request_status["chunk_ids"],
+                        "cost_rmb": conservative_cost_rmb,
+                    },
+                )
+            for item in batch.items:
+                chunk = chunk_map[item.chunk_id]
+                task = dict(task_factory(chunk))
+                _update_stage_status(
+                    article_dir=article_dir,
+                    task=task,
+                    chunk=chunk,
+                    source_hash=item.source_hash,
+                    stage=stage,
+                    mutate=lambda stage_status, exc=exc: stage_status.update(
+                        {
+                            "status": "failed",
+                            "finished_at": runner.now(),
+                            "error": repr(exc),
+                        }
+                    ),
+                )
             raise
 
         billed_usage = runner.coarse_response_usage(response)
@@ -755,6 +838,7 @@ def execute_style_stage(
                 "kind": "style_batch_settled_response",
                 "stage": stage,
                 "request_key": request_key,
+                "attempt_id": attempt_id,
                 "chunk_ids": request_status["chunk_ids"],
                 "usage": billed_usage,
                 "cost_rmb": cost_rmb,

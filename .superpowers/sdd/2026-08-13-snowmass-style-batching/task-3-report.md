@@ -42,3 +42,67 @@
 ## Concern
 
 - `execute_style_stage()` currently raises after the single recovery pass on remaining failed IDs; callers need to treat that as the stage barrier and not attempt implicit extra retries.
+
+---
+
+## Round 1/5
+
+### RED
+
+- Added failing tests:
+  - `test_protocol_failure_commits_nothing_before_retrying_the_whole_failed_request`
+  - `test_failed_transport_commits_estimate_once_marks_batch_failed_and_clears_running_chunks`
+  - `test_reserve_failure_does_not_commit_missing_reservation`
+  - `test_unresolved_ambiguous_request_blocks_replay_before_second_client_call`
+- RED command:
+  - `python3 -m unittest scripts.test_snowmass_style_batching.StyleExecutionTests`
+- RED output:
+  - `FAILED (failures=3)`
+  - protocol-failure attempt history collapsed to one record
+  - failed transport left batch status at `running`
+  - unresolved ambiguous replay still reached `client.complete()`
+
+### GREEN
+
+- Batch request persistence now keys updates by `attempt_id` instead of logical `request_key`.
+- Added immutable-attempt metadata: `attempt_id` and `attempt_ordinal`; logical `request_key` remains stable across retries for audit/idempotency.
+- Added unresolved-uncertain replay barrier before the first reserve/client call for the same logical request.
+- Added failed-transport handling that:
+  - commits the conservative estimate once only when a reservation exists
+  - appends one `style_batch_failed_transport_reservation` ledger event
+  - marks the batch attempt `failed`
+  - marks all request-owned chunk stages `failed`
+  - re-raises the original exception
+
+### Verification
+
+- Test names:
+  - `StyleExecutionTests`
+  - `test_protocol_failure_commits_nothing_before_retrying_the_whole_failed_request`
+  - `test_failed_transport_commits_estimate_once_marks_batch_failed_and_clears_running_chunks`
+  - `test_reserve_failure_does_not_commit_missing_reservation`
+  - `test_unresolved_ambiguous_request_blocks_replay_before_second_client_call`
+- Commands:
+  - `python3 -m unittest scripts.test_snowmass_style_batching.StyleExecutionTests`
+  - `python3 -m unittest scripts.test_snowmass_style_batching scripts.test_snowmass_batch_budget`
+  - `python3 -m py_compile scripts/snowmass_style_batching.py scripts/test_snowmass_style_batching.py`
+- Outputs:
+  - `Ran 7 tests in 0.097s`
+  - `OK`
+  - `Ran 41 tests in 0.381s`
+  - `OK`
+  - `py_compile` exited cleanly with no output
+
+### Commit
+
+- `Preserve batch attempt history and fail closed on uncertain replays`
+
+### Self-Review
+
+- The logical request key still drives uncertainty identity and audit grouping.
+- Recovery attempts no longer overwrite the original batch record.
+- Reserve failures do not fabricate a conservative charge.
+
+### Concern
+
+- Replay blocking is implemented only as fail-closed; explicit authorized uncertain replay is still deferred to the later integration that wires in existing `retry_uncertain` semantics.
