@@ -515,8 +515,9 @@ def _quarantine_path(config: BatchConfig, record_id: str) -> Path:
     return _article_dir(config, record_id) / "quarantine.json"
 
 
-def _translation_contract_fingerprint() -> str:
-    contract_paths = (
+def _translation_contract_paths() -> tuple[Path, ...]:
+    return (
+        Path(__file__),
         Path(runner.__file__),
         Path(refined.__file__),
         SCRIPT_DIR / "snowmass_document_units.py",
@@ -524,6 +525,10 @@ def _translation_contract_fingerprint() -> str:
         ROOT / "translations/snowmass-global-glossary.json",
         ROOT / "translations/snowmass-hard-constraints.json",
     )
+
+
+def _translation_contract_fingerprint() -> str:
+    contract_paths = _translation_contract_paths()
     payload = [
         {"path": path.relative_to(ROOT).as_posix(), "sha256": _sha256(path)}
         for path in contract_paths

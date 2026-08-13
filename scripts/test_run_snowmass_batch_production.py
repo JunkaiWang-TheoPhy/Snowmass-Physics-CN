@@ -562,6 +562,10 @@ class ArticleQCTests(unittest.TestCase):
 
 
 class RunLockTests(unittest.TestCase):
+    def test_translation_contract_fingerprint_includes_batch_orchestrator(self) -> None:
+        module = load_module()
+        self.assertIn(Path(module.__file__), module._translation_contract_paths())
+
     def test_production_environment_lock_is_complete_and_self_validating(self) -> None:
         module = load_module()
 
