@@ -45,6 +45,10 @@
 - anti-AI 阶段保持独立模型审校；不得用局部标记检测把完整风格审校伪装成确定性完成。
 - academic 阶段仍逐块执行，保证自然化/学术化不是空操作。
 - 图内文字、表内文字、参考文献、固定页眉和硬对照继续本地透传或确定性替换，不调用模型。
+- refined CLI 需要提供 `--style-projection-only`，并且必须在任何 credential 加载或 client 创建之前返回。该模式只读取本地 manifest、glossary、revision/critique 产物、旁路策略和 checkpoint。
+- `--style-projection-only` 若发现 revision 产物不完整，必须返回 `projection_ready: false` 与缺失 `chunk_id` 列表；禁止猜测 anti-AI 或 academic 请求数。
+- 生产启动前要先聚合选中且仍需付费翻译论文的 `style_projection`，并在运行快照与终态摘要中固化 `projected_normal_api_calls` 与 `projected_worst_case_api_calls`。
+- 任一论文 `projection_ready != true`，或聚合 `projected_worst_case_api_calls` 大于 `PersistentBudgetGuard.stage_remaining_api_calls`，都必须在首个 `reserve()` / `client.complete()` 之前硬拒绝。
 - 先运行 baseline，再运行 10 篇分层样本；根据实测每万源字符费用、重试率和 QC 失败率决定 50 篇放行，禁止直接全量并发。
 
 ## 自动质量闭环
@@ -59,6 +63,8 @@
 - 当前运行的重试/不确定比例不超过阶段门限，且累计费用不超过阶段和项目上限。
 
 每个运行总表还必须固化 API 调用数、输入/缓存/输出 token、每篇费用、每万源字符费用、按当前样本外推的 273 篇总费用，以及机器可读的 `promotion_gate`。任何尚未解决的不确定付费请求、未完成装订、活动预占、文章失败或外推总费用超过项目上限，都会关闭下一阶段放行；不得仅凭进程退出码自动扩大批次。已由操作员显式授权重放且最终成功的请求仍永久保留保守费用和历史歧义计数，但以追加式 `resolve_uncertain` 事件关闭风险，不得冲销费用或改写旧账。
+- 生产汇总里的 style batch usage 必须从 `style_batch_status.json` schema 2 的 batch-attempt 记录聚合，每个 `attempt_id` 只计一次；不得从共享 chunk stage 复制或双计 anti-AI / academic usage。
+- `retry_uncertain` 默认 fail closed。只有显式 flag 且已有 conservative charge / unresolved uncertainty 合同可供 replay+resolve 时才允许重放；缺少已记录预算证据时继续阻断，不得静默重发。
 
 ## 分阶段执行
 

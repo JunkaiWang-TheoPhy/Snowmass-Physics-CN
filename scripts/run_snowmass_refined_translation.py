@@ -125,6 +125,11 @@ def _run_paper_model_phase(
         prior_uncertain_cost = float(phase.get("conservative_cost_rmb") or 0)
         if budget_guard is not None and prior_uncertain_cost <= 0:
             prior_uncertain_cost = budget_guard.unresolved_uncertain_cost(uncertainty_key)
+        if prior_uncertain_cost <= 0:
+            raise runner.AmbiguousTransportError(
+                f"Paper phase {phase_name} is uncertain without a recorded budget contract; "
+                "refusing replay"
+            )
 
     phase.clear()
     phase.update(
@@ -1431,6 +1436,169 @@ def _revision_context_preserving_completed_checkpoint(
     return _critique_context_for_chunk(critique, chunk_id)
 
 
+def _chunk_stage_complete(
+    article_dir: Path,
+    chunk: dict[str, Any],
+    stage: str,
+) -> bool:
+    status_path = article_dir / "chunk_status" / f"{chunk['id']}.json"
+    if not status_path.is_file():
+        return False
+    status = _load_json(status_path)
+    stage_status = status.get("stages", {}).get(stage, {})
+    if not isinstance(stage_status, dict) or stage_status.get("status") != "complete":
+        return False
+    output_path = runner.stage_output_path(
+        article_dir,
+        str(chunk["id"]),
+        str(chunk["output_file"]),
+        stage,
+    )
+    if not runner.nonempty(output_path):
+        return False
+    output_hash = stage_status.get("output_hash")
+    if isinstance(output_hash, str) and output_hash:
+        return runner.text_hash(output_path.read_text(encoding="utf-8")) == output_hash
+    return True
+
+
+def _missing_stage_chunk_ids(
+    article_dir: Path,
+    chunks: list[dict[str, Any]],
+    stage: str,
+) -> list[str]:
+    return [
+        str(chunk["id"])
+        for chunk in chunks
+        if not _chunk_stage_complete(article_dir, chunk, stage)
+    ]
+
+
+def style_projection_report(
+    article_dir: Path,
+    *,
+    terms: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    article_dir = Path(article_dir)
+    manifest = _load_json(article_dir / "manifest.json")
+    chunking_status = _load_json(article_dir / "chunking_status.json")
+    record_id = str(manifest.get("record_id") or chunking_status.get("record_id") or "")
+    if not record_id or record_id != str(chunking_status.get("record_id")):
+        raise RuntimeError(f"Record identity mismatch in {article_dir}")
+    chunks = sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0))
+    if not chunks:
+        raise RuntimeError(f"No prepared chunks for {record_id}")
+    missing_revision_chunk_ids = _missing_stage_chunk_ids(article_dir, chunks, "revision")
+    report: dict[str, Any] = {
+        "record_id": record_id,
+        "projection_ready": not missing_revision_chunk_ids,
+    }
+    if missing_revision_chunk_ids:
+        report["missing_revision_chunk_ids"] = missing_revision_chunk_ids
+        return report
+
+    terms = list(terms or [])
+    reference_ids = _reference_chunk_ids(article_dir, chunks)
+    figure_text_ids = runner.figure_text_chunk_ids(article_dir, manifest)
+    table_text_ids = runner.table_text_chunk_ids(article_dir, manifest)
+    hard_exact_translations = _hard_exact_translations(article_dir, record_id)
+    fragile_fragment_ids = {
+        str(chunk["id"])
+        for chunk in chunks
+        if str(chunk.get("layout_label", "")) == "fallback_line"
+        and len(
+            runner.article_artifact_path(
+                article_dir, str(chunk["source_file"])
+            ).read_text(encoding="utf-8").strip()
+        )
+        <= 12
+    }
+
+    def chunk_task(chunk: dict[str, Any]) -> dict[str, Any]:
+        chunk_id = str(chunk["id"])
+        source_text = runner.article_artifact_path(
+            article_dir, str(chunk["source_file"])
+        ).read_text(encoding="utf-8")
+        normalized_source = " ".join(source_text.split()).casefold()
+        fixed_translation = hard_exact_translations.get(normalized_source)
+        if fixed_translation is not None and source_text.endswith("\n"):
+            fixed_translation += "\n"
+        passthrough_reason = _chunk_passthrough_reason(
+            {**chunk, "source_text": source_text},
+            reference_ids=reference_ids,
+            fragile_fragment_ids=fragile_fragment_ids,
+            figure_text_ids=figure_text_ids,
+            table_text_ids=table_text_ids,
+        )
+        return {
+            "article_dir": article_dir,
+            "record_id": record_id,
+            "chunk": chunk,
+            "passthrough": passthrough_reason is not None,
+            "passthrough_reason": passthrough_reason,
+            "fixed_translation": fixed_translation,
+            "fixed_translation_reason": (
+                "hard_exact_translation" if fixed_translation is not None else None
+            ),
+            "retry_uncertain": False,
+        }
+
+    critique_path = article_dir / CRITIQUE_FILE
+    critique = (
+        critique_path.read_text(encoding="utf-8")
+        if runner.nonempty(critique_path)
+        else ""
+    )
+    context_factory = lambda chunk: _critique_context_for_chunk(critique, str(chunk["id"]))
+    anti_ai_plan = style_batching.prepare_style_items(
+        article_dir=article_dir,
+        chunks=chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="anti_ai",
+        input_stage="revision",
+        context_factory=context_factory,
+    )
+    academic_input_stage = (
+        "anti_ai"
+        if not _missing_stage_chunk_ids(article_dir, chunks, "anti_ai")
+        else "revision"
+    )
+    academic_plan = style_batching.prepare_style_items(
+        article_dir=article_dir,
+        chunks=chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="academic",
+        input_stage=academic_input_stage,
+        context_factory=context_factory,
+    )
+    style_projection = {
+        "schema_version": 1,
+        "execution_mode": "exact_id_batching",
+        "planned": {
+            "anti_ai": style_batching.stage_plan_projection(anti_ai_plan),
+            "academic": style_batching.stage_plan_projection(academic_plan),
+        },
+        "actual": {},
+    }
+    style_projection.update(_legacy_style_batch_projection(style_projection["planned"]))
+    report.update(
+        {
+            "style_projection": style_projection,
+            "projected_normal_api_calls": sum(
+                int(style_projection["planned"][stage_name]["normal_requests"])
+                for stage_name in ("anti_ai", "academic")
+            ),
+            "projected_worst_case_api_calls": sum(
+                int(style_projection["planned"][stage_name]["worst_case_requests"])
+                for stage_name in ("anti_ai", "academic")
+            ),
+        }
+    )
+    return report
+
+
 def run_refined_article(
     article_dir: Path,
     *,
@@ -1711,6 +1879,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Conservatively charge and replay stale in-flight requests after operator review",
     )
+    parser.add_argument("--style-projection-only", action="store_true")
     args = parser.parse_args(argv)
     if not math.isfinite(args.max_cost_rmb) or args.max_cost_rmb <= 0:
         parser.error("--max-cost-rmb must be finite and greater than zero")
@@ -1735,6 +1904,10 @@ def main(argv: list[str] | None = None) -> int:
         global_terms,
         runner.load_article_glossary(args.article_dir),
     )
+    if args.style_projection_only:
+        report = style_projection_report(args.article_dir, terms=terms)
+        print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
+        return 0
     prior_cost = existing_article_cost_rmb(args.article_dir, args.usd_cny_rate)
     budget = runner.BudgetGuard(
         args.max_cost_rmb,

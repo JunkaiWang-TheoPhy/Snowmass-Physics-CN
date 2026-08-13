@@ -744,5 +744,252 @@ class PromotionGateTests(unittest.TestCase):
         self.assertTrue(gate["allowed"])
 
 
+class StyleProjectionLaunchGateTests(unittest.TestCase):
+    def _config(self, module, root: Path, *, preflight_only: bool = False):
+        manifest = root / "papers.json"
+        manifest.write_text(
+            json.dumps([{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]),
+            encoding="utf-8",
+        )
+        return module.BatchConfig(
+            rights_manifest=manifest,
+            pdf_root=root / "pdf",
+            output_root=root / "output",
+            control_dir=root / "control",
+            stage="baseline",
+            explicit_ids=("arxiv:a",),
+            max_articles=None,
+            project_max_cost_rmb=1000.0,
+            stage_max_cost_rmb=10.0,
+            usd_cny_rate=7.2,
+            chunk_concurrency=1,
+            article_concurrency=1,
+            through_stage="packaged",
+            translation_version="test",
+            packaged_on="2026-08-13",
+            stage_max_api_calls=16,
+            historical_roots=(),
+            preflight_only=preflight_only,
+        )
+
+    def test_preflight_reports_aggregated_style_projection_fields(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(module, root, preflight_only=True)
+            with (
+                mock.patch.object(module, "_resume_article_result", return_value=None),
+                mock.patch.object(module, "evaluate_article_qc", return_value={"ok": False, "failures": []}),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+                mock.patch.object(
+                    module,
+                    "_projection_report_for_record",
+                    return_value={
+                        "projection_ready": True,
+                        "projected_normal_api_calls": 7,
+                        "projected_worst_case_api_calls": 11,
+                        "style_projection": {
+                            "planned": {
+                                "anti_ai": {"normal_requests": 3, "worst_case_requests": 5},
+                                "academic": {"normal_requests": 4, "worst_case_requests": 6},
+                            }
+                        },
+                    },
+                ),
+            ):
+                summary = module.run_batch(config, client=object())
+
+        self.assertEqual(summary["status"], "preflight")
+        self.assertEqual(summary["projected_normal_api_calls"], 7)
+        self.assertEqual(summary["projected_worst_case_api_calls"], 11)
+        self.assertEqual(
+            summary["style_projection"]["planned"]["anti_ai"]["normal_requests"],
+            3,
+        )
+        self.assertEqual(
+            summary["style_projection"]["planned"]["academic"]["normal_requests"],
+            4,
+        )
+
+    def test_launch_gate_rejects_aggregate_worst_case_before_client_or_reservation(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(module, root)
+            guard_instances: list[object] = []
+
+            class Guard:
+                def __init__(self, *args, **kwargs) -> None:
+                    guard_instances.append(self)
+
+                def snapshot(self) -> dict[str, object]:
+                    return {
+                        "project_max_cost_rmb": 1000.0,
+                        "project_spent_rmb": 0.0,
+                        "project_reserved_rmb": 0.0,
+                        "stage_max_cost_rmb": 10.0,
+                        "stage_spent_rmb": 0.0,
+                        "stage_reserved_rmb": 0.0,
+                        "stage_usage": {},
+                        "stage_remaining_api_calls": 16,
+                    }
+
+                def reserve(self, *_args, **_kwargs):
+                    raise AssertionError("launch gate must fire before any reservation")
+
+            with (
+                mock.patch.object(module, "PersistentBudgetGuard", Guard),
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+                mock.patch.object(
+                    module,
+                    "_projection_report_for_record",
+                    return_value={
+                        "projection_ready": True,
+                        "projected_normal_api_calls": 9,
+                        "projected_worst_case_api_calls": 17,
+                        "style_projection": {"planned": {}},
+                    },
+                ),
+                mock.patch.object(
+                    module.runner,
+                    "load_api_key",
+                    side_effect=AssertionError("must fail before loading credentials"),
+                ),
+                mock.patch.object(
+                    module.runner,
+                    "DeepSeekClient",
+                    side_effect=AssertionError("must fail before creating client"),
+                ),
+            ):
+                with self.assertRaisesRegex(Exception, "17.*16|16.*17|projection"):
+                    module.run_batch(config)
+
+            self.assertEqual(len(guard_instances), 1)
+
+    def test_launch_gate_rejects_not_ready_projection_before_client_or_reservation(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(module, root)
+
+            class Guard:
+                def __init__(self, *args, **kwargs) -> None:
+                    return None
+
+                def snapshot(self) -> dict[str, object]:
+                    return {
+                        "project_max_cost_rmb": 1000.0,
+                        "project_spent_rmb": 0.0,
+                        "project_reserved_rmb": 0.0,
+                        "stage_max_cost_rmb": 10.0,
+                        "stage_spent_rmb": 0.0,
+                        "stage_reserved_rmb": 0.0,
+                        "stage_usage": {},
+                        "stage_remaining_api_calls": 16,
+                    }
+
+                def reserve(self, *_args, **_kwargs):
+                    raise AssertionError("launch gate must fire before any reservation")
+
+            with (
+                mock.patch.object(module, "PersistentBudgetGuard", Guard),
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+                mock.patch.object(
+                    module,
+                    "_projection_report_for_record",
+                    return_value={
+                        "projection_ready": False,
+                        "missing_revision_chunk_ids": ["chunk0007"],
+                    },
+                ),
+                mock.patch.object(
+                    module.runner,
+                    "load_api_key",
+                    side_effect=AssertionError("must fail before loading credentials"),
+                ),
+                mock.patch.object(
+                    module.runner,
+                    "DeepSeekClient",
+                    side_effect=AssertionError("must fail before creating client"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "chunk0007|not ready"):
+                    module.run_batch(config)
+
+    def test_usage_summary_counts_each_style_batch_attempt_once(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article_dir = Path(temporary) / "paper"
+            article_dir.mkdir(parents=True)
+            (article_dir / "style_batch_status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "stages": {
+                            "anti_ai": {
+                                "requests": [
+                                    {
+                                        "attempt_id": "anti-1",
+                                        "status": "settled",
+                                        "usage": {
+                                            "input_tokens": 11,
+                                            "cached_tokens": 1,
+                                            "output_tokens": 5,
+                                            "total_tokens": 16,
+                                        },
+                                    }
+                                ]
+                            },
+                            "academic": {
+                                "requests": [
+                                    {
+                                        "attempt_id": "academic-1",
+                                        "status": "settled",
+                                        "usage": {
+                                            "input_tokens": 13,
+                                            "cached_tokens": 2,
+                                            "output_tokens": 7,
+                                            "total_tokens": 20,
+                                        },
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (article_dir / "chunk_status").mkdir()
+            repeated_stage = {
+                "stages": {
+                    "anti_ai": {
+                        "run_id": "run-one",
+                        "request_key": "shared-style-request",
+                        "usage": {
+                            "input_tokens": 999,
+                            "cached_tokens": 999,
+                            "output_tokens": 999,
+                            "total_tokens": 999,
+                        },
+                    }
+                }
+            }
+            for chunk_id in ("chunk0001", "chunk0002"):
+                (article_dir / "chunk_status" / f"{chunk_id}.json").write_text(
+                    json.dumps(repeated_stage),
+                    encoding="utf-8",
+                )
+
+            usage = module.collect_article_run_usage(article_dir, run_id="run-one")
+
+        self.assertEqual(usage["api_calls"], 2)
+        self.assertEqual(usage["input_tokens"], 24)
+        self.assertEqual(usage["cached_tokens"], 3)
+        self.assertEqual(usage["output_tokens"], 12)
+        self.assertEqual(usage["total_tokens"], 36)
+
+
 if __name__ == "__main__":
     unittest.main()

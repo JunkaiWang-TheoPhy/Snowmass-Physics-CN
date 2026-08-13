@@ -36,6 +36,7 @@ import run_snowmass_translation as runner
 from snowmass_batch_budget import (
     AUTHORIZED_PROJECT_MAX_RMB,
     PersistentBudgetGuard,
+    RequestLimitExceededError,
     validate_budget,
     validate_request_limit,
 )
@@ -352,6 +353,198 @@ def _source_character_count(article_dir: Path) -> int:
         len(_article_path(article_dir, chunk.get("source_file")).read_text(encoding="utf-8"))
         for chunk in chunks
     )
+
+
+def _merge_usage(
+    base: dict[str, Any] | None,
+    extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged = {
+        "api_calls": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+    for payload in (base, extra):
+        if not isinstance(payload, dict):
+            continue
+        for key in merged:
+            merged[key] += max(0, int(payload.get(key) or 0))
+    return merged
+
+
+def collect_article_run_usage(article_dir: Path, run_id: str | None = None) -> dict[str, Any]:
+    article_dir = Path(article_dir)
+    totals = {
+        "api_calls": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    def add_usage(usage: Any) -> None:
+        if not isinstance(usage, dict):
+            return
+        totals["api_calls"] += 1
+        for key in ("input_tokens", "cached_tokens", "output_tokens", "total_tokens"):
+            totals[key] += max(0, int(usage.get(key) or 0))
+
+    paper_status_path = article_dir / "paper_status.json"
+    if paper_status_path.is_file():
+        try:
+            paper_status = json.loads(paper_status_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            paper_status = {}
+        phases = paper_status.get("phases") if isinstance(paper_status, dict) else {}
+        if isinstance(phases, dict):
+            for phase in phases.values():
+                if not isinstance(phase, dict):
+                    continue
+                if run_id is not None and phase.get("run_id") != run_id:
+                    continue
+                raw_response = phase.get("raw_response")
+                if isinstance(raw_response, dict):
+                    add_usage(raw_response.get("usage"))
+
+    chunk_dir = article_dir / "chunk_status"
+    if chunk_dir.is_dir():
+        for path in chunk_dir.glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            stages = payload.get("stages") if isinstance(payload, dict) else {}
+            if not isinstance(stages, dict):
+                continue
+            for stage in stages.values():
+                if not isinstance(stage, dict):
+                    continue
+                if run_id is not None and stage.get("run_id") != run_id:
+                    continue
+                if stage.get("request_key"):
+                    continue
+                add_usage(stage.get("usage"))
+
+    style_status_path = article_dir / "style_batch_status.json"
+    if style_status_path.is_file():
+        try:
+            payload = json.loads(style_status_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+        stages = payload.get("stages") if isinstance(payload, dict) else {}
+        seen_attempt_ids: set[str] = set()
+        if isinstance(stages, dict):
+            for stage_payload in stages.values():
+                requests = stage_payload.get("requests") if isinstance(stage_payload, dict) else None
+                if not isinstance(requests, list):
+                    continue
+                for entry in requests:
+                    if not isinstance(entry, dict):
+                        continue
+                    attempt_id = str(entry.get("attempt_id") or "")
+                    if not attempt_id or attempt_id in seen_attempt_ids:
+                        continue
+                    seen_attempt_ids.add(attempt_id)
+                    add_usage(entry.get("usage"))
+
+    return totals
+
+
+def _projection_report_for_record(
+    config: BatchConfig,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    record_id = str(record["record_id"])
+    article_dir = _article_dir(config, record_id)
+    if not (article_dir / "manifest.json").is_file() or not (article_dir / "chunking_status.json").is_file():
+        return {
+            "record_id": record_id,
+            "projection_ready": True,
+            "projection_skipped": True,
+            "style_projection": {
+                "planned": {
+                    "anti_ai": {"normal_requests": 0, "worst_case_requests": 0},
+                    "academic": {"normal_requests": 0, "worst_case_requests": 0},
+                }
+            },
+            "projected_normal_api_calls": 0,
+            "projected_worst_case_api_calls": 0,
+        }
+    try:
+        glossary_path = runner.resolve_glossary_path(config.output_root, None)
+        terms = runner.merge_glossary_terms(
+            runner.load_glossary(glossary_path),
+            runner.load_article_glossary(article_dir),
+        )
+        report = refined.style_projection_report(article_dir, terms=terms)
+    except Exception as error:
+        return {
+            "record_id": record_id,
+            "projection_ready": False,
+            "missing_revision_chunk_ids": [],
+            "error": f"{type(error).__name__}: {error}",
+        }
+    report.setdefault("record_id", record_id)
+    return report
+
+
+def _aggregate_style_projection(
+    config: BatchConfig,
+    records: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    projections = [_projection_report_for_record(config, record) for record in records]
+    ready = [report for report in projections if report.get("projection_ready") is True]
+    not_ready = [report for report in projections if report.get("projection_ready") is not True]
+    style_projection = {
+        "papers": len(projections),
+        "ready_papers": len(ready),
+        "not_ready_record_ids": [str(report.get("record_id") or "") for report in not_ready],
+        "missing_revision_chunk_ids": {
+            str(report.get("record_id") or ""): list(report.get("missing_revision_chunk_ids") or [])
+            for report in not_ready
+        },
+        "planned": {
+            stage_name: {
+                "normal_requests": sum(
+                    int(
+                        (
+                            report.get("style_projection", {})
+                            .get("planned", {})
+                            .get(stage_name, {})
+                            .get("normal_requests")
+                        )
+                        or 0
+                    )
+                    for report in ready
+                ),
+                "worst_case_requests": sum(
+                    int(
+                        (
+                            report.get("style_projection", {})
+                            .get("planned", {})
+                            .get(stage_name, {})
+                            .get("worst_case_requests")
+                        )
+                        or 0
+                    )
+                    for report in ready
+                ),
+            }
+            for stage_name in ("anti_ai", "academic")
+        },
+        "projection_ready": not not_ready,
+    }
+    return {
+        "style_projection": style_projection,
+        "projected_normal_api_calls": sum(
+            int(report.get("projected_normal_api_calls") or 0) for report in ready
+        ),
+        "projected_worst_case_api_calls": sum(
+            int(report.get("projected_worst_case_api_calls") or 0) for report in ready
+        ),
+    }
 
 
 def production_metrics_and_gate(
@@ -684,6 +877,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
     }
     historical_roots = tuple(dict.fromkeys((*config.historical_roots, config.output_root)))
     if config.preflight_only:
+        projection_summary = _aggregate_style_projection(config, selected)
         recoverable = [
             result
             for record in selected
@@ -701,6 +895,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         ]
         return {
             **snapshot,
+            **projection_summary,
             "status": "preflight",
             "historical_spent_rmb": discover_historical_spend(
                 historical_roots, config.usd_cny_rate
@@ -739,11 +934,6 @@ def _run_batch_locked(
     client: Any,
 ) -> dict[str, Any]:
     run_snapshot_path = run_dir / "snapshot.json"
-    if run_snapshot_path.is_file():
-        if json.loads(run_snapshot_path.read_text(encoding="utf-8")) != snapshot:
-            raise RuntimeError(f"Run snapshot collision: {run_id}")
-    else:
-        _atomic_json(run_snapshot_path, snapshot)
     historical_spent = discover_historical_spend(historical_roots, config.usd_cny_rate)
     stop_event = threading.Event()
     budget = PersistentBudgetGuard(
@@ -757,7 +947,6 @@ def _run_batch_locked(
         stop_event=stop_event,
     )
     _prepare_all(config, selected)
-    actual_client = client or runner.DeepSeekClient(runner.load_api_key())
     state_lock = threading.Lock()
     results: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -766,10 +955,63 @@ def _run_batch_locked(
     consecutive_content_failures = 0
     resolved_content_outcomes: dict[int, bool] = {}
     next_outcome_ordinal = 0
+    pending_records: list[dict[str, Any]] = []
+    for record in selected:
+        resumed = _resume_article_result(config, record)
+        if resumed is None:
+            pending_records.append(record)
+        else:
+            results.append(resumed)
+    projection_summary = _aggregate_style_projection(config, pending_records)
+    snapshot.update(projection_summary)
+    if run_snapshot_path.is_file():
+        if json.loads(run_snapshot_path.read_text(encoding="utf-8")) != snapshot:
+            raise RuntimeError(f"Run snapshot collision: {run_id}")
+    else:
+        _atomic_json(run_snapshot_path, snapshot)
+
+    stage_remaining_api_calls = max(
+        0,
+        int(budget.snapshot().get("stage_remaining_api_calls") or 0),
+    )
+    if not projection_summary["style_projection"]["projection_ready"]:
+        missing = projection_summary["style_projection"]["missing_revision_chunk_ids"]
+        raise RuntimeError(
+            "style projection is not ready for paid launch: "
+            + json.dumps(missing, ensure_ascii=False, sort_keys=True)
+        )
+    projected_worst_case = int(projection_summary["projected_worst_case_api_calls"] or 0)
+    if projected_worst_case > stage_remaining_api_calls:
+        raise RequestLimitExceededError(
+            "style projection worst case would exceed the remaining stage request cap: "
+            f"{projected_worst_case} > {stage_remaining_api_calls}"
+        )
+    actual_client = client or runner.DeepSeekClient(runner.load_api_key())
 
     def persist() -> None:
         with state_lock:
             budget_snapshot = budget.snapshot()
+            resumed_usage = {
+                "api_calls": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+            for result in results:
+                if not (
+                    result.get("resumed_from_verified_artifacts")
+                    or result.get("resumed_from_verified_translation")
+                ):
+                    continue
+                resumed_usage = _merge_usage(
+                    resumed_usage,
+                    collect_article_run_usage(_article_dir(config, str(result["record_id"]))),
+                )
+            budget_snapshot = {
+                **budget_snapshot,
+                "stage_usage": _merge_usage(budget_snapshot.get("stage_usage"), resumed_usage),
+            }
             metrics, promotion_gate = production_metrics_and_gate(
                 stage=config.stage,
                 through_stage=config.through_stage,
@@ -800,18 +1042,11 @@ def _run_batch_locked(
                     "results": sorted(results, key=lambda item: item["record_id"]),
                     "failures": sorted(failures, key=lambda item: item["record_id"]),
                     "budget": budget_snapshot,
+                    **projection_summary,
                     "metrics": metrics,
                     "promotion_gate": promotion_gate,
                 },
             )
-
-    pending_records: list[dict[str, Any]] = []
-    for record in selected:
-        resumed = _resume_article_result(config, record)
-        if resumed is None:
-            pending_records.append(record)
-        else:
-            results.append(resumed)
     persist()
     # A rolling executor limits already-started work. Content failures quarantine one
     # paper; budget/uncertainty gates and the systemic-failure circuit breaker stop intake.

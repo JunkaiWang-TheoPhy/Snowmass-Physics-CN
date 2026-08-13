@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("run_snowmass_refined_translation.py")
@@ -1518,6 +1520,113 @@ class RefinedOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual(result, 2)
 
+    def test_style_projection_only_returns_without_loading_credentials(self) -> None:
+        module = load_module()
+        rights = Path(self.temporary.name) / "rights.json"
+        rights.write_text(
+            json.dumps([{"record_id": "arxiv:allowed", "publication_allowed": True}]),
+            encoding="utf-8",
+        )
+        revision_output = module.runner.stage_output_path(
+            self.article,
+            "chunk0001",
+            "output_chunk0001.md",
+            "revision",
+        )
+        revision_output.parent.mkdir(parents=True, exist_ok=True)
+        revision_output.write_text("修订段落。\n", encoding="utf-8")
+        (self.article / "04-critique.md").write_text(
+            "## Accuracy\n- chunk0001: 调整。\n\n## Native Voice\n- 无。\n\n"
+            "## Notes & Adaptation\n- 无。\n\n## Summary\n- 完成。\n",
+            encoding="utf-8",
+        )
+        (self.article / "chunk_status").mkdir(exist_ok=True)
+        (self.article / "chunk_status/chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "chunk_id": "chunk0001",
+                    "source_file": "chunk0001.md",
+                    "source_hash": hashlib.sha256("Original paragraph.\n".encode()).hexdigest(),
+                    "stages": {
+                        "revision": {
+                            "status": "complete",
+                            "output_file": revision_output.name,
+                            "output_hash": module.runner.text_hash("修订段落。\n"),
+                            "paper_context_scope": "chunk_local",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(module.runner, "load_api_key", side_effect=AssertionError("must not load credentials")),
+            mock.patch.object(module.runner, "DeepSeekClient", side_effect=AssertionError("must not create client")),
+            mock.patch("sys.stdout", buffer),
+        ):
+            exit_code = module.main(
+                [
+                    "--article-dir",
+                    str(self.article),
+                    "--rights-manifest",
+                    str(rights),
+                    "--max-cost-rmb",
+                    "1",
+                    "--style-projection-only",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        report = json.loads(buffer.getvalue())
+        self.assertTrue(report["projection_ready"])
+        self.assertEqual(report["record_id"], "arxiv:allowed")
+        self.assertEqual(
+            report["style_projection"]["planned"]["anti_ai"]["normal_requests"],
+            1,
+        )
+        self.assertEqual(
+            report["style_projection"]["planned"]["academic"]["normal_requests"],
+            1,
+        )
+        self.assertEqual(report["projected_normal_api_calls"], 2)
+        self.assertEqual(report["projected_worst_case_api_calls"], 4)
+
+    def test_style_projection_only_reports_missing_revision_chunks_without_guessing(self) -> None:
+        module = load_module()
+        rights = Path(self.temporary.name) / "rights.json"
+        rights.write_text(
+            json.dumps([{"record_id": "arxiv:allowed", "publication_allowed": True}]),
+            encoding="utf-8",
+        )
+
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(module.runner, "load_api_key", side_effect=AssertionError("must not load credentials")),
+            mock.patch.object(module.runner, "DeepSeekClient", side_effect=AssertionError("must not create client")),
+            mock.patch("sys.stdout", buffer),
+        ):
+            exit_code = module.main(
+                [
+                    "--article-dir",
+                    str(self.article),
+                    "--rights-manifest",
+                    str(rights),
+                    "--max-cost-rmb",
+                    "1",
+                    "--style-projection-only",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        report = json.loads(buffer.getvalue())
+        self.assertFalse(report["projection_ready"])
+        self.assertEqual(report["missing_revision_chunk_ids"], ["chunk0001"])
+        self.assertNotIn("projected_normal_api_calls", report)
+
     def test_chunk_barrier_retries_qc_failure_but_not_uncertain_request(self) -> None:
         module = load_module()
         chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
@@ -1553,6 +1662,45 @@ class RefinedOrchestratorTests(unittest.TestCase):
                 record_id="arxiv:allowed",
             )
         self.assertEqual(uncertain_calls, [0])
+
+    def test_retry_uncertain_requires_recorded_budget_contract(self) -> None:
+        module = load_module()
+        status = {
+            "record_id": "arxiv:allowed",
+            "phases": {
+                "analysis": {
+                    "status": "uncertain",
+                    "input_hash": module._paper_phase_input_hash(
+                        "Analyze.",
+                        "paper body",
+                        4000,
+                    ),
+                }
+            },
+        }
+
+        class BudgetGuard:
+            def unresolved_uncertain_cost(self, _uncertainty_key: str) -> float:
+                return 0.0
+
+        class NoCallClient:
+            def complete(self, *_args, **_kwargs):
+                raise AssertionError("must stay blocked without replay contract")
+
+        with self.assertRaisesRegex(module.runner.AmbiguousTransportError, "recorded budget contract"):
+            module._run_paper_model_phase(
+                phase_name="analysis",
+                output_path=self.article / "01-analysis.md",
+                instructions="Analyze.",
+                input_text="paper body",
+                max_output_tokens=4000,
+                client=NoCallClient(),
+                status=status,
+                status_path=self.article / "paper_status.json",
+                run_id="run-one",
+                budget_guard=BudgetGuard(),
+                retry_uncertain=True,
+            )
 
     def test_chunk_barrier_allows_only_one_paid_qc_correction_retry(self) -> None:
         module = load_module()
