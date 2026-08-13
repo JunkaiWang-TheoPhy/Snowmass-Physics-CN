@@ -261,6 +261,65 @@ class NeighborContextTests(unittest.TestCase):
             self.assertIn("Next chunk excerpt (chunk0003.md, read-only)", context)
             self.assertIn("Next qualification.", context)
 
+    def test_neighbor_context_does_not_spawn_one_python_process_per_chunk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "chunk0001.md").write_text("Previous evidence.\n", encoding="utf-8")
+            (article / "chunk0002.md").write_text("Current claim.\n", encoding="utf-8")
+            (article / "chunk0003.md").write_text("Next qualification.\n", encoding="utf-8")
+
+            with mock.patch.object(
+                RUNNER.subprocess,
+                "run",
+                side_effect=AssertionError("neighbor context must run in-process"),
+            ):
+                context = RUNNER.load_neighbor_context(article, "chunk0002.md")
+
+            self.assertIn("Previous evidence.", context)
+            self.assertIn("Next qualification.", context)
+
+    def test_neighbor_context_reloads_when_translate_book_helper_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            helper = root / "chunk_context.py"
+            article = root / "article"
+            article.mkdir()
+            (article / "chunk0001.md").write_text("Current.\n", encoding="utf-8")
+            helper.write_text(
+                "def get_neighbor_context(*args): return {'value': 'v1'}\n"
+                "def format_for_prompt(context): return context['value']\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(RUNNER, "TRANSLATE_BOOK_CONTEXT", helper):
+                RUNNER._TRANSLATE_BOOK_CONTEXT_MODULE = None
+                RUNNER._TRANSLATE_BOOK_CONTEXT_SHA256 = None
+                self.assertEqual(RUNNER.load_neighbor_context(article, "chunk0001.md"), "v1")
+                helper.write_text(
+                    "def get_neighbor_context(*args): return {'value': 'v2'}\n"
+                    "def format_for_prompt(context): return context['value']\n",
+                    encoding="utf-8",
+                )
+                self.assertEqual(RUNNER.load_neighbor_context(article, "chunk0001.md"), "v2")
+
+    def test_neighbor_context_normalizes_helper_load_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            helper = root / "chunk_context.py"
+            helper.write_text("this is not valid python !!!\n", encoding="utf-8")
+            article = root / "article"
+            article.mkdir()
+            (article / "chunk0001.md").write_text("Current.\n", encoding="utf-8")
+
+            with mock.patch.object(RUNNER, "TRANSLATE_BOOK_CONTEXT", helper):
+                RUNNER._TRANSLATE_BOOK_CONTEXT_MODULE = None
+                RUNNER._TRANSLATE_BOOK_CONTEXT_SHA256 = None
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "translate-book neighbor context failed for chunk0001.md",
+                ):
+                    RUNNER.load_neighbor_context(article, "chunk0001.md")
+
 
 class UsageAccountingTests(unittest.TestCase):
     def test_cost_uses_official_usd_v4_flash_rates_and_pinned_exchange_rate(self) -> None:
@@ -1318,16 +1377,23 @@ class ProcessChunkTests(unittest.TestCase):
         )
 
         self.assertEqual(len(observed_inputs), 1)
+        self.assertNotIn("ORIGINAL SOURCE:", observed_inputs[0])
         self.assertNotIn("Neighbor-only evidence", observed_inputs[0])
         self.assertNotIn("999", observed_inputs[0])
 
     def test_successful_qc_retry_is_reused_under_its_stable_base_context(self) -> None:
+        (self.article_dir / "chunk0001.md").write_text(
+            "Original source contains unique retry contaminant ZEPHYRWORD.\n",
+            encoding="utf-8",
+        )
         initial = self.article_dir / "stage2_chunk0001.md"
         initial.write_text("当前译文。\n", encoding="utf-8")
         base_context = "# Actionable critique for this chunk only\nchunk0001: 修正语序。"
+        observed_inputs: list[str] = []
 
         class RetryClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                observed_inputs.append(input_text)
                 return completed_response("修订后的译文。"), 0.1
 
         RUNNER.process_chunk(
@@ -1339,6 +1405,10 @@ class ProcessChunkTests(unittest.TestCase):
             paper_context="# QC-CORRECTION RETRY 1\n修正上一候选。",
             paper_context_identity=base_context,
         )
+
+        self.assertEqual(len(observed_inputs), 1)
+        self.assertNotIn("ORIGINAL SOURCE:", observed_inputs[0])
+        self.assertNotIn("ZEPHYRWORD", observed_inputs[0])
 
         class NoCallClient:
             def complete(self, instructions: str, input_text: str, max_output_tokens: int):

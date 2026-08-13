@@ -18,6 +18,7 @@ import sys
 import threading
 import tempfile
 import time
+import types
 import urllib.error
 import urllib.request
 import uuid
@@ -101,6 +102,9 @@ PRICING_VERIFIED_AT = "2026-08-10"
 TRANSLATE_BOOK_CONTEXT = Path(
     "/Users/Zhuanz/.agents/skills/translate-book/scripts/chunk_context.py"
 )
+_TRANSLATE_BOOK_CONTEXT_MODULE: Any | None = None
+_TRANSLATE_BOOK_CONTEXT_SHA256: str | None = None
+_TRANSLATE_BOOK_CONTEXT_LOCK = threading.Lock()
 
 
 class ResponseValidationError(RuntimeError):
@@ -1351,24 +1355,33 @@ def load_neighbor_context(article_dir: Path, source_file: str, chars: int = 300)
 
     if not TRANSLATE_BOOK_CONTEXT.is_file():
         raise RuntimeError(f"translate-book chunk_context.py is unavailable: {TRANSLATE_BOOK_CONTEXT}")
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(TRANSLATE_BOOK_CONTEXT),
-            str(article_dir),
-            source_file,
-            "--chars",
-            str(chars),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    try:
+        helper_sha256 = hashlib.sha256(TRANSLATE_BOOK_CONTEXT.read_bytes()).hexdigest()
+        global _TRANSLATE_BOOK_CONTEXT_MODULE, _TRANSLATE_BOOK_CONTEXT_SHA256
+        with _TRANSLATE_BOOK_CONTEXT_LOCK:
+            if (
+                _TRANSLATE_BOOK_CONTEXT_MODULE is None
+                or _TRANSLATE_BOOK_CONTEXT_SHA256 != helper_sha256
+            ):
+                module = types.ModuleType("snowmass_translate_book_chunk_context")
+                module.__file__ = str(TRANSLATE_BOOK_CONTEXT)
+                exec(
+                    compile(
+                        TRANSLATE_BOOK_CONTEXT.read_bytes(),
+                        str(TRANSLATE_BOOK_CONTEXT),
+                        "exec",
+                    ),
+                    module.__dict__,
+                )
+                _TRANSLATE_BOOK_CONTEXT_MODULE = module
+                _TRANSLATE_BOOK_CONTEXT_SHA256 = helper_sha256
+            context_module = _TRANSLATE_BOOK_CONTEXT_MODULE
+        context = context_module.get_neighbor_context(article_dir, source_file, chars)
+        return context_module.format_for_prompt(context).strip()
+    except Exception as error:
         raise RuntimeError(
-            f"translate-book neighbor context failed for {source_file}: {result.stderr.strip()}"
-        )
-    return result.stdout.strip()
+            f"translate-book neighbor context failed for {source_file}: {error}"
+        ) from error
 
 
 def nonempty(path: Path) -> bool:
@@ -1490,6 +1503,8 @@ def process_chunk(
         )
         if bounded_segmented_retry:
             stage_status["bounded_segmented_retry"] = True
+        retry_marker = "# QC-CORRECTION RETRY"
+        is_retry_request = retry_marker in paper_context
         for segment_index, protected_segment in enumerate(protected_segments, 1):
             segment_instructions = instructions
             slot_protocol: tuple[tuple[str, ...], tuple[str, ...]] | None = None
@@ -1547,7 +1562,7 @@ def process_chunk(
                     source,
                     model_segment,
                     glossary,
-                    include_source=not bounded_segmented_retry,
+                    include_source=not bounded_segmented_retry and not is_retry_request,
                 )
             )
             if len(protected_segments) > 1:
@@ -1557,8 +1572,6 @@ def process_chunk(
                     "Do not reproduce source or context from another segment."
                 )
             compact_source = len(source.strip()) <= 12
-            retry_marker = "# QC-CORRECTION RETRY"
-            is_retry_request = retry_marker in paper_context
             context_for_request = (
                 paper_context[paper_context.index(retry_marker) :]
                 if is_retry_request
