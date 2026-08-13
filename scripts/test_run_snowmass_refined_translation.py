@@ -1098,11 +1098,47 @@ class RefinedOrchestratorTests(unittest.TestCase):
         (self.article / "chunking_status.json").write_text(
             json.dumps({"record_id": "arxiv:allowed"}), encoding="utf-8"
         )
+        module = load_module()
+        manifest = json.loads(
+            (self.article / "manifest.json").read_text(encoding="utf-8")
+        )
+        constraints = module.runner.constraint_compiler.load_constraints(
+            self.article,
+            "arxiv:allowed",
+            module.TRACKED_HARD_CONSTRAINTS,
+        )
+        module.runner.constraint_compiler.write_constraint_plan(
+            self.article,
+            module.runner.constraint_compiler.compile_constraint_plan(
+                self.article,
+                manifest,
+                constraints,
+            ),
+        )
 
     def _write_local_glossary(self, terms: list[dict[str, object]]) -> None:
         (Path(self.temporary.name) / "global_glossary.json").write_text(
             json.dumps({"terms": terms}, ensure_ascii=False),
             encoding="utf-8",
+        )
+
+    def _compile_current_constraint_plan(self) -> None:
+        module = load_module()
+        manifest = json.loads(
+            (self.article / "manifest.json").read_text(encoding="utf-8")
+        )
+        constraints = module.runner.constraint_compiler.load_constraints(
+            self.article,
+            "arxiv:allowed",
+            module.TRACKED_HARD_CONSTRAINTS,
+        )
+        module.runner.constraint_compiler.write_constraint_plan(
+            self.article,
+            module.runner.constraint_compiler.compile_constraint_plan(
+                self.article,
+                manifest,
+                constraints,
+            ),
         )
 
     def _rewrite_manifest_source_hash(self, source_file: str = "chunk0001.md") -> None:
@@ -1113,6 +1149,7 @@ class RefinedOrchestratorTests(unittest.TestCase):
         ).hexdigest()
         manifest["chunks"][0]["source_hash"] = source_hash
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        self._compile_current_constraint_plan()
 
     def _replace_with_short_chunks(self, count: int) -> None:
         chunks = []
@@ -1141,6 +1178,7 @@ class RefinedOrchestratorTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        self._compile_current_constraint_plan()
 
     def _write_chunk_stage(
         self,
@@ -1380,6 +1418,44 @@ class RefinedOrchestratorTests(unittest.TestCase):
             },
         )
         self.assertEqual(report["projected_worst_case_api_calls"], 0)
+
+    def test_revision_ready_projection_invalidates_model_checkpoint_after_exact_rule_added(self) -> None:
+        module = load_module()
+        manifest = json.loads((self.article / "manifest.json").read_text(encoding="utf-8"))
+        original_constraints = {
+            "schema_version": 1,
+            "record_id": "arxiv:allowed",
+            "exact_translations": [],
+            "forbidden_translations": [],
+        }
+        module.runner.constraint_compiler.write_constraint_plan(
+            self.article,
+            module.runner.constraint_compiler.compile_constraint_plan(
+                self.article,
+                manifest,
+                original_constraints,
+            ),
+        )
+        (self.article / "hard_constraints.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "exact_translations": [
+                        {"source": "Original paragraph.", "target": "精确译文段落。"}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertFalse(report["projection_ready"])
+        self.assertIn(
+            "constraint_plan",
+            report["identity_diagnostics"]["invalid_checkpoint_hashes"],
+        )
 
     def test_revision_ready_projection_fails_closed_on_record_identity_mismatch(self) -> None:
         module = load_module()

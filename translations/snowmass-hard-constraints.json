@@ -113,6 +113,54 @@
           "target": "除数据速率外，还必须考虑HLT重建每个事件所需的时间。处理时间过长会导致计算农场规模难以控制，进而难以采购、维护和运行。HL-LHC实验预计每个事件的处理时间约为1秒，长尾可达一分钟。在μ子对撞机中，离线事件重建目前主要耗时于带电粒子径迹重建；使用ACTS软件包中基于卡尔曼滤波的径迹算法时，每个事件最多需要数分钟，远慢于数秒这一合理HLT目标。为估算HLT所需时间，我们在BIB密度较低的外层尝试了带电径迹的初步重建。为初步了解问题复杂度，我们取外侧六个桶层的击中，在({v1},{v2},{v3})参数空间中应用基于三维霍夫变换的算法，并在现阶段近似假定所有径迹均来自原点。初步解析计算表明，即使将三维阵列精细划分为240 million个单元，按当前估计的BIB速率，仍会找到数十个{v4}.5 GeV/c的纯组合径迹候选，因而无法将这一信息用作有效事件过滤器。然而，若采用基于时间（或指向等）的独立过滤器，将BIB击中率降低因子four，并要求存在一条{v5}GeV的候选径迹，就能获得约50的所需事件抑制因子。在这种情况下，每次束流交叉都需要填充霍夫变换阵列中的44 million个单元。在数秒内完成这一任务需要功能强大的CPU，但并非不可实现。未来的CPU和加速器（GPU、FPGA等）以及算法改进还可进一步缩短处理时间。总之，这是一个关键研发领域，必须予以充分重视，才能将处理时间控制在合理范围内。",
           "scope": "all_occurrences",
           "reason": "Manual review restores the source-extracted decimal punctuation next to {v4} without guessing the hidden leading digit and preserves all processing, cell-count, rate, and rejection literals."
+        },
+        {
+          "source": "3.1.1 Monolithic Devices (CMOSMAPS)",
+          "target": "3.1.1 单片器件 (CMOSMAPS)",
+          "scope": "all_occurrences",
+          "reason": "Manual review preserves the decimal section number and normalizes heading spacing."
+        },
+        {
+          "source": "3.1.2 Devices with Intrinsic Gain",
+          "target": "3.1.2 具有内增益的器件",
+          "scope": "all_occurrences",
+          "reason": "Manual review preserves the decimal section number and normalizes heading spacing."
+        },
+        {
+          "source": "3.1.3 HybridSmall Pixeldevices",
+          "target": "3.1.3 混合小像素器件",
+          "scope": "all_occurrences",
+          "reason": "Manual review preserves the decimal section number and repairs extraction spacing."
+        },
+        {
+          "source": "3.1.4 Intelligent Sensors",
+          "target": "3.1.4 智能传感器",
+          "scope": "all_occurrences",
+          "reason": "Manual review preserves the decimal section number and normalizes heading spacing."
+        },
+        {
+          "source": "5.2.2 Micropattern Gaseous Detectorswithimproved time resolution",
+          "target": "5.2.2 提高时间分辨率的微结构气体探测器",
+          "scope": "all_occurrences",
+          "reason": "Manual review preserves the decimal section number and repairs extraction spacing."
+        },
+        {
+          "source": "Fig. 13: Simulated sensitivity to neutrons (left) and photons (right). Different colors represent different gaseous detector technologies considered.",
+          "target": "图13：模拟得到的中子（左）和光子（右）灵敏度。不同颜色表示所考虑的不同气体探测器技术。",
+          "scope": "all_occurrences",
+          "reason": "Manual review repairs nested parenthesis corruption in the translated caption while retaining the figure number."
+        },
+        {
+          "source": "The hit rate (R) is then obtained from the flux ({v1}) by {v2}for each energy value and particle type. The total estimated rate is shown in Fig. 14 for neutrons (left) and photons (right) as a function of the angular coordinate{v3}for the different detector technologies considered.",
+          "target": "随后，对于每个能量值和粒子类型，命中率(R)由通量({v1})通过{v2}计算得到。图14给出了不同探测器技术的总估计命中率，它是角坐标{v3}的函数；左图为中子，右图为光子。",
+          "scope": "all_occurrences",
+          "reason": "Manual review repairs nested parenthesis corruption and preserves the R, flux, formula, figure, and angular-coordinate bindings."
+        },
+        {
+          "source": "The 2019 update of the European Strategy for Particle Physics and the 2021 Snowmass process identified muon colliders as a highly promising path to reaching very high center-of-mass energies in leptonic collisions. These machines can combine excellent new physics discovery potential with high precision capabilities. For the purpose of event detection and reconstruction, the challenge that separates{v1}with the {v2}counterparts is the beam induced background. Because muons are unstable, they decay in flight, producing electrons that further interact with the accelerator and detector components. This creates very large multiplicities of mostly soft secondary particles, some of which end up in the detector. The hits produced by the secondary particles in the detectors lead to a large challenge for the particle detection and reconstruction. In this paper we presented a preliminary design and specifications for a muon collider detector, described the radiation levels it will be exposed to, and outlined possible ways to mitigate effects of the BIB. We showed that the radiation levels are similar to those at the HL-LHC experiments. We also demonstrated that the BIB imposes stringent requirements on the granularity, resolution, and timing properties of the muon collider detectors, and presented a number of emerging detector technologies that have a potential to address the challenge. Finally, we argue that R&D efforts to further develop these technologies are needed to get them to the maturity levels necessary for the detector construction.",
+          "target": "欧洲粒子物理战略的2019年更新和2021年Snowmass进程均将μ子对撞机视为轻子碰撞达到极高质心能量的一条极具前景的途径。这类装置兼具出色的新物理发现潜力和高精度测量能力。就事件探测和重建而言，区分{v1}与{v2}对应装置的关键挑战是束流诱导本底。μ子不稳定，会在飞行中衰变并产生电子；这些电子随后与加速器和探测器部件进一步相互作用，产生数量极多、且大多较软的次级粒子，其中一部分最终进入探测器。次级粒子在探测器中产生的击中对粒子探测和重建构成重大挑战。本文给出了μ子对撞机探测器的初步设计和技术指标，描述了探测器将承受的辐射水平，并概述了减轻BIB影响的可能途径。结果表明，其辐射水平与HL-LHC实验相近。我们还说明，BIB对μ子对撞机探测器的粒度、分辨率和时间性能提出了严格要求，并介绍了若干有望应对这一挑战的新兴探测器技术。最后，我们认为，还需开展研发以进一步完善这些技术，使其成熟度达到探测器建造所需水平。",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores spacing in 2021 Snowmass and preserves both structural counterparts without inferring their hidden formulas."
         }
       ]
     },
@@ -151,6 +199,18 @@
           "target": "激光辅助电荷交换（LACE）等激光与H{v1}束流相互作用技术正朝着满足高功率加速器需求的方向发展{v2}。其他技术利用激光光致中性化（LPN）处理低能（keV）、中能（MeV）和高能（GeV）的H{v3}束流，已广泛用于多种应用，包括基于激光的束流控制（激光缺口形成{v4}、相空间塑形{v5}）、非侵入式束流诊断{v6}）以及束流引出（嬗变{v7}、μSR源{v8}）；这些应用见于H{v9}加速器。未来具有重大影响的加速器应用需要高重复频率（100's MHz）的强超短激光脉冲，并将其组成重复频率较低（10's Hz）的短脉冲串（μs – ms），以匹配加速器的束团结构。由于任意脉冲模式、脉冲能量和脉冲稳定性方面的要求十分严格，现有激光技术水平远不能满足这些需求。迄今，这些应用面临的最大挑战，是在满足加速器脉冲模式要求的同时实现高单脉冲能量和高平均激光功率；现有激光技术似乎只能满足其中一项，无法兼顾二者。",
           "scope": "all_occurrences",
           "reason": "Manual semantic review preserves the source's approximate repetition-rate notation and all structural placeholders while improving academic Chinese."
+        },
+        {
+          "source": "H{v1}beam manipulation with lasers has been rapidly progressing especially topics related to using neutralization to achieve beam chopping, beam halo reduction {v2}beam extraction and arbitrary beam pattern generation. Concepts such as utilizing lasers to control the longitudinal emittance and reduce the beam halo for Fermilab momentum collimation has important contribution to topics for studying high power proton beam machines for the future. The concept of phase space sculpting {v3}uses lasers to extract a narrow beam of neutralized hydrogen from the parent H{v4}ion beam before it gets stripped by a foil. In this concept, subsequent foil stripping and capture of protons into a storage ring generates cool proton bunches with significantly reduced emittance compared to the parent H{v5}beams. Beam extraction by arbitrary pulse patterning technique allows parasitic generation of secondary beams with many purposes such as SNS μSR project{v6}and SEEMS project {v7}. LACE has great potential to replace the foil-based injection mechanism to realize high intensity high brightness multi-MW proton beams with minimized losses in future accelerators. By using power",
+          "target": "利用激光操控H{v1}束流的技术发展迅速，尤其是在通过中性化实现束流斩波、减小束晕{v2}、束流引出和任意束流模式生成等方面。利用激光控制纵向发射度、并在费米实验室动量准直过程中减小束晕等构想，对未来高功率质子加速器研究具有重要意义。相空间塑形构想{v3}是在母H{v4}离子束经剥离箔剥离之前，利用激光从中引出一束狭窄的中性氢束。在这一构想中，随后通过剥离箔剥离并将质子俘获到储存环内，可生成冷质子束团；与母H{v5}束流相比，其发射度显著降低。采用任意脉冲模式的束流引出技术，还可附带产生用于多种目的的次级束流，例如SNS μSR项目{v6}和SEEMS项目{v7}。LACE很有潜力取代基于剥离箔的注入机制，使未来加速器能够以较小损失实现高强度、高亮度的multi-MW质子束流。通过使用功率",
+          "scope": "all_occurrences",
+          "reason": "Manual review repairs the fragment, unifies foil and phase-space-sculpting terminology, and preserves the source's unfinished cross-chunk boundary."
+        },
+        {
+          "source": "*This manuscript has been authored by UT-Battelle, LLC, under contract DE-AC05-00OR22725 with the US Department of Energy (DOE). The US government retains and the publisher, by accepting the article for publication, acknowledges that the US government retains a nonexclusive, paid-up, irrevocable, worldwide license to publish or reproduce the published form of this manuscript, or allow others to do so, for US government purposes. DOE will provide public access to these results of federally sponsored research in accordance with the DOE Public Access Plan (http://energy.gov/downloads/doe-public-access-plan). †rahim@ornl.gov; phone: 1 315 391-4622; www.ornl.gov",
+          "target": "*本手稿由UT-Battelle, LLC根据其与美国能源部（DOE）签订的合同DE-AC05-00OR22725完成。美国政府保留相关权利；出版商在接受本文发表时，即承认美国政府拥有一项非独占、已付费、不可撤销且在全球有效的许可，可出于美国政府目的发表或复制本手稿的已发表版本，或允许他人这样做。DOE将依据DOE公共访问计划(http://energy.gov/downloads/doe-public-access-plan)，向公众开放这些由联邦资助的研究成果。†rahim@ornl.gov；电话：1 315 391-4622；www.ornl.gov",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores balanced URL parentheses and preserves the contract, contact address, phone number, and website exactly."
         }
       ]
     },
@@ -243,6 +303,12 @@
           "target": "美国能源部高能物理办公室于2021年与主要CAD和EDA工具公司举行了初步会议，包括Ansys、Cadence、Google、Keysight、Siemens和Synopsys。会议介绍并讨论了商业合作模式和相关建议。主要建议概述如下：",
           "scope": "all_occurrences",
           "reason": "Manual review attaches 2021 to the meeting and preserves every company name."
+        },
+        {
+          "source": "3.1 Meetings with CAD Companies . . . . . . . . . . . . . . . . . . . . . . . . . 4 3.2 DARPA Conversations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5 3.3 ICPT Engagement . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5",
+          "target": "3.1 与CAD公司会谈 . . . . . . . . . . . . . . . . . . . . . . . . . 4 3.2 DARPA会谈 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5 3.3 ICPT参与 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5",
+          "scope": "all_occurrences",
+          "reason": "Manual review normalizes table-of-contents spacing while preserving all section and page numbers."
         }
       ]
     },

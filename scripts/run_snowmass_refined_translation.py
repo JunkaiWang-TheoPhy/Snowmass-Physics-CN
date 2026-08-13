@@ -1993,6 +1993,21 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
         diagnostics["record_identity_mismatches"].append(f"{record_id}: no prepared chunks")
         return report
 
+    constraints = runner.constraint_compiler.load_constraints(
+        article_dir,
+        record_id,
+        TRACKED_HARD_CONSTRAINTS,
+    )
+    try:
+        runner.constraint_compiler.load_constraint_plan(
+            article_dir,
+            manifest,
+            constraints,
+        )
+    except RuntimeError:
+        diagnostics["invalid_checkpoint_hashes"].append("constraint_plan")
+        return report
+
     terms = _projection_terms(article_dir)
     source_texts = {
         str(chunk["id"]): runner.article_artifact_path(
