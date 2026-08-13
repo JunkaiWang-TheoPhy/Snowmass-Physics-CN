@@ -16,6 +16,116 @@
     }
   },
   "records": {
+    "arxiv:2203.07224": {
+      "exact_translations": [
+        {
+          "source": "March 15, 2022 https://muoncollider.web.cern.ch",
+          "target": "2022年三月15日 https://muoncollider.web.cern.ch",
+          "scope": "all_occurrences",
+          "reason": "Manual review normalizes the Chinese date order without inventing an Arabic month literal and preserves the URL verbatim."
+        },
+        {
+          "source": "The white papers will appear on arXiv on 15 March 2022 (Snowmass deadline).",
+          "target": "这些白皮书将于2022年三月15日发布到arXiv（Snowmass截止日期）。",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores the date order and balanced parenthesis."
+        },
+        {
+          "source": "This article is organised as follows. Section 2 briefly describes the expected beam structure, data- taking environment and the current proposed detector layout. Sections 3 to 5 focus respectively on promising technologies that could be employed in the tracking detector, the calorimeter systems, and dedicated muon spectrometers. General considerations regarding trigger systems and data acquisition are discussed in Section 6, while a summary and conclusions are presented in Section 7.",
+          "target": "本文结构如下。第2节简要介绍预期的束流结构、数据采集环境以及当前提出的探测器布局。第3至第5节分别讨论可用于径迹探测器、量能器系统和专用μ子谱仪的有前景技术。第6节讨论触发系统和数据采集的一般问题，第7节给出总结与结论。",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores every section reference and completes the final clause."
+        },
+        {
+          "source": "The proximity of the CMOS transistors to the epitaxy means these devices have significant sensi- tivity to analog-digital crosstalk. It is likely that the CMOS analog section would have to be 3D stacked with digital TDC, ADC and I/O tiers to achieve adequate isolation and overall functionality. Radiation hardness needs to be studied and improved. In particular the effects of doping evolution in the epitaxy will affect fields and operation as the device ages. This is a particular problem with the large ratio of collection node to collection area which forces a difficult geometry for the collection field. The size of CMOS sensors is limited by the typically 2x3 cm CMOS reticule. To achieve a large area device the reticules must be \"stitched\" using an additional metal layer or tiled while minimizing dead area at the edges.",
+          "target": "CMOS晶体管靠近外延层，因此这类器件对模数串扰相当敏感。为实现充分隔离和完整功能，CMOS模拟部分很可能需要与数字TDC、ADC和I/O层进行3D堆叠。还需研究并提高其抗辐射能力。尤其是，随着器件老化，外延层中的掺杂演化会影响电场和器件运行。收集节点面积与收集区域面积之比较大，迫使收集电场采用较难实现的几何结构，使这一问题尤为突出。CMOS传感器的尺寸通常受2x3 cm CMOS掩模版限制。为制造大面积器件，必须利用附加金属层“拼接”多块掩模版，或将其平铺，同时尽量减小边缘死区。",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores spacing and clarifies the stitching/tile subject while preserving 3D and 2x3 cm."
+        },
+        {
+          "source": "For conventional CMOS-based amplifiers a conventional silicon detector operating with no inter- nal gain the front-end power will be determined by the capacitive load on the front-end and the desired signal/noise and rise time. For example a simple SPICE model of a preamplifier loaded with 100 fF capacitance provides 4 ps time jitter for{v1}A bias current and 45 ps for a bias current of 100 nA{v2}. A time jitter of {v3}ps can be achieved in a conventional sensor with {v4}m thickness and front-end current of less than 250 pA if the detector capacitance is carefully controlled using 3D interconnections. If the sensor is based on LGAD-like internal gain the signal presented to the preamplifier can be {v5}times larger. Forthe same signalover noise, this could reducethe front-end transductanceand associated drain current by the roughly the square root of the gain. For a conventional CMOS amplifier we can expect about 450 W of power into the vertex detector for analog bias.",
+          "target": "对于采用传统CMOS放大器、且无内部增益的常规硅探测器，前端功耗取决于前端的电容负载以及所需的信噪比和上升时间。例如，在一个简单的SPICE模型中，前置放大器接入100 fF电容负载时，偏置电流为{v1}A可得到4 ps的时间抖动，而偏置电流为100 nA时可得到45 ps的时间抖动{v2}。若利用3D互连严格控制探测器电容，则常规传感器可实现{v3}ps的时间抖动；此时传感器厚度为{v4}m，前端电流小于250 pA。如果传感器采用类似LGAD的内部增益，送入前置放大器的信号可以增大{v5}倍。在相同信噪比下，前端跨导及相应漏极电流可大致按增益平方根的倒数降低。对于传统CMOS放大器，预计顶点探测器的模拟偏置功耗约为450 W。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review restores the roles of {v3}ps, {v4}m, 250 pA, and 3D interconnections without resolving hidden placeholders."
+        },
+        {
+          "source": "In a multi-TeV muon collider, the calorimeter system has to operate in the intense flux of low energy particles arising from the BIB. The BIB in the calorimeter region is mainly formed by photons (96%) and neutrons (4%). In the current detector layout, a flux of about 300 particles per cm{v1}is present at the ECAL barrel surface, with an average photon energy of about 1.7 MeV. Given the high flux, several particles may overlap in a single cell, resulting in a hit where their energy is summed up. The occupancy, defined as the number of hits per mm{v2}in a calorimeter layer, as a function of the calorimeter depth is shown in Figure 8. The simulation shows how the ECAL system is expected to absorb most of the BIB radiation, resulting in a significantly lower occupancy for the HCAL system. The ECAL is expected to receive approximately 100 krad/y of total ionising dose and a{v3}cm{v4}-MeV-neq fluence.",
+          "target": "在多TeV μ子对撞机中，量能器系统必须在束流诱导本底（BIB）产生的强低能粒子通量下运行。量能器区域的BIB主要由光子（96%）和中子（4%）组成。在当前探测器布局中，ECAL桶部表面的通量约为每cm{v1} 300个粒子，平均光子能量约为1.7 MeV。由于通量很高，多个粒子可能在同一单元内重叠，形成能量相加的击中。占用率定义为量能器某一层内每mm{v2}的击中数，其随量能器深度的变化如图8所示。模拟表明，ECAL系统预计会吸收大部分BIB辐射，因此HCAL系统的占用率会显著降低。ECAL预计将承受约100 krad/y的总电离剂量，以及a{v3}cm{v4}-MeV-neq的通量。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review restores 100 krad/y and keeps every percentage, energy, figure reference, and formula placeholder bound to its source role."
+        },
+        {
+          "source": "With a radiation length ({v1}) of 0.35 cm and an interaction length ({v2}) of 9.95 cm, tungsten is an ideal absorber for an electromagnetic sampling calorimeter. Silicon sensors can be used as active elements to achieve a high channel granularity and longitudinal segmentation. Moreover, state-of-the-art silicon sensors can sustain the high radiation dose of the expected BIB. Analogous technologies are adopted by LHC experiments upgrades{v3}and considered by the CLIC collaboration. The CLIC ECAL barrel, on which the current muon collider detector design is based, is composed of 64M sensors sampling 40 layers. Future developments should implement a precise timing measurement in these sensors ({v4}ps)",
+          "target": "钨的辐射长度({v1})为0.35 cm、相互作用长度({v2})为9.95 cm，是电磁取样量能器的理想吸收材料。硅传感器可作为有源元件，实现较高的通道粒度和纵向分层。此外，先进硅传感器能够承受预期BIB带来的高辐射剂量。LHC实验的升级采用了类似技术{v3}，CLIC合作组也在考虑这类技术。当前μ子对撞机探测器设计所依据的CLIC ECAL桶部由64M个传感器构成，对40层进行取样。未来应在这些传感器中实现精确的时间测量（{v4}ps）。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review binds 0.35 cm to radiation length and 9.95 cm to interaction length while preserving all placeholders."
+        },
+        {
+          "source": "Each crystal matrix is housed in a light-tight case which also embeds the front-end electronic boards and the cooling system. The on-detector electronics and SiPMs must be cooled during operation, so as to improve and stabilise the performance of SiPMs against irradiation. The Crilin design is capable of removing the heat load due to the increased photosensor currents after exposure to the expected {v1}{v2}-MeV-neq cm{v3}/year fluence, along with the power dissipated by the amplification circuitry. The total heat load was estimated as 350 mW per channel. The Crilin cooling system, which is based on conduction and forced convection of nitrogen, will provide the optimum operating temperature for the electronics and SiPMs at around {v4}. Gas fluxing will also prevent any condensation on SiPM or crystal surfaces.",
+          "target": "每个晶体矩阵都安装在不透光外壳中，外壳内还集成了前端电子板和冷却系统。探测器上的电子器件和SiPM在运行期间必须冷却，以改善并稳定SiPM在辐照条件下的性能。Crilin设计能够带走光传感器在预期{v1}{v2}-MeV-neq cm{v3}/year通量照射后因电流增大而产生的热负荷，以及放大电路耗散的功率。总热负荷估计为每通道350 mW。Crilin冷却系统采用热传导和氮气强制对流，可使电子器件和SiPM保持在约{v4}的最佳工作温度。气体吹扫还可防止SiPM或晶体表面发生凝结。",
+          "scope": "all_occurrences",
+          "reason": "Manual review naturalizes per-channel heat-load wording while preserving the full fluence expression and temperature placeholder."
+        },
+        {
+          "source": "Calorimeters with gaseous detectors as active element can reach a higher granularity with respect to more traditional scintillator-based calorimeters. Furthermore, a 1x1 cm{v1}pad is economically affordable with respect to 3x3 cm{v2}scintillator tiles. The CALICE collaboration has been studying the performance of digital {v3}and semi-digital {v4}hadronic calorimeters. Besides having a high granularity, gaseous detectors have the advantage to be radiation hard, leading to simple calibration procedures. RPCs have been chosen historically because of their low cost to instrument large area, because of their intrinsic digital nature and because of the rather low rate expected at future electron-positron colliders, which were the main target of these designs. Recently, Micro-Pattern Gaseous Detectors (MPGDs) have been proposed since they will likely outperform Resistive-Plate Chambers (RPCs) for this task because of their higher rate capability, their operation with environmental-friendly gases, their good energy resolution (of about 20%), high detector stability and low pad multiplicity. In the last decade resistive Micromegas were developed and tested for calorimetry at ILC {v5}and for tracking in high-rate environments {v6}at LHC, while new resistive detectors like the {v7}RWELL {v8}and RP-WELL {v9}were developed, the latter being actively pursued for SDHCAL calorimeter of CepC detector{v10}. It is expected that a good time resolution will play an important role in helping to match tracking detector and calorimeter energy deposits. Single-layer RPCs can reach time-resolutions of few hundred ps, but rely on gases with high global warming potential that will be phased out in the near future. Replacement gases are currently under investigation. Micro-Pattern Gaseous Detectors typically have a time resolution of the order of few ns, with R&D ongoing to bring this to sub-ns.",
+          "target": "与较传统的闪烁体量能器相比，以气体探测器作为有源元件的量能器可以实现更高的粒度。此外，1x1 cm{v1}的读出单元在经济上可以承受，相比之下闪烁体单元的尺寸为3x3 cm{v2}。CALICE合作组一直在研究数字式{v3}和半数字式{v4}强子量能器的性能。气体探测器除具有高粒度外，还具有抗辐射优势，因此校准程序较为简单。RPC历来受到采用，一是因为大面积仪器化成本较低，二是因为其固有的数字特性，三是因为这类设计主要面向的未来正负电子对撞机预期计数率较低。近来有人提出采用微结构气体探测器（MPGD）；它们具有更高的计数率能力，可使用环境友好型气体运行，并具备良好的能量分辨率（约20%）、较高的探测器稳定性和较低的单元多重性，因此很可能在这一任务中优于阻性板室（RPC）。过去十年间，电阻型Micromegas已被开发并测试，用于ILC{v5}的量能测量和LHC高计数率环境{v6}中的径迹测量；同时还开发了{v7}RWELL{v8}和RP-WELL{v9}等新型电阻探测器，后者正被积极用于CepC探测器的SDHCAL量能器{v10}。良好的时间分辨率预计将在匹配径迹探测器与量能器能量沉积时发挥重要作用。单层RPC可达到数百ps的时间分辨率，但依赖全球变暖潜势较高、近期将逐步淘汰的气体。目前正在研究替代气体。微结构气体探测器的时间分辨率通常为数ns量级，相关研发正努力将其降至亚ns。",
+          "scope": "all_occurrences",
+          "reason": "Manual review replaces the electronics-specific pad mistranslation with readout cell while preserving all dimensions, placeholders, and detector names."
+        },
+        {
+          "source": "A Gas Electron Multiplier (GEM) consists of a thin polymer foil (often 50 μm polyimide), cladded on both sides with a thin layer of copper (5μm), chemically perforated with a high density of holes, typically 100/mm{v1}. Applying a potential difference between the top and bottom electrodes, a high electric field is formed in the holes where electron multiplication can take place. Several GEM-foils can be stacked on top of each other leading to detectors with high gain ({v2}) and low discharge probability ({v3}). GEM detectors are used in different collider experiments {v4}mainly for tracking and triggering purposes. Spatial resolution down to 50 μm is possible, with a time resolution that depends on the used gas mixture used: 7–10 ns in Ar:CO{v5}down to 3.5 ns when CF{v6}is used in the gas mixture {v7}. Rate capabilities up to 100 kHz/cm{v8}have been assessed.",
+          "target": "气体电子倍增器（GEM）由一层薄聚合物箔构成（通常为50 μm聚酰亚胺），两面覆有5μm薄铜层，并以化学方法加工出高密度微孔，典型孔密度为100/mm{v1}。在上下电极之间施加电势差后，孔内形成强电场，电子可在其中发生倍增。多个GEM箔可以相互堆叠，构成高增益({v2})、低放电概率({v3})的探测器。GEM探测器已用于不同的对撞机实验{v4}，主要承担径迹测量和触发任务。其空间分辨率可达50 μm；时间分辨率取决于所用气体混合物，在Ar:CO{v5}中为7–10 ns，而在混合气体中使用CF{v6}时可降至3.5 ns{v7}。经评估，其计数率能力可达100 kHz/cm{v8}。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review restores the gas-mixture contrast and preserves all numeric, unit, and formula placeholders."
+        },
+        {
+          "source": "MRPC {v1}have acquired solidity and importance in the High Energy Physics domain where both high efficiency and good time resolution are demanding. A time resolution of about 60 ps and 95% efficiency has been obtained {v2}for a detector composed of 10 gas gaps {v3}m size arranged in a double stack design using floating soda-lime glass (bulk resistivity {v4}Ω{v5}). A recirculating gas mixture (C{v6}H{v7}F{v8}:SF{v9}:3) allows operation in avalanche mode with electric field of approximately 100 kV/cm. The technology was operated {v10}in high particle fluxes (though for small-size detector units) in a series of tests for the endcap upgrade of the STAR ToF and for the mini-CBM experiment at the GSI/SIS8 Synchrotron. Data with thinner standard float glass show rate capability of some kHz/cm{v11}at time resolutions of 70–80 ps.",
+          "target": "MRPC{v1}已在高能物理领域形成成熟而重要的地位；该领域同时要求高效率和良好的时间分辨率。相关探测器已获得约60 ps的时间分辨率和95%的效率{v2}；它由10个尺寸为{v3}m的气体间隙按双堆叠结构组成，并采用浮法钠钙玻璃（体电阻率为{v4}Ω{v5}）。循环气体混合物（C{v6}H{v7}F{v8}:SF{v9}:3）使探测器能够在约100 kV/cm的电场下以雪崩模式运行。该技术曾在高粒子通量下运行{v10}（尽管所用探测器单元尺寸较小），相关测试包括STAR ToF端盖升级和GSI/SIS8同步加速器上的mini-CBM实验。采用更薄标准浮法玻璃的数据表明，在70–80 ps时间分辨率下，计数率能力可达数kHz/cm{v11}。",
+          "scope": "all_occurrences",
+          "reason": "Manual review enforces half-width formula delimiters and restores the roles of efficiency, time resolution, field, and rate capability."
+        },
+        {
+          "source": "The rate capability is limited by the current flowing through the resistive plates and hence a step forward to increase this value, at a constant front end electronics threshold, would be to use low resis- tivity glass or to decrease their thickness. Lower resistivity glass ({v1}Ω cm) have been used in tests beam {v2}and showed rate capability of 35 kHz/cm{v3}with efficiency above 90% and time resolutions below 80 ps. A still better behavior can be seen by lowering the glass resistivity by one order of magni- tude, currently R&D is concentrated on establishing 20 ps time resolution at rates of 100 kHz/cm{v4}.",
+          "target": "计数率能力受流经阻性板的电流限制。因此，在前端电子学阈值不变的条件下，要提高计数率能力，可以采用低电阻率玻璃或减小玻璃厚度。电阻率较低的玻璃（{v1}Ω cm）已用于束流测试{v2}，结果显示其计数率能力达到35 kHz/cm{v3}，效率高于90%，时间分辨率低于80 ps。若将玻璃电阻率再降低一个数量级，性能还可进一步改善；目前研发重点是在100 kHz/cm{v4}的计数率下实现20 ps的时间分辨率。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review restores 20 ps as time resolution and 100 kHz/cm{v4} as rate, preserving every literal."
+        },
+        {
+          "source": "Although the MRPC have shown excellent timing resolution over large area and R&D for larger rate capability and even better timing is underway, this detector technology can not be considered for future collider experiments with the current gas mixture which has a high Global Warming Potential (GWP). The use of freons will be gradually phased out by 2030. While for standard (High Pressure Laminate, HPL) RPCs encouraging results have been obtained to replace the freons with alternative gases as Hydrofluoroolefine (HFO-1234ze), MRPC performances have yet to be proven with those new gas mixtures. Moreover MRPC performance relies on a non-negligible fraction of SF{v1}which has even higher GWP with respect to the freons. R&D should start urgently in order to propose these detectors for future use.",
+          "target": "尽管MRPC已在大面积范围内表现出优异的时间分辨率，并且提高计数率能力和进一步改善时间性能的研发正在推进，但现用气体混合物具有较高的全球变暖潜势（GWP），因此采用这种混合气体的探测器技术不能用于未来对撞机实验。氟利昂将于2030年前逐步淘汰。对于标准（高压层压板，HPL）RPC，以氢氟烯烃（HFO-1234ze）等替代气体取代氟利昂已取得令人鼓舞的结果；但MRPC使用这些新型气体混合物时的性能仍有待验证。此外，MRPC的性能依赖占比不可忽略的SF{v1}，其GWP甚至高于氟利昂。为了使这类探测器未来能够投入使用，必须尽快启动相关研发。",
+          "scope": "all_occurrences",
+          "reason": "Manual review attaches 2030 to the phase-out deadline and preserves the gas formula placeholder and GWP meaning."
+        },
+        {
+          "source": "Sensitivity may be defined as the probability for a BIB particle to generate a visible signal in the detector: in the simulation, it is computed as the ratio {v1}, where {v2}is the number of events in which at least one charged particle reaches a sensitive gas gap, while {v3}is the number of incident particles. Figure 13 shows the results of the simulation for 1.5 TeV muon collider BIB neutrons (left) and photons (right) for four different gaseous detector technologies considered and described in Sections 5.1- 5.2.",
+          "target": "灵敏度可定义为BIB粒子在探测器中产生可见信号的概率。在模拟中，灵敏度按比值{v1}计算，其中{v2}表示至少有一个带电粒子到达灵敏气体间隙的事件数，{v3}表示入射粒子数。图13给出了1.5 TeV μ子对撞机BIB中子（左）和光子（右）的模拟结果，比较了第5.1- 5.2节所述的四种气体探测器技术。",
+          "scope": "all_occurrences",
+          "reason": "Manual review completes the section reference and preserves the ratio placeholders, figure number, and collider energy."
+        },
+        {
+          "source": "Another important parameter to consider is the HLT output rate to offline storage. Here again different approaches can be taken. One approach is to eliminate most of the events using filtering done in the HLT, but preserve full raw event information for the ones that pass the filter. HL-LHC experiments assume HLT output bandwidth of approximately 60 GB/s. This would translate into 750 Hz of full event content sent to the storage. For comparison, single Higgs production at 10 TeV is expected to have a much lower rate of {v1}.1 Hz and WW production via the vector boson fusion will be at 1 Hz level. Storing full event content allows for later reprocessing of the data in order to improve the performance or reconstruct novel signatures. However, this approach would require about 4 PB of storage per day of running. It will produce a total dataset similar in size to that of ATLAS and CMS in HL-LHC, but dominated by BIB hits that are not interesting from the physics point of view. An alternative approach based on reducing event content by filtering out hits and clusters clearly unassociated with the hard scattering may be more prudent. Here one may choose to preserve the output rate of 750 kHz and reduce the total dataset size. Alternatively, one can aim for the same total dataset size but increase the rate of events, for example if on average 99% of BIB hits in each event can be filtered out, every produced event at 100 kHz can be sent to the storage.",
+          "target": "另一个需要考虑的重要参数是HLT向离线存储系统输出数据的速率。对此同样可以采用不同方案。一种方案是利用HLT过滤大多数事件，但对通过过滤的事件保留完整的原始事件信息。HL-LHC实验假定HLT输出带宽约为60 GB/s，相当于以750 Hz的速率将完整事件内容送入存储系统。作为比较，在10 TeV下，单希格斯产生的预期速率要低得多，为{v1}.1 Hz；通过矢量玻色子融合产生WW的速率约为1 Hz。保存完整事件内容后，可以在以后重新处理数据，以改善性能或重建新的信号特征。然而，这一方案每天运行约需4 PB存储空间。产生的总数据集规模将与HL-LHC中的ATLAS和CMS相近，但其中占主导的是物理上并不感兴趣的BIB击中。另一种更为审慎的方案，是过滤掉明显与硬散射无关的击中和团簇，从而减少事件内容。可以保持750 kHz的输出速率并减小总数据集；也可以在总数据集规模不变的情况下提高事件速率。例如，若平均能过滤掉每个事件中99%的BIB击中，则以100 kHz产生的所有事件都可送入存储系统。",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores the source-extracted decimal punctuation next to {v1} without guessing the hidden leading digit and preserves all rates and storage values."
+        },
+        {
+          "source": "In addition to data rates, it is also important to take into account time needed to reconstruct each event at the HLT. Long processing times lead to unmanageable large farm requirements, which in turn is difficult to procure, maintain, and operate. HL-LHC experiments project processing times of about 1 second per event with tails extending as far as a minute. At the muon collider, offline event reconstruction is currently dominated by charged particle tracking and takes up to few minutes per event using Kalman filter based tracking algorithms from the ACTS package, which is significantly slower than a good HLT target of few seconds. To estimate the amount of time needed at the HLT, a preliminary reconstruction of charged tracks was attempted in the outer layers where BIB density is less severe. To have a first clue on the complexity of the problem we took hits from the outer six barrels and apply an algorithm based on a three-dimensional Hough Transform in the ({v1},{v2},{v3}) parameter space and assuming all tracks coming from the origin as a good approximation at this stage. Preliminary analytical calculations suggest that, even with a three-dimensional array finely subdivided into 240 million cells, with currently estimated BIB rates, tens of purely combinatorial track candidates with {v4}.5 GeV/c would be found, precluding any possibility to use that information as an effective event filter. However, if an independent filter based on timing (or pointing, etc ...) is applied to lower the BIB hit rate by a factor four, requiring a single candidate track with {v5}GeV would give us the needed event rejection factor of about 50. In this case, 44 million cells in the Hough Transform array would have to be filled for each beam crossing. Doing this in few seconds requires a powerful CPU, but is not out of reach. Future CPUs and accelerators (GPU, FPGA, etc), as well as algorithm improvements can further improve timing. The bottom line is that this is a crucial area of development and careful attention needs to be paid to this area in order to keep the processing time under control.",
+          "target": "除数据速率外，还必须考虑HLT重建每个事件所需的时间。处理时间过长会导致计算农场规模难以控制，进而难以采购、维护和运行。HL-LHC实验预计每个事件的处理时间约为1秒，长尾可达一分钟。在μ子对撞机中，离线事件重建目前主要耗时于带电粒子径迹重建；使用ACTS软件包中基于卡尔曼滤波的径迹算法时，每个事件最多需要数分钟，远慢于数秒这一合理HLT目标。为估算HLT所需时间，我们在BIB密度较低的外层尝试了带电径迹的初步重建。为初步了解问题复杂度，我们取外侧六个桶层的击中，在({v1},{v2},{v3})参数空间中应用基于三维霍夫变换的算法，并在现阶段近似假定所有径迹均来自原点。初步解析计算表明，即使将三维阵列精细划分为240 million个单元，按当前估计的BIB速率，仍会找到数十个{v4}.5 GeV/c的纯组合径迹候选，因而无法将这一信息用作有效事件过滤器。然而，若采用基于时间（或指向等）的独立过滤器，将BIB击中率降低因子four，并要求存在一条{v5}GeV的候选径迹，就能获得约50的所需事件抑制因子。在这种情况下，每次束流交叉都需要填充霍夫变换阵列中的44 million个单元。在数秒内完成这一任务需要功能强大的CPU，但并非不可实现。未来的CPU和加速器（GPU、FPGA等）以及算法改进还可进一步缩短处理时间。总之，这是一个关键研发领域，必须予以充分重视，才能将处理时间控制在合理范围内。",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores the source-extracted decimal punctuation next to {v4} without guessing the hidden leading digit and preserves all processing, cell-count, rate, and rejection literals."
+        }
+      ]
+    },
+    "arxiv:2203.06380": {
+      "exact_translations": [
+        {
+          "source": "This list is not intended to be comprehensive, but rather to provide well-motivated exam- ples of areas where fundamental advancements are expected with upcoming astrophysical and cosmological probes. We have divided this white paper into two separate discussions reflecting what we can learn about dark matter from its interactions with visible matter in astrophysical systems (Sec. 2) as well as its early-Universe behavior and its role in the formation of structure (Sec. 3). Each section briefly reviews some of the most promising observational probes for tackling the specific theory questions delineated above. Sec. 4 is dedicated to the exciting advancements expected in applications of statistics and machine learning to astrophysical studies of dark matter. We conclude in Sec. 5.",
+          "target": "这份清单并非力求穷尽所有方向，而是列举若干依据充分的实例，说明即将开展的天体物理和宇宙学观测有望在哪些领域带来基础性进展。本白皮书分为两个部分：第2节讨论如何通过暗物质与天体物理系统中可见物质的相互作用认识暗物质；第3节讨论暗物质在早期宇宙中的行为及其在结构形成中的作用。两节分别简要回顾了有望回答上述具体理论问题的若干观测手段。第4节讨论统计学和机器学习在暗物质天体物理研究中的预期进展。第5节为结论。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review restores every section reference and removes malformed parenthesis placement without changing the paper structure."
+        }
+      ]
+    },
     "arxiv:2203.08427": {
       "exact_translations": [
         {
@@ -23,11 +133,35 @@
           "target": "激光操控 H- 束",
           "scope": "cover_title",
           "reason": "The extracted first-page title contains formula placeholders plus an additional Snowmass subtitle, so the canonical metadata title is locked for the independent Chinese-edition cover."
+        },
+        {
+          "source": "Future high-power (10 – 20 MW) hadron accelerators offer many unique opportunities for fundamental science and nuclear applications. With the completion of Proton Power Upgrade (PPU) at 2.8 MW {v1}and European Spallation Source (ESS) at 5 MW {v2}the attention will be focused on the next high-power machine in hadron accelerator community. Charge exchange injection into a synchrotron using diamond stripper foils offers great advantage over direct proton acceleration. However, there are clear limitations associated with foil sublimation above critical beam power density and beam loss due to scattering ({v3}rem/hour at 10 MW for SNS).",
+          "target": "未来的高功率（10 – 20 MW）强子加速器将为基础科学研究和核技术应用提供许多独特机遇。随着功率达到2.8 MW的质子功率升级项目（PPU）{v1}和功率达到5 MW的欧洲散裂中子源（ESS）{v2}建成，强子加速器领域的关注重点将转向下一台高功率装置。与直接加速质子相比，利用金刚石剥离箔向同步加速器注入电荷交换束流具有显著优势。然而，当束流功率密度超过临界值时，剥离箔会发生升华；散射也会造成束流损失（对于SNS，在10 MW下为{v3} rem/hour），这些因素构成了明确限制。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review preserves all power values, placeholders, foil terminology, and the source rem/hour unit without guessing the hidden value."
+        },
+        {
+          "source": "Over the last two decades, significant advancement of laser technology accompanied with increasing demands of H{v1}beam manipulation with lasers have enabled a wider use of lasers at such facilities. Nowadays, laser manipulations of the H{v2}beams are an important subject for the state-of-the-art high-intensity proton accelerators with many purposes. The basic principles of H{v3}beam manipulation with lasers is based on photodetachment processes by either removing a loosely bound outer electron or exciting the ground state second electron to a higher energy state to completely remove it from the H{v4}ions. The former is producing neutral H{v5}(H{v6}) and therefore called H{v7}neutralization and the latter is called laser charge exchange injection or laser stripping. For the neutralization process, the energy required for photodetaching an electron is about 0.75 eV, and the interaction cross section is about 4 x {v8}cm{v9}for photons of about 1.17 eV (1064 nm). Therefore, a significant fraction of the ion beam can be neutralized by focusing a 1064 nm laser beam with pulse energy on the order of 100 mJ. However, depending on the ion beam energy, detaching the second inner bound electron would require much higher laser energy and power and difficult to achieve.",
+          "target": "过去二十年间，激光技术取得了显著进展，同时利用激光操控H{v1}束流的需求不断增长，因而激光在这类设施中的应用日益广泛。如今，面向多种用途的H{v2}束流激光操控已成为先进高强度质子加速器的重要研究课题。利用激光操控H{v3}束流的基本原理是光致剥离：一种方式是移除束缚较弱的外层电子，另一种方式是先将处于基态的第二个电子激发至较高能态，再将其从H{v4}离子中完全移除。前一种方式产生中性H{v5}（H{v6}），因此称为H{v7}中性化；后一种方式称为激光电荷交换注入或激光剥离。在中性化过程中，光致剥离一个电子所需的能量约为0.75 eV；对于能量约为1.17 eV（1064 nm）的光子，相互作用截面约为4 x {v8}cm{v9}。因此，将脉冲能量约为100 mJ的1064 nm激光束聚焦后，可以使相当一部分离子束中性化。然而，移除第二个内层束缚电子所需的激光能量和功率会随离子束能量而显著增大，因此较难实现。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review corrects photodetachment terminology while preserving every formula placeholder; the hidden exponent is deliberately not inferred from critique text."
+        },
+        {
+          "source": "Laser H{v1}beam interaction techniques such as Laser Assisted Charge Exchange (LACE) are progressing towards high power accelerator needs {v2}. Other techniques using Laser Photo Neutralization (LPN) of H{v3}beams at low (keV), medium (MeV) and high (GeV) energies are being used for a wide range of applications such as laser-based beam control (laser notching {v4}phase space sculpting {v5}), non-invasive beam diagnostics {v6}) and beam extraction (transmutation{v7}μSR source {v8}) in H{v9}accelerators. Future high impact accelerator applications require high repetition rate (100's MHz) intense ultrashort laser pulses bunched into short (μs – ms) bursts with slow repetition rates (10's Hz) to match accelerator bunch structure. Current laser capability is far from meeting these needs due to stringent requirements for arbitrary pulse pattern, pulse energy and pulse stability. To date, the largest challenges with all these applications are the high energy per pulse and high average laser power within the pulse pattern requirement of the accelerator. Current laser technology seems only providing one not both.",
+          "target": "激光辅助电荷交换（LACE）等激光与H{v1}束流相互作用技术正朝着满足高功率加速器需求的方向发展{v2}。其他技术利用激光光致中性化（LPN）处理低能（keV）、中能（MeV）和高能（GeV）的H{v3}束流，已广泛用于多种应用，包括基于激光的束流控制（激光缺口形成{v4}、相空间塑形{v5}）、非侵入式束流诊断{v6}）以及束流引出（嬗变{v7}、μSR源{v8}）；这些应用见于H{v9}加速器。未来具有重大影响的加速器应用需要高重复频率（100's MHz）的强超短激光脉冲，并将其组成重复频率较低（10's Hz）的短脉冲串（μs – ms），以匹配加速器的束团结构。由于任意脉冲模式、脉冲能量和脉冲稳定性方面的要求十分严格，现有激光技术水平远不能满足这些需求。迄今，这些应用面临的最大挑战，是在满足加速器脉冲模式要求的同时实现高单脉冲能量和高平均激光功率；现有激光技术似乎只能满足其中一项，无法兼顾二者。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review preserves the source's approximate repetition-rate notation and all structural placeholders while improving academic Chinese."
         }
       ]
     },
     "arxiv:2203.06843": {
       "exact_translations": [
+        {
+          "source": "nodes at the ESnet junction in Sunnyvale, at Caltech, and at UCSD. The system has been used by the CMS collaboration for real CMS data analysis as part of the Caltech and UCSD Tier-2 center pro- duction infrastructure. We observed that by sharing dataset in the regional data cache, the network traffic demand was reduced by a factor of 2 on the average over the observed period. Studying the characteristics ofthe data access patterns {v1}has enablednew strategies for how the needed resources such as compute, storage, and network can be allocated.",
+          "target": "这些节点分别位于森尼维尔的ESnet枢纽、加州理工学院和加州大学圣迭戈分校。该系统已被CMS合作组用于真实CMS数据分析，是加州理工学院和加州大学圣迭戈分校Tier-2中心生产基础设施的一部分。我们观察到，通过区域数据缓存共享数据集后，观测期间的网络流量需求平均按因子2缩减，即减少了一半。对数据访问模式特征的研究{v1}为计算、存储和网络等所需资源制定新的分配策略提供了依据。",
+          "scope": "all_occurrences",
+          "reason": "Manual semantic review renders reduced by a factor of 2 as a halving and preserves the structural placeholder without duplicating a bare numeric literal."
+        },
         {
           "source": "The Energy Sciences Network (ESnet) is the US Dept of Energy (DOE) Office of Science’s high-performance network user facil- ity, delivering highly-reliable data transport capabilities optimized for the requirements of large-scale science. ESnet is stewarded by the Advanced Scientific Computing Research Program (ASCR) and managed and operated by the Scientific Networking Division at Lawrence Berkeley National Laboratory (LBNL). ESnet acts as the primary data circulatory system for science by interconnecting the DOE’s national laboratory system, dozens of other DOE sites, and 150 research and commercial networks around the world. It allows tens of thousands of scientists at DOE laboratories and academic institutions across the country to transfer vast data streams and ac- cess remote research resources in real-time. ESnet exists to provide the specialized networking infrastructure and services required by the national laboratories, large science collaborations, DOE user facilities, and the DOE research community. All together, ESnet provides a foundation for the nation’s scientists to collaborate on some of the world’s most important scientific challenges,including energy, biosciences, materials, and the origins of the universe. Sci- ence data traffic across its network has grown at around 60% each year, and traffic has exceeded an exabyte per year since 2019.",
           "target": "能源科学网络（ESnet）是美国能源部（DOE）科学办公室的高性能网络用户设施，提供针对大规模科学研究需求优化的高可靠性数据传输能力。ESnet 由先进科学计算研究计划（ASCR）负责监管，并由劳伦斯伯克利国家实验室（LBNL）的科学网络部门管理和运营。ESnet 通过互联 DOE 的国家实验室体系、数十个其他 DOE 站点以及全球 150 个研究和商业网络，发挥科学数据主干循环系统的作用。它使全美 DOE 实验室和学术机构的数万名科学家能够实时传输海量数据流并访问远程科研资源。ESnet 旨在为国家实验室、大型科学合作组、DOE 用户设施和 DOE 科研群体提供所需的专用网络基础设施与服务。总体而言，ESnet 为美国科学家协作应对能源、生物科学、材料和宇宙起源等世界重大科学问题提供了基础。其网络中的科学数据流量每年增长约 60%，且自 2019 年以来，年流量已超过一个艾字节。",
@@ -87,6 +221,28 @@
           "target": "本文介绍了 DTN 即服务（DTN-as-a-Service，DTNasS）的设计、部署与实践经验；这是我们在 ESnet 内为科学数据集提供网内缓存和存储服务的方案。我们还介绍了 Caltech 和 UCSD 高能物理分析作业访问现有南加州仓库数据的趋势。网内数据缓存能够减少冗余数据传输，从而节省网络流量。研究期间，南加州仓库节省了 1.4PB 的网络流量；这项研究也为网络工程和缓存策略提出了其他研究方向。图 8 和图 7 所示的数据访问趋势可用于预测区域缓存的网络流量需求趋势；图 3 所示的缓存命中分析则可支持根据数据集流行度采用不同类型的缓存策略。我们计划将上述两个新节点纳入分析，以进一步观察缓存趋势；未来还将研究数据驱动的网络流量工程、流量预测以及本地定制的缓存策略。",
           "scope": "all_occurrences",
           "reason": "Manual review binds 1.4PB to network-traffic savings and preserves all figure references."
+        }
+      ]
+    },
+    "arxiv:2203.08973": {
+      "exact_translations": [
+        {
+          "source": "Transcendental Preprint March 18, 2022",
+          "target": "Transcendental预印本 2022年三月18日",
+          "scope": "all_occurrences",
+          "reason": "Manual review normalizes the date while retaining the ambiguous proper label Transcendental verbatim rather than inventing a domain expansion."
+        },
+        {
+          "source": "The cost of ASIC design licenses has steadily risen over years. The type of licenses required for new projects in advanced technologies has also contributed to the increase of costs. The increased number of projects has resulted in a {v1}x growth of the microelectronics teams (e.g., Fermilab), but not a 3x increase in license costs. We work hard to be efficient in sharing licenses among multiple engineers. Collective bargaining will provide economies of scale. The European community has established Europractice IC Service by engaging the large CAD companies to provide research licenses. We are investigating a similar possibility to promote US competitiveness.",
+          "target": "多年来，ASIC设计许可证的成本持续上升。采用先进技术的新项目所需的许可证类型也推高了成本。项目数量增加后，微电子团队的规模扩大了{v1}x（例如费米实验室），但许可证成本并未增加3x。我们致力于在多名工程师之间高效共享许可证。集体谈判将带来规模经济。欧洲科研界已通过与大型CAD公司合作、由其提供科研许可证，建立了Europractice IC Service。我们正在研究类似方案，以提升美国的竞争力。",
+          "scope": "all_occurrences",
+          "reason": "Manual review keeps the hidden team-growth multiplier as {v1}x and distinguishes it from the explicit 3x license-cost comparison."
+        },
+        {
+          "source": "DOE Office of High Energy Physics hosted initial meetings with major CAD and EDA tool companies including Ansys, Cadence, Google, Keysight, Siemens, and Synopsys in 2021. Business collaboration models and recommendations are presented and discussed. Here’s a summary of major recommendations:",
+          "target": "美国能源部高能物理办公室于2021年与主要CAD和EDA工具公司举行了初步会议，包括Ansys、Cadence、Google、Keysight、Siemens和Synopsys。会议介绍并讨论了商业合作模式和相关建议。主要建议概述如下：",
+          "scope": "all_occurrences",
+          "reason": "Manual review attaches 2021 to the meeting and preserves every company name."
         }
       ]
     },

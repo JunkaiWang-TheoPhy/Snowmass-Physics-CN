@@ -44,6 +44,7 @@ CRITIQUE_DRAFT_MAX_SOURCE_RATIO = 3
 CRITIQUE_DRAFT_MAX_EXTRA_CHARACTERS = 512
 ANALYSIS_MAX_OUTPUT_TOKENS = 4000
 CRITIQUE_MAX_OUTPUT_TOKENS = 4000
+STRUCTURE_PLACEHOLDER_RE = re.compile(r"\{v\d+\}")
 
 
 def _analysis_instructions() -> str:
@@ -917,10 +918,22 @@ def _hard_exact_translations(
         if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
             raise RuntimeError(f"Exact translations must be a list of objects: {path}")
         for rule in rules:
-            source = " ".join(str(rule.get("source", "")).split()).casefold()
+            source_text = " ".join(str(rule.get("source", "")).split())
+            source = source_text.casefold()
             target = str(rule.get("target", "")).strip()
             if not source or not target:
                 raise RuntimeError(f"Incomplete exact translation rule: {path}")
+            if STRUCTURE_PLACEHOLDER_RE.findall(source_text) != STRUCTURE_PLACEHOLDER_RE.findall(target):
+                raise RuntimeError(
+                    "Exact translation changed structure placeholder order "
+                    f"for {record_id} in {path}"
+                )
+            report = runner.validate_chunk(source_text, target, {}, [])
+            if not report.ok:
+                raise RuntimeError(
+                    "Exact translation failed deterministic QC "
+                    f"for {record_id} in {path}: {', '.join(report.failures)}"
+                )
             mapping[source] = target
     return mapping
 

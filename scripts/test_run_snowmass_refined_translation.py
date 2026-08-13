@@ -744,6 +744,72 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(mapping, {"header": "统一页眉"})
 
+    def test_hard_exact_translations_reject_factually_invalid_target(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            article = root / "article"
+            article.mkdir()
+            policy = root / "policy.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "records": {
+                            "arxiv:allowed": {
+                                "exact_translations": [
+                                    {
+                                        "source": "The detector reached 14 TeV.",
+                                        "target": "该探测器达到 15 TeV。",
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "failed deterministic QC"):
+                module._hard_exact_translations(
+                    article,
+                    "arxiv:allowed",
+                    policy_path=policy,
+                )
+
+    def test_hard_exact_translations_reject_reordered_structure_placeholders(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            article = root / "article"
+            article.mkdir()
+            policy = root / "policy.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "records": {
+                            "arxiv:allowed": {
+                                "exact_translations": [
+                                    {
+                                        "source": "First {v1}, then {v2}.",
+                                        "target": "先是{v2}，再是{v1}。",
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "placeholder order"):
+                module._hard_exact_translations(
+                    article,
+                    "arxiv:allowed",
+                    policy_path=policy,
+                )
+
     def test_tracked_mu3e_figure_caption_preserves_formula_placeholder_position(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
