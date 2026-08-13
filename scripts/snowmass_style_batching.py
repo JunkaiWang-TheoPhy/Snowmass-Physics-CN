@@ -9,9 +9,16 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from scripts import run_snowmass_translation as runner
-from scripts.snowmass_batch_budget import RequestLimitExceededError
-from scripts.run_snowmass_translation import text_hash
+try:
+    from scripts import run_snowmass_translation as runner
+    from scripts.snowmass_batch_budget import RequestLimitExceededError
+    from scripts.run_snowmass_translation import text_hash
+except ModuleNotFoundError as error:
+    if error.name != "scripts":
+        raise
+    import run_snowmass_translation as runner
+    from snowmass_batch_budget import RequestLimitExceededError
+    from run_snowmass_translation import text_hash
 
 
 STYLE_BATCH_PROTOCOL = "snowmass-style-batch-v1"

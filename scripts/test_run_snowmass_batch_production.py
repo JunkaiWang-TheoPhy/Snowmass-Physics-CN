@@ -9,6 +9,7 @@ import io
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,19 @@ def load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+class BatchCliStartupTests(unittest.TestCase):
+    def test_direct_script_help_starts_from_repository_root(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "--help"],
+            cwd=MODULE_PATH.parent.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--project-max-cost-rmb", result.stdout)
 
 
 class BatchSelectionTests(unittest.TestCase):
