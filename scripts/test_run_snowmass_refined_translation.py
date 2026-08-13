@@ -1175,6 +1175,103 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertEqual(status["phases"]["revision_merge"]["status"], "complete")
         self.assertFalse((self.article / "translation.md").exists())
 
+    def test_stop_after_revision_rerun_preserves_valid_complete_state_without_style_rerun(self) -> None:
+        module = load_module()
+
+        class FakeClient:
+            calls = 0
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                self.calls += 1
+                if "paper-level content analysis" in instructions:
+                    return completed_response(
+                        "## Content Summary\n测试论文。\n\n## Terminology\nOriginal → 原文\n\n"
+                        "## Tone & Style\n学术。\n\n## Translation Challenges\n- 无。\n",
+                        "analysis",
+                    ), 0.1
+                if "critical review" in instructions:
+                    return completed_response(
+                        "## Accuracy\n- chunk0001: 无。\n\n## Native Voice\n- chunk0001: 调整句法。\n\n"
+                        "## Notes & Adaptation\n- 无。\n\n## Summary\n0 个事实错误，1 项表达改进。\n",
+                        "critique",
+                    ), 0.1
+                if "first faithful translation pass" in instructions:
+                    return completed_response("原文初稿段落。\n", "draft"), 0.1
+                if "refined revision pass" in instructions:
+                    return completed_response("原文修订段落。\n", "revision"), 0.1
+                if "AI-mannerism cleanup pass" in instructions:
+                    return {
+                        "id": "anti-ai",
+                        "status": "completed",
+                        "model": "fake-style-model",
+                        "output_text": json.dumps(
+                            {"translations": {"chunk0001": "原文自然段落。"}},
+                            ensure_ascii=False,
+                        ),
+                        "usage": {
+                            "input_tokens": 10,
+                            "input_tokens_details": {"cached_tokens": 0},
+                            "output_tokens": 10,
+                            "output_tokens_details": {"reasoning_tokens": 0},
+                            "total_tokens": 20,
+                        },
+                    }, 0.1
+                if "final Chinese naturalization" in instructions:
+                    return {
+                        "id": "academic",
+                        "status": "completed",
+                        "model": "fake-style-model",
+                        "output_text": json.dumps(
+                            {"translations": {"chunk0001": "原文最终学术段落。"}},
+                            ensure_ascii=False,
+                        ),
+                        "usage": {
+                            "input_tokens": 10,
+                            "input_tokens_details": {"cached_tokens": 0},
+                            "output_tokens": 10,
+                            "output_tokens_details": {"reasoning_tokens": 0},
+                            "total_tokens": 20,
+                        },
+                    }, 0.1
+                raise AssertionError(instructions)
+
+        first_result = module.run_refined_article(
+            self.article,
+            client=FakeClient(),
+            terms=[{"source": "Original", "target": "原文"}],
+            run_id="run-complete",
+        )
+        self.assertEqual(first_result["status"], "complete")
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("complete rerun must not call the API")
+
+        with mock.patch.object(
+            module,
+            "run_batched_final_style_passes",
+            side_effect=AssertionError("style passes must not rerun"),
+        ):
+            rerun_result = module.run_refined_article(
+                self.article,
+                client=NoCallClient(),
+                terms=[{"source": "Original", "target": "原文"}],
+                run_id="run-stop-after-complete",
+                stop_after_revision=True,
+            )
+
+        self.assertEqual(
+            rerun_result,
+            {"record_id": "arxiv:allowed", "status": "complete", "chunks": 1},
+        )
+        status = json.loads((self.article / "paper_status.json").read_text(encoding="utf-8"))
+        self.assertEqual(status["status"], "complete")
+        self.assertEqual(status["phases"]["final_merge"]["status"], "complete")
+        self.assertEqual(
+            (self.article / "translation.md").read_text(encoding="utf-8"),
+            "<!-- chunk0001 p0001-i0000 -->\n原文最终学术段落。\n",
+        )
+
     def test_final_style_uses_ordered_exact_id_batches(self) -> None:
         module = load_module()
         module.load_neighbor_context = lambda *_args, **_kwargs: ""

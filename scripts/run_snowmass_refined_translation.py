@@ -1853,6 +1853,22 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         status_path=status_path,
     )
     if stop_after_revision:
+        final_merge_phase = status.get("phases", {}).get("final_merge", {})
+        try:
+            _final_text, final_signature = _verified_merge(
+                article_dir, record_id, chunks, "academic"
+            )
+        except RuntimeError:
+            final_signature = None
+        if final_signature is not None and _phase_valid(
+            final_merge_phase,
+            article_dir / FINAL_FILE,
+            final_signature,
+        ):
+            status["status"] = "complete"
+            status["finished_at"] = runner.now()
+            _persist_status(status_path, status)
+            return {"record_id": record_id, "status": "complete", "chunks": len(chunks)}
         status["status"] = "revision_ready"
         status["finished_at"] = runner.now()
         _persist_status(status_path, status)
