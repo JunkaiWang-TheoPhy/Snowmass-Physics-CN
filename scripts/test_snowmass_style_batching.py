@@ -50,6 +50,30 @@ def item(chunk_id: str, protected_text: str):
 
 
 class StyleBatchPlanningTests(unittest.TestCase):
+    def test_style_batch_instructions_override_plain_text_output_contract(self) -> None:
+        batching = load_batching()
+        instructions = batching.style_batch_instructions(
+            "Output only the complete revised Chinese text, with no preface."
+        )
+        self.assertIn("STYLE-BATCH JSON PROTOCOL", instructions)
+        self.assertIn('"translations"', instructions)
+        self.assertIn("no Markdown code fence", instructions)
+        self.assertTrue(instructions.rstrip().endswith("This JSON requirement overrides any earlier plain-text output instruction."))
+
+    def test_rejected_response_path_cannot_escape_artifact_directory(self) -> None:
+        batching = load_batching()
+        with tempfile.TemporaryDirectory() as temporary:
+            article_dir = Path(temporary) / "paper"
+            metadata = batching._persist_rejected_batch_response(
+                article_dir,
+                "../../outside",
+                "attempt-1",
+                "not-json",
+            )
+            path = (article_dir / metadata["rejected_response_file"]).resolve()
+            self.assertEqual(path.parent, (article_dir / "rejected_style_responses").resolve())
+            self.assertNotIn("..", Path(metadata["rejected_response_file"]).parts)
+
     def test_twenty_five_items_plan_as_two_normal_batches(self) -> None:
         batching = load_batching()
         items = tuple(item(f"chunk{i:04d}", "甲" * 100) for i in range(25))
@@ -826,9 +850,11 @@ class StyleExecutionTests(unittest.TestCase):
         class FakeClient:
             def __init__(self) -> None:
                 self.requested_ids: list[tuple[str, ...]] = []
+                self.instructions: list[str] = []
                 self.calls = 0
 
-            def complete(self, _instructions: str, input_text: str, _maximum: int):
+            def complete(self, instructions: str, input_text: str, _maximum: int):
+                self.instructions.append(instructions)
                 payload = json.loads(input_text)
                 ids = tuple(chunk["id"] for chunk in payload["chunks"])
                 self.requested_ids.append(ids)
@@ -885,6 +911,8 @@ class StyleExecutionTests(unittest.TestCase):
         self.assertEqual(result.failed_chunks, 0)
         self.assertEqual(result.normal_requests, 1)
         self.assertEqual(result.recovery_requests, 1)
+        self.assertTrue(all("STYLE-BATCH JSON PROTOCOL" in value for value in client.instructions))
+        self.assertTrue(all(value.rstrip().endswith("This JSON requirement overrides any earlier plain-text output instruction.") for value in client.instructions))
         self.assertEqual(result.total_tokens, 60)
         self.assertEqual(self._status("chunk0001")["status"], "complete")
         self.assertEqual(self._status("chunk0002")["status"], "complete")
@@ -1029,6 +1057,9 @@ class StyleExecutionTests(unittest.TestCase):
             [(request["status"], request["recovery"], request["attempt_ordinal"]) for request in requests],
             [("protocol_failed", False, 1), ("settled", True, 2)],
         )
+        rejected_path = self.article_dir / requests[0]["rejected_response_file"]
+        self.assertTrue(rejected_path.is_file())
+        self.assertEqual(requests[0]["rejected_response_hash"], self.runner.text_hash(rejected_path.read_text(encoding="utf-8")))
 
     def test_rejects_before_first_client_call_when_remaining_calls_cannot_cover_worst_case(self) -> None:
         from scripts import snowmass_batch_budget as budget_module

@@ -746,10 +746,14 @@ class ProcessChunkTests(unittest.TestCase):
         fallback = RUNNER.build_request_payload(
             "Return JSON. STRUCTURE-ANCHOR FALLBACK PROTOCOL", "{}", 128
         )
+        style_batch = RUNNER.build_request_payload(
+            "Return JSON. STYLE-BATCH JSON PROTOCOL", "{}", 128
+        )
         plain = RUNNER.build_request_payload("Translate", "text", 128)
 
         self.assertEqual(structured["text"]["format"], {"type": "json_object"})
         self.assertEqual(fallback["text"]["format"], {"type": "json_object"})
+        self.assertEqual(style_batch["text"]["format"], {"type": "json_object"})
         self.assertEqual(plain["text"]["format"], {"type": "text"})
 
     def test_structure_dense_input_splits_losslessly_at_bounded_density(self) -> None:
@@ -2241,6 +2245,24 @@ class ProcessChunkTests(unittest.TestCase):
 
 
 class DeepSeekClientRetryTests(unittest.TestCase):
+    def test_client_serializes_style_batch_requests_in_json_object_mode(self) -> None:
+        client = RUNNER.DeepSeekClient("test-key", max_retries=0)
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            completed_response('{"translations":{"chunk0001":"译文"}}')
+        ).encode()
+        with mock.patch.object(RUNNER.urllib.request, "urlopen", return_value=response) as urlopen:
+            client.complete(
+                "base\nSTYLE-BATCH JSON PROTOCOL",
+                '{"protocol":"snowmass-style-batch-v1"}',
+                2048,
+            )
+
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["text"]["format"], {"type": "json_object"})
+        self.assertIn("STYLE-BATCH JSON PROTOCOL", payload["instructions"])
+
     def test_client_retries_tls_handshake_eof_before_request(self) -> None:
         client = RUNNER.DeepSeekClient("test-key", max_retries=2)
         tls_eof = RUNNER.urllib.error.URLError(

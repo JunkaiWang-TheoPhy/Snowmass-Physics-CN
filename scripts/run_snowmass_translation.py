@@ -854,6 +854,7 @@ def build_request_payload(instructions: str, input_text: str, max_output_tokens:
         if (
             "STRUCTURE-SLOT PROTOCOL" in instructions
             or "STRUCTURE-ANCHOR FALLBACK PROTOCOL" in instructions
+            or "STYLE-BATCH JSON PROTOCOL" in instructions
         )
         else {"type": "text"}
     )

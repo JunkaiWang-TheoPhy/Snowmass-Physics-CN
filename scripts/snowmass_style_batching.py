@@ -25,6 +25,22 @@ STYLE_BATCH_PROTOCOL = "snowmass-style-batch-v1"
 NORMAL_BATCH_CHUNKS = 24
 NORMAL_BATCH_CHARACTERS = 18_000
 RECOVERY_BATCH_CHUNKS = 8
+
+
+def style_batch_instructions(base_instructions: str) -> str:
+    """Append the output contract that governs multi-chunk style requests."""
+
+    return base_instructions.rstrip() + """
+
+STYLE-BATCH JSON PROTOCOL
+The input is one JSON object whose `chunks` array contains exact chunk IDs.
+Return exactly one standard JSON object of the form
+{"translations":{"chunk0001":"完整译文","chunk0002":"完整译文"}}.
+The `translations` keys must be exactly the input chunk IDs, each exactly once.
+Every value must be the complete revised text for that ID. Return no Markdown code fence,
+explanation, prefix, suffix, or analysis.
+This JSON requirement overrides any earlier plain-text output instruction.
+"""
 _LOCAL_STAGE_STALE_FIELDS = (
     "request_key",
     "error",
@@ -635,6 +651,25 @@ def _response_text(response: dict[str, Any]) -> str:
     return runner.extract_output(response)
 
 
+def _persist_rejected_batch_response(
+    article_dir: Path,
+    stage: str,
+    attempt_id: str,
+    response_text: str,
+) -> dict[str, str]:
+    safe_stage = re.sub(r"[^a-z0-9_]+", "_", stage.casefold()).strip("_") or "stage"
+    relative_path = Path("rejected_style_responses") / f"{safe_stage}_{text_hash(attempt_id)[:12]}.txt"
+    root = (article_dir / "rejected_style_responses").resolve()
+    path = (article_dir / relative_path).resolve()
+    if path.parent != root:
+        raise RuntimeError("rejected style response path escapes its artifact directory")
+    runner.atomic_text(path, response_text)
+    return {
+        "rejected_response_file": relative_path.as_posix(),
+        "rejected_response_hash": text_hash(response_text),
+    }
+
+
 def _token_count(value: object) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -727,6 +762,7 @@ def execute_style_stage(
     run_id: str | None = None,
     model: str = "snowmass-style-batch",
 ) -> StyleStageResult:
+    instructions = style_batch_instructions(instructions)
     chunk_list = tuple(chunks)
     record_id = _stage_record_id(article_dir, chunk_list, task_factory)
     if budget_guard is not None and hasattr(budget_guard, "snapshot"):
@@ -960,9 +996,10 @@ def execute_style_stage(
             },
         )
 
+        response_text = _response_text(response)
         try:
             parsed = parse_style_batch_response(
-                _response_text(response),
+                response_text,
                 (item.chunk_id for item in batch.items),
             )
         except StyleBatchProtocolError as exc:
@@ -971,6 +1008,9 @@ def execute_style_stage(
                     "status": "protocol_failed",
                     "finished_at": runner.now(),
                     "error": str(exc),
+                    **_persist_rejected_batch_response(
+                        article_dir, stage, attempt_id, response_text
+                    ),
                 }
             )
             _persist_batch_request(article_dir, stage, request_status)
