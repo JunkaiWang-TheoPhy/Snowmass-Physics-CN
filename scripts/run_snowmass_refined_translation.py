@@ -1917,8 +1917,20 @@ def _planned_stage_model_subrequests(
         )
 
     decision = runner.stage_decision(stage, current, selected_terms)
+    deterministic_revision = (
+        runner.deterministic_critique_revision(
+            source=source,
+            prior_text=current,
+            paper_context=paper_context,
+            qc_terms=selected_terms,
+        )
+        if stage == "revision"
+        else None
+    )
     if stage == "revision" and NO_ACTIONABLE_CRITIQUE in paper_context:
         decision = runner.StageDecision(False, "revision_no_actionable_chunk_critique")
+    elif deterministic_revision is not None:
+        decision = runner.StageDecision(False, "revision_deterministic_critique_replacement")
     elif stage == "revision" and runner.refinement_context_contains_factual_literals(
         paper_context
     ):

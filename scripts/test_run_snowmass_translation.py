@@ -838,6 +838,63 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertFalse(RUNNER.refinement_context_contains_factual_literals(context))
         self.assertIn("{v15}", RUNNER.sanitize_refinement_context(context))
 
+    def test_unique_quoted_critique_replacement_is_applied_without_model(self) -> None:
+        source = "Section 2.4 describes the result.\n"
+        prior = "第节所述，2.4该结果。\n"
+        context = 'chunk0001: “第节所述，2.4”语序错误，应为“第2.4节所述”。'
+
+        repaired = RUNNER.deterministic_critique_revision(
+            source=source,
+            prior_text=prior,
+            paper_context=context,
+            qc_terms=[],
+        )
+
+        self.assertEqual(repaired, "第2.4节所述该结果。\n")
+
+    def test_critique_replacement_that_changes_numeric_literals_is_rejected(self) -> None:
+        repaired = RUNNER.deterministic_critique_revision(
+            source="The demand was reduced by a factor of 2.\n",
+            prior_text="需求平均降低了2倍。\n",
+            paper_context='chunk0001: “平均降低了2倍”应为“平均减少了一半”。',
+            qc_terms=[],
+        )
+
+        self.assertIsNone(repaired)
+
+    def test_process_chunk_uses_deterministic_critique_revision_without_api(self) -> None:
+        source = "Section 2.4 describes the result.\n"
+        prior = "第节所述，2.4该结果。\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage2_chunk0001.md"
+        initial.write_text(prior, encoding="utf-8")
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("deterministic critique repair must not call the API")
+
+        result = RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=initial,
+            paper_context='chunk0001: “第节所述，2.4”语序错误，应为“第2.4节所述”。',
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            (self.article_dir / "stage_revision_chunk0001.md").read_text(encoding="utf-8"),
+            "第2.4节所述该结果。\n",
+        )
+        status = json.loads(
+            (self.article_dir / "chunk_status" / "chunk0001.json").read_text(encoding="utf-8")
+        )["stages"]["revision"]
+        self.assertEqual(
+            status["decision"]["reason"],
+            "revision_deterministic_critique_replacement",
+        )
+
     def test_revision_with_literal_bearing_critique_preserves_prior_text_without_model(self) -> None:
         source = "The repository has 24 nodes and 2.5PB of storage.\n"
         prior = "该仓库有24个节点，存储容量为2.5PB。\n"

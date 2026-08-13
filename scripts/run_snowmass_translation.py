@@ -901,6 +901,36 @@ def refinement_context_contains_factual_literals(context: str) -> bool:
     return "<PROTECTED_" in sanitize_refinement_context(critique)
 
 
+_CRITIQUE_REPLACEMENT_RE = re.compile(
+    r'[“"](?P<old>[^”"]+)[”"].*?'
+    r'(?:应(?:改)?为|建议改为|应调整为|调整为|应补全(?:为)?)[“"]'
+    r'(?P<new>[^”"]+)[”"]'
+)
+
+
+def deterministic_critique_revision(
+    *,
+    source: str,
+    prior_text: str,
+    paper_context: str,
+    qc_terms: list[dict[str, Any]],
+) -> str | None:
+    """Apply unambiguous quoted critique edits only when full QC still passes."""
+
+    candidate = prior_text
+    applied = False
+    for match in _CRITIQUE_REPLACEMENT_RE.finditer(paper_context):
+        old = match.group("old")
+        new = match.group("new")
+        if candidate.count(old) != 1:
+            continue
+        candidate = candidate.replace(old, new, 1)
+        applied = True
+    if not applied or candidate == prior_text:
+        return None
+    return candidate if validate_chunk(source, candidate, {}, qc_terms).ok else None
+
+
 def localize_source_month_years(text: str) -> str:
     """Replace unambiguous English month-year pairs before model submission."""
 
@@ -1709,8 +1739,19 @@ def process_chunk(
             if paper_context_identity is not None
             else paper_context
         )
+        deterministic_revision = (
+            deterministic_critique_revision(
+                source=source,
+                prior_text=current,
+                paper_context=stable_paper_context,
+                qc_terms=qc_terms,
+            )
+            if stage == "revision"
+            else None
+        )
         literal_rebinding_review = (
             stage == "revision"
+            and deterministic_revision is None
             and refinement_context_contains_factual_literals(stable_paper_context)
         )
         expected_policy = (
@@ -1723,9 +1764,13 @@ def process_chunk(
                 + str(task.get("constraint_plan_sha256") or "legacy")
                 if fixed_translation is not None
                 else (
-                    "revision_manual_review:literal_rebinding"
-                    if literal_rebinding_review
-                    else "model_pipeline"
+                    "revision_deterministic_critique:" + text_hash(deterministic_revision)
+                    if deterministic_revision is not None
+                    else (
+                        "revision_manual_review:literal_rebinding"
+                        if literal_rebinding_review
+                        else "model_pipeline"
+                    )
                 )
             )
         )
@@ -1813,6 +1858,9 @@ def process_chunk(
         decision = stage_decision(stage, current, selected_terms)
         if stage == "revision" and "NO_ACTIONABLE_CHUNK_CRITIQUE" in paper_context:
             decision = StageDecision(False, "revision_no_actionable_chunk_critique")
+        elif deterministic_revision is not None:
+            current = deterministic_revision
+            decision = StageDecision(False, "revision_deterministic_critique_replacement")
         elif literal_rebinding_review:
             decision = StageDecision(
                 False,
