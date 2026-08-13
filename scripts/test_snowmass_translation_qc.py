@@ -149,6 +149,16 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("parentheses_mismatch", report.failures)
 
+    def test_validate_chunk_allows_dropping_english_optional_plural_suffix(self) -> None:
+        report = QC.validate_chunk(
+            "Adjust routing for any configured subnet(s).",
+            "针对所有已配置的子网调整路由。",
+            {},
+            [],
+        )
+
+        self.assertNotIn("protected_literals_mismatch", report.failures)
+
     def test_validate_chunk_preserves_source_inherited_parenthesis_residue(self) -> None:
         report = QC.validate_chunk(
             source="diagnostics ) and extraction.\n",

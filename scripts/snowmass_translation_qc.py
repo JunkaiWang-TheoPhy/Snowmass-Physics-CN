@@ -180,6 +180,7 @@ def _semantic_protected_literals(text: str) -> tuple[str, ...]:
         literal
         for literal in protected_literals(text)
         if literal not in {"(", ")", "（", "）"}
+        if literal.casefold() != "(s)"
         if not _PLAIN_NUMERIC_PROTECTED_RE.fullmatch(literal)
         and not is_unit_value_literal(literal)
         and not re.fullmatch(r"\d+D", literal)

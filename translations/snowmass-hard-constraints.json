@@ -26,6 +26,70 @@
         }
       ]
     },
+    "arxiv:2203.06843": {
+      "exact_translations": [
+        {
+          "source": "The Energy Sciences Network (ESnet) is the US Dept of Energy (DOE) Office of Science’s high-performance network user facil- ity, delivering highly-reliable data transport capabilities optimized for the requirements of large-scale science. ESnet is stewarded by the Advanced Scientific Computing Research Program (ASCR) and managed and operated by the Scientific Networking Division at Lawrence Berkeley National Laboratory (LBNL). ESnet acts as the primary data circulatory system for science by interconnecting the DOE’s national laboratory system, dozens of other DOE sites, and 150 research and commercial networks around the world. It allows tens of thousands of scientists at DOE laboratories and academic institutions across the country to transfer vast data streams and ac- cess remote research resources in real-time. ESnet exists to provide the specialized networking infrastructure and services required by the national laboratories, large science collaborations, DOE user facilities, and the DOE research community. All together, ESnet provides a foundation for the nation’s scientists to collaborate on some of the world’s most important scientific challenges,including energy, biosciences, materials, and the origins of the universe. Sci- ence data traffic across its network has grown at around 60% each year, and traffic has exceeded an exabyte per year since 2019.",
+          "target": "能源科学网络（ESnet）是美国能源部（DOE）科学办公室的高性能网络用户设施，提供针对大规模科学研究需求优化的高可靠性数据传输能力。ESnet 由先进科学计算研究计划（ASCR）负责监管，并由劳伦斯伯克利国家实验室（LBNL）的科学网络部门管理和运营。ESnet 通过互联 DOE 的国家实验室体系、数十个其他 DOE 站点以及全球 150 个研究和商业网络，发挥科学数据主干循环系统的作用。它使全美 DOE 实验室和学术机构的数万名科学家能够实时传输海量数据流并访问远程科研资源。ESnet 旨在为国家实验室、大型科学合作组、DOE 用户设施和 DOE 科研群体提供所需的专用网络基础设施与服务。总体而言，ESnet 为美国科学家协作应对能源、生物科学、材料和宇宙起源等世界重大科学问题提供了基础。其网络中的科学数据流量每年增长约 60%，且自 2019 年以来，年流量已超过一个艾字节。",
+          "scope": "all_occurrences",
+          "reason": "Manual review fixes the truncated final sentence and keeps 150, 60%, and 2019 attached to their source concepts."
+        },
+        {
+          "source": "We collected data access measurements from the SoCal Repo be- tween July 2021 and Dec. 2021, where HL-LHC analysis jobs re- quested data files for users. The SoCal Repo has 24 cache nodes regionally atCaltech, UCSD and ESnet, consisting of approximately 2.5PB of storage. We studied how much data is shared, how much network traffic volume is consequently saved, and how much the in-network data cache contributes to the resource management and performance. Additionally, we analyzed data access patterns and",
+          "target": "我们收集了南加州仓库（SoCal Repo）在 2021 年七月至 2021 年十二月期间的数据访问测量结果；在此期间，HL-LHC 分析作业为用户请求数据文件。南加州仓库在 Caltech、UCSD 和 ESnet 共设有 24 个区域缓存节点，总存储容量约为 2.5PB。我们研究了数据共享量、由此节省的网络流量，以及网内数据缓存对资源管理和性能的贡献。此外，我们还分析了数据访问模式，并",
+          "scope": "all_occurrences",
+          "reason": "Manual review binds both 2021 occurrences to the date range and keeps 24 nodes distinct from 2.5PB storage."
+        },
+        {
+          "source": "Table 1: Summary statistics for data accesses at the SoCal Repo from Julyto Dec. 2021",
+          "target": "表 1：南加州仓库 2021 年七月至十二月数据访问汇总统计",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores the year to the date range without inventing numeric month literals."
+        },
+        {
+          "source": "Table 1 shows the basic statistics on the data access activities for all caching nodes during the study period (from July to Dec. 2021). The \"data transfer size\" column in Table 1 indicates the data volume resulting from the \"cache misses\", when a data file was transferred from the remote data source. For cache misses, any caching nodes in the SoCal Repo did not have the data, resulting in a data transfer from the remote site to one of the caching nodes. The \"shareddataaccesssize\" columnrefersto the data volume from the \"cache hits\", when the data file was shared from the cache. The shared data accesses correspond to the network traffic savings. As the new cache nodes were added every month since Sep 2021, the percentage of shared data size decreases with time because the requests would fill the new cache nodes first by the policy. The percentage of the share size would be maintained at a certain level after the cache nodes are full.",
+          "target": "表 1 给出了研究期间（2021 年七月至十二月）所有缓存节点数据访问活动的基本统计信息。表 1 中的“数据传输大小”列表示“缓存未命中”产生的数据量，即数据文件从远程数据源传输时的传输量。发生缓存未命中时，南加州仓库中的缓存节点均未持有该数据，因而需要将数据从远程站点传输至某个缓存节点。“共享数据访问大小”列表示“缓存命中”产生的数据量，即数据文件由缓存共享时的数据量。共享数据访问量对应于节省的网络流量。由于自 2021 年九月起每月都会新增缓存节点，而请求会按照策略优先填充新节点，因此共享数据量所占比例随时间下降。缓存节点填满后，共享数据量比例将维持在一定水平。",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores both Table 1 references and the 2021 month ranges while preserving cache semantics."
+        },
+        {
+          "source": "Figure 1 shows the daily total data access size (in TB) to the SoCal Repoincluding bothcache hit sizes and cache miss sizes, and ratio among the cache nodes. It indicates that there are new nodes added to the SoCal Repo since Sep. 2021 showing that the majority of the activities, in particular data transfers occurred on new cache nodes since Sep. 2021.",
+          "target": "图 1 展示了南加州仓库每日数据访问总量（单位：TB），其中包括缓存命中量、缓存未命中量以及各缓存节点之间的比例。结果表明，自 2021 年九月以来，南加州仓库新增了若干节点；自 2021 年九月以来，大部分活动，尤其是数据传输，均发生在新缓存节点上。",
+          "scope": "all_occurrences",
+          "reason": "Manual review preserves both Sep. 2021 occurrences and removes the duplicated malformed clause."
+        },
+        {
+          "source": "Figure 2 shows the daily data transfer sizes (in TB) from remote sitesto theSoCalRepo upon the user request forthe data. Figure 3 shows the daily shared data sizes (in TB) which corresponds to the network traffic savings by the repeated accesses to the same data (cache hits). Both Figures 2 and 3 indicates a new trend since the",
+          "target": "图 2 展示了用户请求数据时从远程站点传输至南加州仓库的每日数据传输量（单位：TB）。图 3 展示了每日共享数据量（单位：TB），它对应于重复访问同一数据（缓存命中）所节省的网络流量。图 2 和图 3 均显示，自",
+          "scope": "all_occurrences",
+          "reason": "Manual review preserves the source chunk's intentional cross-chunk unfinished boundary instead of hallucinating its continuation."
+        },
+        {
+          "source": "Figure 6 shows the daily network traffic volume reduction rates, indicating the ratio of the daily total data volumebeingmovedfrom remote sites to the local cache. It also shows the effect of the new cache nodes being added to the SoCal Repo since Sep. 2021 while the existing cache nodes maintain higher rates of the shared data. The red line on the bottom plot is for the moving average over a week. The average traffic volume reduction rate is 1.47 during the study period (1.68 until Nov 2021).",
+          "target": "图 6 展示了每日网络流量缩减率，即每日从远程站点传输到本地缓存的数据总量所占的比例。该图还显示了自 2021 年九月以来南加州仓库新增缓存节点的影响，而现有缓存节点仍保持较高的数据共享率。下图中的红线表示一周移动平均值。研究期间的平均流量缩减率为 1.47（截至 2021 年十一月为 1.68）。",
+          "scope": "all_occurrences",
+          "reason": "Manual review binds 1.47 to the study-period average and 1.68 to the November 2021 cutoff."
+        },
+        {
+          "source": "Two additional caching nodes have been deployed within ESnet to supplement the existing Sunnyvale node within the broader SoCal Repo (Fig. 9). These nodes were installedasphysical servers at ESnet points of presence (PoP) in Boston and Chicago. The specifications of each node is as follows: dual-socket Intel Xeon Gold 5220S CPUs, 384GB RAM, 12x Micron 9300 PRO 15.36TB NVMe SSDs, and Mel- lanox ConnectX-5 100G network interface cards (NICs). The node storage was configured to provide an effective 165TB of available capacity each while providing suitable performance to match the expected XCache usage given 100G network connectivity. Figure 10 shows the results of using the elbencho{v1}storage benchmarking tool on the caching filesystem exposed to a container.",
+          "target": "ESnet 内部又部署了两个缓存节点，以补充更大范围南加州仓库中现有的 Sunnyvale 节点（图 9）。这些节点以物理服务器形式安装在 ESnet 位于波士顿和芝加哥的接入点（PoP）。每个节点的规格如下：双路 Intel Xeon Gold 5220S CPU、384GB 内存、12x Micron 9300 PRO 15.36TB NVMe 固态硬盘，以及 Mellanox ConnectX-5 100G 网络接口卡（NIC）。每个节点的存储均配置为提供 165TB 的有效可用容量，同时在 100G 网络连接条件下提供与预期 XCache 用途相匹配的性能。图 10 展示了使用 elbencho{v1}存储基准测试工具对暴露给容器的缓存文件系统进行测试所得的结果。",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores hardware-token spacing and deliberately preserves the structural {v1} placeholder."
+        },
+        {
+          "source": "Generally, the Linux macvlan sub-interface type provides iso- lation from the host networking namespace at layer 2. From an external ESnet switch or router perspective, a container with a macvlan interface will appear as another unique host on the net- work with a unique MAC and/or IP address. For the baremetal host to communicate with the running container, another macvlan sub- interface must be created on the host and local routing adjusted for any configured layer 3 subnet(s). In a similar fashion, another con- tainermay also communicate withinthe macvlan subnetif attached to the same brdiged container network. In this manner DTNaaS service containers provide separation between networks allocated for each service container and reduce the complexity of a single filtering rule set maintained alongside the host network namespace.",
+          "target": "通常，Linux macvlan 子接口可在第 2 层实现与主机网络命名空间的隔离。从外部 ESnet 交换机或路由器的角度看，带有 macvlan 接口的容器会表现为网络上的另一台独立主机，并具有唯一的 MAC 地址和/或 IP 地址。为使裸机主机与运行中的容器通信，必须在主机上创建另一个 macvlan 子接口，并针对所有已配置的第 3 层子网调整本地路由。类似地，连接到同一桥接容器网络的另一个容器也可以在 macvlan 子网内通信。通过这种方式，DTNaaS 服务容器可隔离分配给各服务容器的网络，并降低在主机网络命名空间中维护单一过滤规则集的复杂度。",
+          "scope": "all_occurrences",
+          "reason": "Manual review removes the extraction-derived plural suffix while preserving layer 2 and layer 3 roles."
+        },
+        {
+          "source": "In this paper, we described our design, deployment and experience on DTN-as-a-Service (DTNasS) as our approach for supporting in- network caching and storage services for scientific datasets within ESnet. We also described observations on the data access trends in the existing SoCal Repo for HEP analysis jobs at Caltech and UCSD. In-network data cache enables reduction of the redundant data transfers and consequently network traffic savings. During the study period, 1.4PB of the network traffic volume savings was observed in the SoCal Repo, and the study opens other leads to the network engineering and caching policies. Data access trends such as Figures 8 and 7 would be able to predict the trend of the network traffic demand in the regional cache. Also, cache hits analysis such as Figure 3 would enable different types of the caching policy based on the dataset popularity. We plan to extend this analysis to observe caching trendswith the inclusion of the two newnodes as described, and we plan to study data-driven network traffic engineering and traffic volume forecasting as well as locally customized caching policy in the future.",
+          "target": "本文介绍了 DTN 即服务（DTN-as-a-Service，DTNasS）的设计、部署与实践经验；这是我们在 ESnet 内为科学数据集提供网内缓存和存储服务的方案。我们还介绍了 Caltech 和 UCSD 高能物理分析作业访问现有南加州仓库数据的趋势。网内数据缓存能够减少冗余数据传输，从而节省网络流量。研究期间，南加州仓库节省了 1.4PB 的网络流量；这项研究也为网络工程和缓存策略提出了其他研究方向。图 8 和图 7 所示的数据访问趋势可用于预测区域缓存的网络流量需求趋势；图 3 所示的缓存命中分析则可支持根据数据集流行度采用不同类型的缓存策略。我们计划将上述两个新节点纳入分析，以进一步观察缓存趋势；未来还将研究数据驱动的网络流量工程、流量预测以及本地定制的缓存策略。",
+          "scope": "all_occurrences",
+          "reason": "Manual review binds 1.4PB to network-traffic savings and preserves all figure references."
+        }
+      ]
+    },
     "arxiv:2203.07506": {
       "exact_translations": [
         {

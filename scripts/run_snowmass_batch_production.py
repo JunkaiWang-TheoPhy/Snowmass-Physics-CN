@@ -1131,6 +1131,9 @@ def production_metrics_and_gate(
             else 0.0
         ),
     }
+    manual_review_chunks = sum(
+        len(result.get("manual_review_chunk_ids") or []) for result in results
+    )
     metrics = {
         "source_characters": source_characters,
         "completed_articles": completed,
@@ -1152,6 +1155,7 @@ def production_metrics_and_gate(
         "projected_total_rmb_for_eligible_records": round(projected_total, 6) if projected_total is not None else None,
         "uncertain_request_rate": round(uncertain_calls / api_calls, 6) if api_calls else 0.0,
         "style_batch_projection": style_projection,
+        "manual_review_chunks": manual_review_chunks,
     }
     reasons: list[str] = []
     expected_status = "qc_passed" if through_stage in {"rendered", "qc_passed"} else through_stage
@@ -1172,6 +1176,8 @@ def production_metrics_and_gate(
         reasons.append(f"selected_articles_not_{expected_status}")
     if unresolved_uncertain_calls:
         reasons.append("uncertain_paid_requests")
+    if manual_review_chunks:
+        reasons.append("unresolved_manual_review_chunks")
     if float(budget.get("project_reserved_rmb") or 0) or float(budget.get("stage_reserved_rmb") or 0):
         reasons.append("active_budget_reservations")
     if projected_total is None:
@@ -1548,6 +1554,16 @@ def _run_article(
         retry_uncertain=config.retry_uncertain,
         stop_after_revision=config.through_stage == "revision_ready",
     )
+    manual_review_chunk_ids = []
+    for chunk_status_path in sorted((article_dir / "chunk_status").glob("*.json")):
+        chunk_status = json.loads(chunk_status_path.read_text(encoding="utf-8"))
+        revision_status = chunk_status.get("stages", {}).get("revision", {})
+        if (
+            isinstance(revision_status, dict)
+            and revision_status.get("decision", {}).get("reason")
+            == "revision_literal_rebinding_requires_manual_review"
+        ):
+            manual_review_chunk_ids.append(chunk_status_path.stem)
     _record_stage_artifact(
         config, record, article_dir,
         artifact_id="revision_ready", relative_path=refined.REVISION_FILE,
@@ -1556,6 +1572,7 @@ def _run_article(
     )
     if config.through_stage == "revision_ready":
         result["status"] = "revision_ready"
+        result["manual_review_chunk_ids"] = manual_review_chunk_ids
         return result
     projection_path = article_dir / "style_batch_projection.json"
     if projection_path.is_file():

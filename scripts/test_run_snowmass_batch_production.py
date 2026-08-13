@@ -1226,6 +1226,38 @@ class BatchResumeTests(unittest.TestCase):
 
 
 class PromotionGateTests(unittest.TestCase):
+    def test_unresolved_manual_review_chunks_block_stage_promotion(self) -> None:
+        module = load_module()
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 1.0,
+            "project_reserved_rmb": 0.0,
+            "stage_spent_rmb": 0.1,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {"api_calls": 1, "uncertain_calls": 0},
+        }
+
+        metrics, gate = module.production_metrics_and_gate(
+            stage="shadow",
+            through_stage="revision_ready",
+            eligible_record_count=273,
+            selected_count=1,
+            results=[
+                {
+                    "record_id": "arxiv:a",
+                    "status": "revision_ready",
+                    "source_characters": 10000,
+                    "manual_review_chunk_ids": ["chunk0001"],
+                }
+            ],
+            failures=[],
+            budget=budget,
+        )
+
+        self.assertEqual(metrics["manual_review_chunks"], 1)
+        self.assertFalse(gate["allowed"])
+        self.assertIn("unresolved_manual_review_chunks", gate["reasons"])
+
     def test_recovered_or_repackaged_results_cannot_promote_a_stage(self) -> None:
         module = load_module()
         budget = {
@@ -2112,7 +2144,12 @@ class RevisionReadyRunArticleTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            {"record_id": "arxiv:a", "status": "revision_ready", "source_characters": 7},
+            {
+                "record_id": "arxiv:a",
+                "status": "revision_ready",
+                "source_characters": 7,
+                "manual_review_chunk_ids": [],
+            },
         )
         run_refined_article.assert_called_once_with(
             mock.ANY,
