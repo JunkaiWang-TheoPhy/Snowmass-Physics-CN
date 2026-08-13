@@ -108,6 +108,26 @@ def _artifact_manifest_path(article_dir: Path) -> Path:
     return article_dir / "production_artifacts.json"
 
 
+def _recoverable_environment_transition(
+    stored_report: dict[str, Any],
+    current_report: dict[str, Any],
+) -> bool:
+    """Allow a new contract chain after an interrupted downstream rebuild."""
+
+    stored_errors = set(stored_report.get("errors") or [])
+    current_errors = set(current_report.get("errors") or [])
+    if "environment_lock_drift" not in current_errors:
+        return False
+    if current_errors - {"environment_lock_drift"} != stored_errors:
+        return False
+    for error in stored_errors:
+        if not error.startswith("artifact_hash_mismatch:"):
+            return False
+        if error == "artifact_hash_mismatch:prepared":
+            return False
+    return True
+
+
 def _ensure_artifact_contract(config: BatchConfig, record: dict[str, Any], article_dir: Path) -> dict[str, Any]:
     environment_lock = _production_environment_lock()
     manifest_path = _artifact_manifest_path(article_dir)
@@ -123,10 +143,7 @@ def _ensure_artifact_contract(config: BatchConfig, record: dict[str, Any], artic
             current_environment_lock=environment_lock,
             rights_manifest_path=config.rights_manifest,
         )
-        if (
-            stored_report["ok"] is True
-            and current_report["errors"] == ["environment_lock_drift"]
-        ):
+        if _recoverable_environment_transition(stored_report, current_report):
             stored = json.loads(manifest_path.read_text(encoding="utf-8"))
             old_lock = str(stored.get("environment_lock_sha256") or "unknown")
             history_path = (

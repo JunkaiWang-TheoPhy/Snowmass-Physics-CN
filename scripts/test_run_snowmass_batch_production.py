@@ -614,6 +614,99 @@ class RunLockTests(unittest.TestCase):
             self.assertEqual(manifest["artifacts"], [])
             self.assertEqual(len(list((article / "production_artifact_history").glob("*.json"))), 1)
 
+    def test_environment_drift_recovers_when_only_downstream_artifact_changed(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = BatchResumeTests()._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = module._article_dir(config, "arxiv:a")
+            article.mkdir(parents=True)
+            (article / "manifest.json").write_text("prepared", encoding="utf-8")
+            (article / "05-revision.md").write_text("old revision", encoding="utf-8")
+            old_lock = module._production_environment_lock()
+            manifest_path = module._artifact_manifest_path(article)
+            module.production_contract.write_artifact_manifest(
+                manifest_path=manifest_path,
+                record_id="arxiv:a",
+                publication_allowed=True,
+                rights_manifest_path=config.rights_manifest,
+                article_root=article,
+                environment_lock=old_lock,
+            )
+            module.production_contract.record_artifact(
+                manifest_path=manifest_path,
+                article_root=article,
+                artifact_id="prepared",
+                relative_path="manifest.json",
+                producer="prepare",
+                artifact_type="article_manifest",
+                paper_stage="prepared",
+                environment_lock=old_lock,
+            )
+            module.production_contract.record_artifact(
+                manifest_path=manifest_path,
+                article_root=article,
+                artifact_id="revision_ready",
+                relative_path="05-revision.md",
+                producer="refine",
+                artifact_type="revision",
+                paper_stage="revision_ready",
+                environment_lock=old_lock,
+                parents=("prepared",),
+            )
+            (article / "05-revision.md").write_text("new revision", encoding="utf-8")
+            new_lock = {**old_lock, "git": {**old_lock["git"], "commit": "new-commit"}}
+            new_lock["lock_sha256"] = module.production_contract._json_sha256(
+                {key: value for key, value in new_lock.items() if key != "lock_sha256"}
+            )
+
+            with mock.patch.object(module, "_production_environment_lock", return_value=new_lock):
+                rebound = module._ensure_artifact_contract(config, record, article)
+
+            self.assertEqual(rebound["lock_sha256"], new_lock["lock_sha256"])
+            self.assertEqual(json.loads(manifest_path.read_text())["artifacts"], [])
+            self.assertEqual(len(list((article / "production_artifact_history").glob("*.json"))), 1)
+
+    def test_environment_drift_refuses_changed_prepared_artifact(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = BatchResumeTests()._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = module._article_dir(config, "arxiv:a")
+            article.mkdir(parents=True)
+            (article / "manifest.json").write_text("prepared", encoding="utf-8")
+            old_lock = module._production_environment_lock()
+            manifest_path = module._artifact_manifest_path(article)
+            module.production_contract.write_artifact_manifest(
+                manifest_path=manifest_path,
+                record_id="arxiv:a",
+                publication_allowed=True,
+                rights_manifest_path=config.rights_manifest,
+                article_root=article,
+                environment_lock=old_lock,
+            )
+            module.production_contract.record_artifact(
+                manifest_path=manifest_path,
+                article_root=article,
+                artifact_id="prepared",
+                relative_path="manifest.json",
+                producer="prepare",
+                artifact_type="article_manifest",
+                paper_stage="prepared",
+                environment_lock=old_lock,
+            )
+            (article / "manifest.json").write_text("tampered", encoding="utf-8")
+            new_lock = {**old_lock, "git": {**old_lock["git"], "commit": "new-commit"}}
+            new_lock["lock_sha256"] = module.production_contract._json_sha256(
+                {key: value for key, value in new_lock.items() if key != "lock_sha256"}
+            )
+
+            with mock.patch.object(module, "_production_environment_lock", return_value=new_lock):
+                with self.assertRaisesRegex(RuntimeError, "artifact_hash_mismatch:prepared"):
+                    module._ensure_artifact_contract(config, record, article)
+
     def test_same_run_cannot_be_started_twice(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
