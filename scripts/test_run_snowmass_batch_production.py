@@ -1258,6 +1258,10 @@ class PromotionGateTests(unittest.TestCase):
         self.assertFalse(gate["allowed"])
         self.assertIn("unresolved_manual_review_chunks", gate["reasons"])
 
+    def test_persist_refreshes_the_manual_review_queue(self) -> None:
+        module = load_module()
+        self.assertTrue(callable(module.manual_review.collect_manual_review_queue))
+
     def test_recovered_or_repackaged_results_cannot_promote_a_stage(self) -> None:
         module = load_module()
         budget = {

@@ -36,6 +36,7 @@ import refill_snowmass_babeldoc as refill
 import run_snowmass_refined_translation as refined
 import run_snowmass_translation as runner
 import snowmass_constraint_compiler as constraint_compiler
+import snowmass_manual_review as manual_review
 import snowmass_publication_qc as publication_qc
 import snowmass_qc_contract as qc_contract
 import snowmass_production_contract as production_contract
@@ -1788,6 +1789,10 @@ def _run_batch_locked(
 
     def persist() -> None:
         with state_lock:
+            review_queue = manual_review.write_queue(
+                config.output_root,
+                config.control_dir / "manual-review-queue.json",
+            )
             budget_snapshot = budget.snapshot()
             resumed_usage = {
                 "api_calls": 0,
@@ -1842,6 +1847,10 @@ def _run_batch_locked(
                     "budget": budget_snapshot,
                     **projection_summary,
                     "metrics": metrics,
+                    "manual_review_queue": {
+                        "path": "manual-review-queue.json",
+                        "unresolved_count": review_queue["unresolved_count"],
+                    },
                     "promotion_gate": promotion_gate,
                 },
             )
