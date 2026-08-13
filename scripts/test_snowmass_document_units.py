@@ -43,6 +43,14 @@ class PublishedTexTests(unittest.TestCase):
 
 
 class TypedProtectionTests(unittest.TestCase):
+    def test_cpu_model_suffix_is_not_misread_as_seconds(self) -> None:
+        units = load_units()
+        self.assertEqual(units.extract_unit_values("Intel Xeon Gold 5220S CPUs"), ())
+
+    def test_unit_before_uppercase_acronym_is_detected(self) -> None:
+        units = load_units()
+        self.assertEqual(units.extract_unit_values("a 2x3 cm CMOS reticle"), ("2×3cm",))
+        self.assertEqual(units.extract_unit_values("一块2x3 cmCMOS掩模版"), ("2×3cm",))
     def test_parenthesized_reference_labels_are_one_immutable_node(self) -> None:
         units = load_units()
 

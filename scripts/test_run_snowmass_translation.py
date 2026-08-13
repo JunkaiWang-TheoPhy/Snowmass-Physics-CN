@@ -1147,6 +1147,36 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertNotIn("June", protected)
         self.assertEqual([node.value for node in nodes], ["2020", "2021"])
 
+    def test_candidate_month_numbers_are_normalized_for_abbreviated_source_months(self) -> None:
+        source = "Data from Julyto Dec. 2021, with nodes added since Sep. 2021."
+        candidate = "数据来自7月至12月2021，自9月2021起增加节点。"
+
+        normalized = RUNNER.normalize_source_month_names(source, candidate)
+
+        self.assertEqual(normalized, "数据来自七月至十二月2021，自九月2021起增加节点。")
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
+    def test_numeric_dimension_normalization_removes_spurious_negative_separator(self) -> None:
+        source = "Each module uses a 3-by-3 crystals matrix."
+        candidate = "每个模块使用3乘-3晶体矩阵。"
+
+        normalized = RUNNER.normalize_hyphenated_numeric_ranges(source, candidate)
+
+        self.assertEqual(normalized, "每个模块使用3乘3晶体矩阵。")
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
+    def test_anchor_json_accepts_one_unmatched_quote_before_closing_brace(self) -> None:
+        protected, _mapping, _nodes = RUNNER.protect_stage_text("Bandwidth is 10 Gb/s.")
+        _payload, anchors, markers = RUNNER.build_structure_anchor_input(protected)
+        malformed = json.dumps(
+            {"translation": f"带宽为{markers[0]}。"},
+            ensure_ascii=False,
+        ) + '"'
+
+        restored = RUNNER.restore_structure_anchor_output(malformed, anchors, markers)
+
+        self.assertEqual(restored, f"带宽为{anchors[0]}。")
+
     def test_academic_polish_uses_anchor_protocol_for_chinese_word_order(self) -> None:
         source = "参数 $x$ 与 $y$。\n"
         (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")

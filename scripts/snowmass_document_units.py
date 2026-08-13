@@ -53,9 +53,10 @@ _UNIT_VALUE_RE = re.compile(
     r"(?<![0-9_])"
     r"(?P<number>[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"
     r"(?:\s*(?P<multiplier>[×x])\s*(?P<factor>[-+]?\d+(?:\.\d+)?))?"
-    r"\s*(?P<unit>%(?![0-9_])|(?:eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|km|m|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?=$|[^A-Za-z0-9_]|(?-i:[A-Z][a-z])))",
+    r"\s*(?P<unit>%(?![0-9_])|(?:eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|km|m|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?=$|[^A-Za-z0-9_]|(?-i:[A-Z][A-Za-z])))",
     re.IGNORECASE,
 )
+_CPU_MODEL_SECONDS_RE = re.compile(r"\b\d{3,}S\s*(?:CPU|CPUs|processor|processors)\b")
 _COMPARE_NUMBER_RE = re.compile(
     r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)"
     r"(?:\.\d+)?(?:[eE][-+]?\d+)?%?s?"
@@ -267,6 +268,10 @@ def extract_unit_values(text: str) -> tuple[str, ...]:
 
     values: list[str] = []
     for match in _UNIT_VALUE_RE.finditer(text):
+        if match.group("unit") == "S" and _CPU_MODEL_SECONDS_RE.search(text):
+            model_match = _CPU_MODEL_SECONDS_RE.search(text)
+            if model_match and model_match.start() <= match.start() < model_match.end():
+                continue
         value = _canonical_number(match.group("number"))
         factor = match.group("factor")
         if factor is not None:

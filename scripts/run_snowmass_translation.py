@@ -81,6 +81,17 @@ _MONTH_NAMES_ZH = {
     "november": "十一月",
     "december": "十二月",
 }
+_MONTH_SOURCE_ALIASES = {
+    "january": ("jan",),
+    "february": ("feb",),
+    "march": ("mar",),
+    "april": ("apr",),
+    "august": ("aug",),
+    "september": ("sep", "sept"),
+    "october": ("oct",),
+    "november": ("nov",),
+    "december": ("dec",),
+}
 _MODEL_SENTINEL_RE = re.compile(
     r"\[\[(?:SM_[0-9]{4}_[0-9a-f]{5,10}|SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10})\]\]"
 )
@@ -721,6 +732,11 @@ def restore_structure_anchor_output(
     try:
         parsed = json.loads(candidate)
     except json.JSONDecodeError as exc:
+        # V4 Flash sometimes appends one unmatched quote after an otherwise
+        # complete JSON object: {"translation":"..."}". Remove only that
+        # content-free suffix; all anchor identity checks still run below.
+        if candidate.endswith('"}"'):
+            candidate = candidate[:-1]
         try:
             parsed, parsed_end = json.JSONDecoder().raw_decode(candidate)
         except json.JSONDecodeError:
@@ -777,14 +793,21 @@ def normalize_source_month_names(source: str, translated: str) -> str:
 
     normalized = translated
     for month_number, (english, chinese) in enumerate(_MONTH_NAMES_ZH.items(), 1):
-        if not re.search(rf"\b{english}\b", source, flags=re.I):
+        source_names = (english, *_MONTH_SOURCE_ALIASES.get(english, ()))
+        source_month = (
+            rf"\b(?:{'|'.join(map(re.escape, source_names))})(?:\.)?"
+            rf"(?=\s|to\b|$)"
+        )
+        if not re.search(source_month, source, flags=re.I):
             continue
         normalized = re.sub(
             rf"(?<!\d){month_number}\s*月份?",
             chinese,
             normalized,
         )
-        for year in re.findall(rf"\b{english}\s+([12]\d{{3}})\b", source, flags=re.I):
+        for year in re.findall(
+            rf"{source_month}\s+([12]\d{{3}})\b", source, flags=re.I
+        ):
             normalized = re.sub(
                 rf"({re.escape(year)}年{chinese})\s*{re.escape(year)}(?=\D|$)",
                 r"\1",
@@ -794,7 +817,7 @@ def normalize_source_month_names(source: str, translated: str) -> str:
 
 
 _SOURCE_HYPHENATED_NUMERIC_RANGE_RE = re.compile(
-    r"(?<![\w.+-])(?P<left>\d+(?:,\d{3})*(?:\.\d+)?)-to-"
+    r"(?<![\w.+-])(?P<left>\d+(?:,\d{3})*(?:\.\d+)?)-(?:to|by)-"
     r"(?P<right>\d+(?:,\d{3})*(?:\.\d+)?)(?![\w.])",
     flags=re.I,
 )
@@ -815,7 +838,7 @@ def normalize_hyphenated_numeric_ranges(source: str, translated: str) -> str:
         right = source_match.group("right")
         translated_range = re.compile(
             rf"(?<![\d.+-])(?P<left>{re.escape(left)})"
-            rf"(?P<spacing_before>\s*)(?P<connector>[到至])"
+            rf"(?P<spacing_before>\s*)(?P<connector>[到至乘])"
             rf"(?P<spacing_after>\s*)[-−]\s*"
             rf"(?P<right>{re.escape(right)})(?![\d.])"
         )
