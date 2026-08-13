@@ -174,6 +174,226 @@ class BatchSelectionTests(unittest.TestCase):
 
 
 class ArticleQCTests(unittest.TestCase):
+    def test_cover_title_restores_visible_symbols_and_drops_footnote_markers(self) -> None:
+        module = load_module()
+        cases = [
+            (
+                "Laser Manipulation of H{v1}Beams: a Snowmass 2022 White Paper{v2}\n",
+                "激光操控 H{v1} 束：Snowmass 2022 白皮书{v2}\n",
+                "Laser Manipulation of H- Beams",
+                "激光操控 H- 束：Snowmass 2022 白皮书",
+            ),
+            (
+                "The carbon footprint of proposed e{v1}e{v2}Higgs factories\n",
+                "拟议的 e{v1}e{v2} 希格斯工厂的碳足迹\n",
+                "The Carbon Footprint of Proposed e+e- Higgs Factories",
+                "拟议的 e+e- 希格斯工厂的碳足迹",
+            ),
+            (
+                "Software and Computing for Small HEP Experiments{v1}\n",
+                "小型高能物理实验的软件与计算{v1}\n",
+                "Software and Computing for Small HEP Experiments",
+                "小型高能物理实验的软件与计算",
+            ),
+        ]
+        for source, translated, canonical, expected in cases:
+            with self.subTest(canonical=canonical):
+                self.assertEqual(
+                    module.restore_plain_title_placeholders(source, translated, canonical),
+                    expected,
+                )
+
+    def test_cover_title_fails_closed_when_placeholder_cannot_be_resolved(self) -> None:
+        module = load_module()
+
+        with self.assertRaisesRegex(RuntimeError, "unresolved title placeholder"):
+            module.restore_plain_title_placeholders(
+                "A{v1}B", "甲{v1}乙", "Completely unrelated canonical title"
+            )
+
+    def test_cover_title_selects_first_page_plain_text_closest_to_canonical_record(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "wrong-source.md").write_text("Snowmass Theory White Paper", encoding="utf-8")
+            (article / "wrong-output.md").write_text("Snowmass 理论白皮书", encoding="utf-8")
+            (article / "right-source.md").write_text(
+                "Astrophysicaland Cosmological Probes of Dark Matter", encoding="utf-8"
+            )
+            (article / "right-output.md").write_text(
+                "暗物质的天体物理与宇宙学探测", encoding="utf-8"
+            )
+            manifest = {
+                "chunks": [
+                    {"id": "wrong", "order": 1, "layout_label": "title", "source_file": "wrong-source.md", "output_file": "wrong-output.md"},
+                    {"id": "right", "order": 2, "page_number": 1, "layout_label": "plain text", "source_file": "right-source.md", "output_file": "right-output.md"},
+                ]
+            }
+
+            title = module._chinese_title_from_manifest(
+                article,
+                manifest,
+                "Astrophysical and Cosmological Probes of Dark Matter",
+            )
+
+            self.assertEqual(title, "暗物质的天体物理与宇宙学探测")
+
+    def test_cover_title_prefers_paper_level_exact_translation(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "hard_constraints.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "record_id": "arxiv:paper",
+                        "exact_translations": [
+                            {
+                                "source": "Two-Real-Singlet-Model (TRSM) Benchmark Planes",
+                                "target": "双实单态模型（TRSM）基准平面",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (article / "source.md").write_text("TRSM Benchmark Planes", encoding="utf-8")
+            (article / "output.md").write_text("TRSM 基准平面", encoding="utf-8")
+            manifest = {
+                "record_id": "arxiv:paper",
+                "chunks": [
+                    {"id": "title", "order": 1, "page_number": 1, "layout_label": "title", "source_file": "source.md", "output_file": "output.md"}
+                ],
+            }
+
+            title = module._chinese_title_from_manifest(
+                article,
+                manifest,
+                "Two-Real-Singlet-Model (TRSM) Benchmark Planes",
+            )
+
+            self.assertEqual(title, "双实单态模型（TRSM）基准平面")
+
+    def test_cover_title_fails_closed_on_low_confidence_layout_match(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "source.md").write_text("II. Benchmark Planes", encoding="utf-8")
+            (article / "output.md").write_text("II. 基准平面", encoding="utf-8")
+            manifest = {
+                "record_id": "arxiv:paper",
+                "chunks": [
+                    {"id": "title", "order": 1, "page_number": 1, "layout_label": "title", "source_file": "source.md", "output_file": "output.md"}
+                ],
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "high-confidence"):
+                module._chinese_title_from_manifest(
+                    article,
+                    manifest,
+                    "Two-Real-Singlet-Model (TRSM) Benchmark Planes",
+                )
+
+    def test_cover_title_does_not_fall_back_when_best_match_has_no_output(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "best-source.md").write_text("Canonical Paper Title", encoding="utf-8")
+            (article / "best-output.md").write_text("", encoding="utf-8")
+            (article / "wrong-source.md").write_text("Author Biography", encoding="utf-8")
+            (article / "wrong-output.md").write_text("错误标题", encoding="utf-8")
+            manifest = {
+                "record_id": "arxiv:paper",
+                "chunks": [
+                    {"id": "best", "order": 1, "page_number": 1, "source_file": "best-source.md", "output_file": "best-output.md"},
+                    {"id": "wrong", "order": 2, "page_number": 1, "source_file": "wrong-source.md", "output_file": "wrong-output.md"},
+                ],
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "high-confidence"):
+                module._chinese_title_from_manifest(
+                    article, manifest, "Canonical Paper Title"
+                )
+
+    def test_qc_rejects_model_meta_response_even_when_all_hashes_match(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            source = "#************************\n"
+            leaked = "好的，我理解要求。请提供需要翻译的段落。\n"
+            source_hash = hashlib.sha256(source.encode()).hexdigest()
+            leaked_hash = hashlib.sha256(leaked.encode()).hexdigest()
+            (article / "chunk_status").mkdir()
+            (article / "publication_chunks").mkdir()
+            (article / "rendered").mkdir()
+            (article / "chunk0001.md").write_text(source, encoding="utf-8")
+            (article / "output_chunk0001.md").write_text(leaked, encoding="utf-8")
+            (article / "publication_chunks/chunk0001.md").write_text(
+                leaked, encoding="utf-8"
+            )
+            (article / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "record_id": "arxiv:a",
+                        "chunks": [
+                            {
+                                "id": "chunk0001",
+                                "source_file": "chunk0001.md",
+                                "output_file": "output_chunk0001.md",
+                                "source_hash": source_hash,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (article / "paper_status.json").write_text(
+                '{"status":"complete"}', encoding="utf-8"
+            )
+            (article / "chunk_status/chunk0001.json").write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "stages": {
+                            "academic": {
+                                "status": "complete",
+                                "output_hash": leaked_hash,
+                                "qc": {"ok": True},
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (article / "rendered/translated_mono.pdf").write_bytes(b"mono")
+            (article / "rendered/translated_dual.pdf").write_bytes(b"dual")
+            (article / "refill_status.json").write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "chunks": {
+                            "chunk0001": {
+                                "source_sha256": source_hash,
+                                "output_sha256": leaked_hash,
+                            }
+                        },
+                        "publication_qc": {
+                            "ok": True,
+                            "publication_chunk_sha256": {"chunk0001": leaked_hash},
+                        },
+                        "reference_qc": {"verified": True},
+                        "mono_pdf_sha256": hashlib.sha256(b"mono").hexdigest(),
+                        "dual_pdf_sha256": hashlib.sha256(b"dual").hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = module.evaluate_article_qc(article)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("model_meta_response:chunk0001", report["failures"])
+
     def test_complete_article_requires_verified_translation_and_render_artifacts(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
@@ -667,6 +887,38 @@ class BatchResumeTests(unittest.TestCase):
 
             self.assertEqual(result, expected)
             translate.assert_not_called()
+
+    def test_resume_rejects_receipt_bound_to_stale_rendered_source(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = config.output_root / "papers" / "arxiv_a"
+            (article / "packaged").mkdir(parents=True)
+            (article / "rendered").mkdir()
+            source = article / "rendered/translated_mono.pdf"
+            output = article / "packaged/snowmass-a.zh-CN.pdf"
+            source.write_bytes(b"new rendered source")
+            output.write_bytes(b"old package")
+            (article / "packaged/snowmass-a.zh-CN.json").write_text(
+                json.dumps(
+                    {
+                        "record_id": "arxiv:a",
+                        "packaging_contract_version": module.packager.PACKAGING_CONTRACT_VERSION,
+                        "version": config.translation_version,
+                        "packaged_on": config.packaged_on,
+                        "source_pdf_sha256": hashlib.sha256(b"old rendered source").hexdigest(),
+                        "packaged_pdf_sha256": hashlib.sha256(b"old package").hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(module, "evaluate_article_qc", return_value={"ok": True}),
+                mock.patch.object(module, "_source_character_count", return_value=7),
+            ):
+                self.assertIsNone(module._resume_article_result(config, record))
 
     def test_rolling_executor_passes_exact_run_article_arguments(self) -> None:
         module = load_module()

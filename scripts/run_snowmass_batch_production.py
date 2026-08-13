@@ -8,6 +8,7 @@ import concurrent.futures
 from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime as dt
+import difflib
 import hashlib
 import json
 import math
@@ -33,6 +34,8 @@ import prepare_snowmass_babeldoc as prepare
 import refill_snowmass_babeldoc as refill
 import run_snowmass_refined_translation as refined
 import run_snowmass_translation as runner
+import snowmass_constraint_compiler as constraint_compiler
+import snowmass_publication_qc as publication_qc
 from snowmass_batch_budget import (
     AUTHORIZED_PROJECT_MAX_RMB,
     PersistentBudgetGuard,
@@ -295,6 +298,14 @@ def evaluate_article_qc(article_dir: Path) -> dict[str, Any]:
             failures.append(f"chunk_qc_failed:{chunk_id}")
         if not _valid_hash(output, academic.get("output_hash")):
             failures.append(f"chunk_output_hash_mismatch:{chunk_id}")
+        else:
+            try:
+                output_text = output.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                failures.append(f"chunk_output_unreadable:{chunk_id}")
+            else:
+                if publication_qc.contains_model_meta_response(output_text):
+                    failures.append(f"model_meta_response:{chunk_id}")
         refill_chunk = refill_status.get("chunks", {}).get(chunk_id, {})
         if (
             refill_chunk.get("source_sha256") != _sha256(source)
@@ -360,19 +371,135 @@ def _article_dir(config: BatchConfig, record_id: str) -> Path:
     return config.output_root / "papers" / prepare.safe_record_name(record_id)
 
 
-def _chinese_title_from_manifest(article_dir: Path, manifest: dict[str, Any]) -> str:
-    for chunk in sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0)):
-        if chunk.get("layout_label") != "title":
-            continue
+_TITLE_PLACEHOLDER_RE = re.compile(r"\{v\d+\}")
+
+
+def restore_plain_title_placeholders(
+    source_title: str,
+    translated_title: str,
+    canonical_english_title: str,
+) -> str:
+    """Resolve BabelDOC object markers for the plain-text cover title."""
+
+    placeholders: list[tuple[str, int]] = []
+    plain_parts: list[str] = []
+    boundary = 0
+    for part in re.split(r"(\{v\d+\})", source_title.strip()):
+        if _TITLE_PLACEHOLDER_RE.fullmatch(part):
+            placeholders.append((part, boundary))
+        else:
+            plain_parts.append(part)
+            boundary += len(part)
+    if not placeholders:
+        if _TITLE_PLACEHOLDER_RE.search(translated_title):
+            raise RuntimeError("unresolved title placeholder without a source mapping")
+        return " ".join(translated_title.split())
+
+    plain_source = "".join(plain_parts)
+    canonical = canonical_english_title.strip()
+    matcher = difflib.SequenceMatcher(
+        None, plain_source.casefold(), canonical.casefold(), autojunk=False
+    )
+    if matcher.ratio() < 0.55:
+        raise RuntimeError("unresolved title placeholder: canonical title does not match source")
+    insertions: dict[int, str] = {}
+    for operation, source_start, source_end, canonical_start, canonical_end in matcher.get_opcodes():
+        if operation == "insert" and source_start == source_end:
+            insertions[source_start] = canonical[canonical_start:canonical_end].strip()
+
+    resolved = translated_title.strip()
+    for placeholder, position in placeholders:
+        replacement = insertions.get(position, "")
+        if not replacement and position not in {0, len(plain_source)}:
+            raise RuntimeError(f"unresolved title placeholder: {placeholder}")
+        resolved = resolved.replace(placeholder, replacement, 1)
+    if _TITLE_PLACEHOLDER_RE.search(resolved):
+        raise RuntimeError("unresolved title placeholder remains after restoration")
+    resolved = " ".join(resolved.split())
+    resolved = re.sub(
+        r"(?<=[A-Za-z0-9])\s*([+\-−])\s*(?=[A-Za-z0-9])", r"\1", resolved
+    )
+    resolved = re.sub(
+        r"(?<=[A-Za-z0-9])\s*([+\-−])\s*(?=[\u3400-\u9fff])", r"\1 ", resolved
+    )
+    return resolved
+
+
+def _chinese_title_from_manifest(
+    article_dir: Path,
+    manifest: dict[str, Any],
+    canonical_english_title: str | None = None,
+) -> str:
+    record_id = str(manifest.get("record_id") or "")
+    if canonical_english_title and record_id:
+        constraints = constraint_compiler.load_constraints(
+            article_dir, record_id, refined.TRACKED_HARD_CONSTRAINTS
+        )
+        canonical_key = " ".join(canonical_english_title.split()).casefold()
+        locked_titles = {
+            " ".join(str(rule.get("source", "")).split()).casefold(): str(
+                rule.get("target", "")
+            ).strip()
+            for rule in constraints.get("exact_translations", [])
+            if str(rule.get("source", "")).strip()
+            and str(rule.get("target", "")).strip()
+        }
+        if canonical_key in locked_titles:
+            return locked_titles[canonical_key]
+
+    candidates = [
+        chunk
+        for chunk in sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0))
+        if chunk.get("page_number") in {None, 1}
+        and _article_path(article_dir, chunk.get("output_file")).is_file()
+        and _article_path(article_dir, chunk.get("output_file"))
+        .read_text(encoding="utf-8")
+        .strip()
+    ]
+    if canonical_english_title and candidates:
+        def title_similarity(chunk: dict[str, Any]) -> float:
+            source = _article_path(article_dir, chunk.get("source_file"))
+            if not source.is_file():
+                return 0.0
+            plain_source = _TITLE_PLACEHOLDER_RE.sub("", source.read_text(encoding="utf-8"))
+            normalized_source = re.sub(r"[^0-9a-z]+", "", plain_source.casefold())
+            normalized_canonical = re.sub(
+                r"[^0-9a-z]+", "", canonical_english_title.casefold()
+            )
+            if not normalized_source or not normalized_canonical:
+                return 0.0
+            return difflib.SequenceMatcher(
+                None,
+                normalized_source,
+                normalized_canonical,
+                autojunk=False,
+            ).ratio()
+
+        candidates.sort(key=title_similarity, reverse=True)
+        if title_similarity(candidates[0]) < 0.70:
+            raise RuntimeError(
+                "No high-confidence first-page title matches the canonical English title"
+            )
+    for chunk in candidates[:1] if canonical_english_title else candidates:
         translated = _article_path(article_dir, chunk.get("output_file"))
         if translated.is_file() and translated.read_text(encoding="utf-8").strip():
-            return " ".join(translated.read_text(encoding="utf-8").split())
+            translated_text = translated.read_text(encoding="utf-8")
+            if _TITLE_PLACEHOLDER_RE.search(translated_text):
+                if not canonical_english_title:
+                    raise RuntimeError("Canonical English title is required for cover placeholders")
+                source = _article_path(article_dir, chunk.get("source_file"))
+                return restore_plain_title_placeholders(
+                    source.read_text(encoding="utf-8"),
+                    translated_text,
+                    canonical_english_title,
+                )
+            return " ".join(translated_text.split())
     raise RuntimeError("No verified translated title is available for packaging")
 
 
-def _chinese_title(article_dir: Path) -> str:
+def _chinese_title(article_dir: Path, canonical_english_title: str | None = None) -> str:
     manifest = json.loads((article_dir / "manifest.json").read_text(encoding="utf-8"))
-    return _chinese_title_from_manifest(article_dir, manifest)
+    return _chinese_title_from_manifest(article_dir, manifest, canonical_english_title)
 
 
 def _source_character_count(article_dir: Path) -> int:
@@ -782,7 +909,7 @@ def _package_article(config: BatchConfig, record: dict[str, Any], article_dir: P
     output = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.pdf"
     return packager.package_translation_pdf(
         record=record,
-        chinese_title=_chinese_title(article_dir),
+        chinese_title=_chinese_title(article_dir, str(record.get("title") or "")),
         source_pdf_path=article_dir / "rendered/translated_mono.pdf",
         output_pdf_path=output,
         version=config.translation_version,
@@ -832,14 +959,17 @@ def _resume_article_result(
     safe_id = prepare.safe_record_name(str(record["record_id"])).replace("arxiv_", "")
     receipt_path = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.json"
     output_path = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.pdf"
+    source_path = article_dir / "rendered/translated_mono.pdf"
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if (
         receipt.get("record_id") != record["record_id"]
+        or receipt.get("packaging_contract_version") != packager.PACKAGING_CONTRACT_VERSION
         or receipt.get("version") != config.translation_version
         or receipt.get("packaged_on") != config.packaged_on
+        or not _valid_hash(source_path, receipt.get("source_pdf_sha256"))
         or not _valid_hash(output_path, receipt.get("packaged_pdf_sha256"))
     ):
         return None

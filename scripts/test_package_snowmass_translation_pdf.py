@@ -137,6 +137,21 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
                 packaged_on=dt.date(2026, 8, 11),
             )
 
+    def test_rejects_unresolved_babeldoc_placeholder_in_cover_title(self) -> None:
+        packager = self.require_module()
+
+        with self.assertRaisesRegex(ValueError, "placeholder"):
+            packager.package_translation_pdf(
+                record=self.base_record(),
+                chinese_title="拟议的 e{v1}e{v2} 希格斯工厂",
+                source_pdf_path=self.source_pdf,
+                output_pdf_path=self.output_pdf,
+                version="v1.1",
+                packaged_on=dt.date(2026, 8, 11),
+            )
+
+        self.assertFalse(self.output_pdf.exists())
+
         with self.assertRaisesRegex(ValueError, "publication_allowed"):
             packager.package_translation_pdf(
                 record=self.base_record(publication_allowed=1),
@@ -408,6 +423,10 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         cover_pdf_path = self.output_pdf.with_name(f"{self.output_pdf.stem}.cover.pdf")
         receipt_path = self.output_pdf.with_suffix(".json")
         self.assertEqual(receipt["record_id"], "arxiv:2111.06932")
+        self.assertEqual(
+            receipt["packaging_contract_version"],
+            packager.PACKAGING_CONTRACT_VERSION,
+        )
         self.assertEqual(receipt["version"], "v1.0")
         self.assertEqual(receipt["packaged_on"], "2026-08-11")
         self.assertEqual(receipt["source_pdf_path"], "source.pdf")

@@ -16,6 +16,16 @@
     }
   },
   "records": {
+    "arxiv:2203.08427": {
+      "exact_translations": [
+        {
+          "source": "Laser Manipulation of H- Beams",
+          "target": "激光操控 H- 束",
+          "scope": "cover_title",
+          "reason": "The extracted first-page title contains formula placeholders plus an additional Snowmass subtitle, so the canonical metadata title is locked for the independent Chinese-edition cover."
+        }
+      ]
+    },
     "arxiv:2203.07506": {
       "exact_translations": [
         {
@@ -67,6 +77,16 @@
           "target": "图10。Mu3e 实验第一阶段对 {v1} 过程中瞬发暗光子衰变的预期灵敏度。",
           "scope": "all_occurrences",
           "reason": "Lock the Figure 10 caption after an early model pass moved the Mu3e numeral across the BabelDOC formula placeholder and corrupted the decay expression."
+        }
+      ]
+    },
+    "arxiv:2205.14486": {
+      "exact_translations": [
+        {
+          "source": "Two-Real-Singlet-Model (TRSM) Benchmark Planes",
+          "target": "双实单态模型（TRSM）基准平面",
+          "scope": "all_occurrences",
+          "reason": "The first-page title is split into TR + SM fragments in BabelDOC, so the canonical cover title cannot be reconstructed reliably from a single layout block."
         }
       ]
     }

@@ -65,6 +65,27 @@ class PublicationPdfQCTests(unittest.TestCase):
 
         validate_pdf_forbidden_translations(self.pdf, self.policy)
 
+    def test_rejects_model_meta_response(self) -> None:
+        self._write_pdf("好的，我理解要求。请提供需要翻译的段落。")
+
+        with self.assertRaisesRegex(ValueError, "model meta-response"):
+            validate_pdf_forbidden_translations(self.pdf, self.policy)
+
+    def test_detects_common_model_prefaces_and_refusals(self) -> None:
+        from scripts.snowmass_publication_qc import contains_model_meta_response
+
+        for text in (
+            "好的，请提供原文，我会按要求翻译。",
+            "以下是翻译结果：",
+            "I fully understand your requirements. Please provide the source text.",
+            "As an AI assistant, I cannot translate this passage.",
+            "Here is the translation:",
+            "Below is the translation:",
+            "Sure, here's the translation:",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(contains_model_meta_response(text))
+
 
 if __name__ == "__main__":
     unittest.main()

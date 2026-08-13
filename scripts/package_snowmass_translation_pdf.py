@@ -32,6 +32,7 @@ CONTRIBUTOR_LABEL = "中文翻译贡献者：WangTheoPhys*"
 WEBSITE_ORIGIN = "https://snowmass-physics-cn.netlify.app"
 DISCLAIMER_TEXT = "本译文由中文翻译协作项目制作，不代表原作者审定或认可；如有歧义，以英文原文为准。"
 CONTACT_TEXT = "*Contact: WangTheoPhys@outlook.com"
+PACKAGING_CONTRACT_VERSION = 3
 LICENSE_CONDITION_LABELS = {
     "attribution": "署名",
     "indicate-changes": "注明修改",
@@ -57,6 +58,8 @@ def package_translation_pdf(
         raise ValueError("publication_allowed must be literal True")
     if not chinese_title or not chinese_title.strip():
         raise ValueError("Chinese title is required")
+    if re.search(r"\{v\d+\}|\[\[SM_", chinese_title):
+        raise ValueError("Chinese title contains an unresolved structure placeholder")
 
     source_pdf = Path(source_pdf_path)
     output_pdf = Path(output_pdf_path)
@@ -111,6 +114,7 @@ def package_translation_pdf(
     _prepend_cover_pdf(cover_pdf, source_pdf, output_pdf)
 
     receipt = {
+        "packaging_contract_version": PACKAGING_CONTRACT_VERSION,
         "record_id": record.get("record_id"),
         "translation_page_url": _translation_page_url(record),
         "version": version,
