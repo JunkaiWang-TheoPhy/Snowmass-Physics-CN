@@ -54,7 +54,8 @@ MODEL = "deepseek-v4-flash"
 STAGES = ("translate", "terminology", "anti_ai", "academic")
 OPTIONAL_STYLE_STAGES = frozenset({"anti_ai", "academic"})
 QC_CONTRACT_VERSION = 5
-MODEL_STRUCTURE_SEGMENT_LIMIT = 4
+MODEL_STRUCTURE_SEGMENT_LIMIT = 24
+MODEL_STRUCTURE_RECOVERY_SEGMENT_LIMIT = 8
 STRUCTURE_SLOT_PROTOCOL = "snowmass-text-slots-v1"
 STRUCTURE_ANCHOR_PROTOCOL = "snowmass-anchor-template-v1"
 _TRANSLATABLE_SLOT_RE = re.compile(r"[A-Za-z\u3400-\u9fff]")
@@ -757,6 +758,13 @@ def should_use_structure_anchor_fallback(
 
 
 def structure_segment_limit(stage_status: dict[str, Any]) -> int:
+    error = str(stage_status.get("error") or "")
+    if error.startswith((
+        "Anchor-template response",
+        "Structure-slot response",
+        "Invalid structure-slot",
+    )):
+        return MODEL_STRUCTURE_RECOVERY_SEGMENT_LIMIT
     return MODEL_STRUCTURE_SEGMENT_LIMIT
 
 

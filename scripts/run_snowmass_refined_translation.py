@@ -1024,7 +1024,7 @@ def _run_chunk_barrier(
     invoke: Any,
     phase: str,
     record_id: str,
-    max_qc_retries: int = 4,
+    max_qc_retries: int = 1,
     stop_event: Any = None,
     progress_callback: Any = None,
     heartbeat_every: int = 50,

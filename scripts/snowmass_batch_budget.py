@@ -26,6 +26,10 @@ class ProductionStoppedError(BudgetExceededError):
     """Raised before a paid request when another worker tripped a hard gate."""
 
 
+class RequestLimitExceededError(BudgetExceededError):
+    """Raised before a paid request that would exceed the finite call cap."""
+
+
 def validate_budget(value: float, *, label: str, maximum: float | None = None) -> float:
     parsed = float(value)
     if not math.isfinite(parsed) or parsed <= 0:
@@ -33,6 +37,20 @@ def validate_budget(value: float, *, label: str, maximum: float | None = None) -
     if maximum is not None and parsed > maximum:
         raise ValueError(f"{label} budget must not exceed ¥{maximum:.2f}")
     return parsed
+
+
+def validate_request_limit(value: Any, *, label: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{label} request limit must be a finite positive integer")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{label} request limit must be a finite positive integer"
+        ) from error
+    if not math.isfinite(parsed) or parsed <= 0 or not parsed.is_integer():
+        raise ValueError(f"{label} request limit must be a finite positive integer")
+    return int(parsed)
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -76,6 +94,7 @@ class PersistentBudgetGuard:
         *,
         project_max_cost_rmb: float,
         stage_max_cost_rmb: float,
+        stage_max_api_calls: int = 1000,
         run_id: str,
         usd_cny_rate: float,
         historical_spent_rmb: float = 0.0,
@@ -95,6 +114,9 @@ class PersistentBudgetGuard:
             stage_max_cost_rmb,
             label="stage",
             maximum=self.project_max_cost_rmb,
+        )
+        self.stage_max_api_calls = validate_request_limit(
+            stage_max_api_calls, label="stage"
         )
         if not isinstance(run_id, str) or not run_id.strip():
             raise ValueError("run_id must be non-empty")
@@ -348,7 +370,22 @@ class PersistentBudgetGuard:
             if self.stop_event is not None and self.stop_event.is_set():
                 raise ProductionStoppedError("production stop signal is active")
             self._recover_orphans_locked()
-            project_spent, run_spent, active = self._state(self._events_locked())
+            events = self._events_locked()
+            project_spent, run_spent, active = self._state(events)
+            stage_completed_calls = sum(
+                event.get("run_id") == self.run_id
+                and event.get("kind") in {"settle", "commit_estimate", "recover_orphan"}
+                for event in events
+            )
+            stage_active_calls = sum(
+                event.get("run_id") == self.run_id for event in active.values()
+            )
+            if stage_completed_calls + stage_active_calls >= self.stage_max_api_calls:
+                raise RequestLimitExceededError(
+                    "stage request cap would be exceeded: "
+                    f"{stage_completed_calls + stage_active_calls + 1} "
+                    f"> {self.stage_max_api_calls}"
+                )
             project_reserved = sum(float(event["estimated_cost_rmb"]) for event in active.values())
             run_reserved = sum(
                 float(event["estimated_cost_rmb"])
@@ -567,6 +604,7 @@ class PersistentBudgetGuard:
             return {
                 "project_max_cost_rmb": self.project_max_cost_rmb,
                 "stage_max_cost_rmb": self.stage_max_cost_rmb,
+                "stage_max_api_calls": self.stage_max_api_calls,
                 "usd_cny_rate": self.usd_cny_rate,
                 "project_spent_rmb": project_spent,
                 "project_reserved_rmb": project_reserved,
@@ -574,6 +612,11 @@ class PersistentBudgetGuard:
                 "stage_spent_rmb": stage_spent,
                 "stage_reserved_rmb": stage_reserved,
                 "stage_remaining_rmb": max(0.0, self.stage_max_cost_rmb - stage_spent - stage_reserved),
+                "stage_remaining_api_calls": max(
+                    0, self.stage_max_api_calls - len(stage_events) - sum(
+                        event.get("run_id") == self.run_id for event in active.values()
+                    )
+                ),
                 "active_reservations": len(active),
                 "stage_usage": stage_usage,
             }

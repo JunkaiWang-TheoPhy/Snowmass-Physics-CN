@@ -117,6 +117,45 @@ class BatchSelectionTests(unittest.TestCase):
 
         self.assertEqual(module.resolve_babeldoc_python(console), runtime)
 
+    def test_cli_requires_a_positive_finite_stage_request_cap(self) -> None:
+        module = load_module()
+        base = [
+            "--stage", "baseline",
+            "--project-max-cost-rmb", "1000",
+            "--stage-max-cost-rmb", "10",
+        ]
+        with self.assertRaises(SystemExit):
+            module._parse_args([*base, "--stage-max-api-calls", "0"])
+
+        config = module._parse_args([*base, "--stage-max-api-calls", "777"])
+        self.assertEqual(config.stage_max_api_calls, 777)
+
+    def test_programmatic_preflight_rejects_zero_stage_request_cap(self) -> None:
+        module = load_module()
+        self.manifest.write_text("[]\n", encoding="utf-8")
+        config = module.BatchConfig(
+            rights_manifest=self.manifest,
+            pdf_root=self.root / "pdf",
+            output_root=self.root / "output",
+            control_dir=self.root / "control",
+            stage="baseline",
+            explicit_ids=(),
+            max_articles=None,
+            project_max_cost_rmb=1000.0,
+            stage_max_cost_rmb=10.0,
+            usd_cny_rate=7.2,
+            chunk_concurrency=1,
+            article_concurrency=1,
+            through_stage="packaged",
+            translation_version="test",
+            packaged_on="2026-08-13",
+            stage_max_api_calls=0,
+            preflight_only=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "request limit"):
+            module.run_batch(config, client=object())
+
 
 class ArticleQCTests(unittest.TestCase):
     def test_complete_article_requires_verified_translation_and_render_artifacts(self) -> None:

@@ -36,6 +36,13 @@ class BudgetValidationTests(unittest.TestCase):
                 module.validate_budget(value, label="project", maximum=1000.0)
         self.assertEqual(module.validate_budget(1000.0, label="project", maximum=1000.0), 1000.0)
 
+    def test_request_limit_must_be_a_finite_positive_integer(self) -> None:
+        module = load_module()
+        for value in (0, -1, 1.5, math.nan, math.inf, "unlimited"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                module.validate_request_limit(value, label="stage")
+        self.assertEqual(module.validate_request_limit(1000, label="stage"), 1000)
+
 
 class PersistentBudgetGuardTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -105,6 +112,30 @@ class PersistentBudgetGuardTests(unittest.TestCase):
             {"input_tokens": 100, "cached_tokens": 0, "output_tokens": 50},
         )
         self.assertEqual(second.snapshot()["active_reservations"], 0)
+
+    def test_stage_request_cap_blocks_before_an_extra_paid_call(self) -> None:
+        module = load_module()
+        guard = module.PersistentBudgetGuard(
+            self.control,
+            project_max_cost_rmb=1.0,
+            stage_max_cost_rmb=1.0,
+            stage_max_api_calls=2,
+            run_id="limited",
+            usd_cny_rate=7.2,
+        )
+        for _ in range(2):
+            reservation = guard.reserve("source", 4096)
+            guard.settle(
+                reservation,
+                {"input_tokens": 10, "cached_tokens": 0, "output_tokens": 10},
+            )
+
+        with self.assertRaisesRegex(module.RequestLimitExceededError, "request cap"):
+            guard.reserve("source", 4096)
+
+        snapshot = guard.snapshot()
+        self.assertEqual(snapshot["stage_max_api_calls"], 2)
+        self.assertEqual(snapshot["stage_remaining_api_calls"], 0)
 
     def test_dead_process_reservation_is_conservatively_recovered(self) -> None:
         guard = self.guard(run_id="crashed", project=1.0, stage=1.0)

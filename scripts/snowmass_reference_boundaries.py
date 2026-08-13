@@ -22,7 +22,9 @@ def _bibliography_like(text: str) -> bool:
         r"\barxiv\s*:",
         r"\bdoi\s*:",
         r"\b(?:19|20)\d{2}\b",
-        r"\b(?:journal|proceedings|phys\.\s*rev\.|jhep|nature|science)\b",
+        r"\b(?:journal|proceedings|phys\.\s*rev\.|jhep|nature|science|"
+        r"astroph(?:ys)?\.\s*j\.|astron\.\s*j\.|apj|mnras|jcap)\b",
+        r"[“\"][^”\"]{8,}[”\"]",
     )
     return sum(bool(re.search(pattern, compact, flags=re.I)) for pattern in signals) >= 2
 
@@ -41,9 +43,18 @@ def reference_boundary(
     heading_indexes = [
         index for index, text in enumerate(texts) if _normalized(text) in REFERENCE_HEADINGS
     ]
+    max_page_number = max(
+        (int(chunk.get("page_number") or 0) for chunk in ordered),
+        default=0,
+    )
     start: int | None = None
     heading_index: int | None = None
     for index in reversed(heading_indexes):
+        heading_page_number = int(ordered[index].get("page_number") or 0)
+        if max_page_number >= 5 and heading_page_number <= 2:
+            # Long papers commonly list "References" in an opening table of
+            # contents.  It cannot be the terminal bibliography boundary.
+            continue
         sample = texts[index + 1 : index + 9]
         first_bibliography_offset = next(
             (offset for offset, text in enumerate(sample) if _bibliography_like(text)),

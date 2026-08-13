@@ -942,13 +942,17 @@ class ProcessChunkTests(unittest.TestCase):
         )
 
     def test_structure_failure_keeps_bounded_multi_anchor_segments(self) -> None:
-        self.assertEqual(RUNNER.structure_segment_limit({}), 4)
-        self.assertEqual(
-            RUNNER.structure_segment_limit(
-                {"error": "Anchor-template response changed anchor identity or count"}
-            ),
-            4,
-        )
+        self.assertEqual(RUNNER.structure_segment_limit({}), 24)
+        for error in (
+            "Anchor-template response changed anchor identity or count",
+            "Structure-slot response changed text-slot identities",
+            "Invalid structure-slot value for T0001",
+        ):
+            with self.subTest(error=error):
+                self.assertEqual(
+                    RUNNER.structure_segment_limit({"error": error}),
+                    8,
+                )
 
     def test_fidelity_qc_retry_keeps_bounded_multi_anchor_segments(self) -> None:
         for failure in (
@@ -962,8 +966,23 @@ class ProcessChunkTests(unittest.TestCase):
                     RUNNER.structure_segment_limit(
                         {"error": f"QC failed: {failure}"}
                     ),
-                    4,
+                    24,
                 )
+
+    def test_default_structure_density_uses_three_requests_for_sixty_six_nodes(self) -> None:
+        protected = " ".join(
+            f"part{i} [[SM_{i:04d}_{i:010x}]]" for i in range(66)
+        )
+
+        segments = RUNNER.split_protected_model_input(
+            protected, RUNNER.structure_segment_limit({})
+        )
+
+        self.assertEqual("".join(segments), protected)
+        self.assertEqual(len(segments), 3)
+        self.assertTrue(
+            all(len(RUNNER._MODEL_SENTINEL_RE.findall(item)) <= 24 for item in segments)
+        )
 
     def test_structure_dense_input_prefers_clause_boundary_before_hard_split(self) -> None:
         protected = (
@@ -1337,7 +1356,9 @@ class ProcessChunkTests(unittest.TestCase):
         )
         initial = self.article_dir / "stage_revision_chunk0001.md"
         initial.write_text(
-            "前导句。\n后文{v1}甲{v2}乙{v3}丙{v4}丁{v5}。\n",
+            "前导句。\n后文"
+            + "".join(f"{{v{index}}}正文{index}。" for index in range(1, 26))
+            + "\n",
             encoding="utf-8",
         )
         status_dir = self.article_dir / "chunk_status"
@@ -1349,7 +1370,7 @@ class ProcessChunkTests(unittest.TestCase):
                     "record_id": "arxiv:allowed",
                     "chunk_id": "chunk0001",
                     "stages": {
-                        "anti_ai": {
+                        "terminology": {
                             "status": "failed",
                             "error": "QC failed: numbers_mismatch",
                         }
@@ -1376,7 +1397,7 @@ class ProcessChunkTests(unittest.TestCase):
                 self.task,
                 StopAfterCaptureClient(),
                 [],
-                stages=("anti_ai",),
+                stages=("terminology",),
                 initial_text_path=initial,
             )
 
@@ -1390,7 +1411,9 @@ class ProcessChunkTests(unittest.TestCase):
         )
         initial = self.article_dir / "stage_revision_chunk0001.md"
         initial.write_text(
-            "前导句。\n后文{v1}甲{v2}乙{v3}丙{v4}丁{v5}。\n",
+            "前导句。\n后文"
+            + "".join(f"{{v{index}}}正文{index}。" for index in range(1, 26))
+            + "\n",
             encoding="utf-8",
         )
         status_dir = self.article_dir / "chunk_status"
@@ -1402,7 +1425,7 @@ class ProcessChunkTests(unittest.TestCase):
                     "record_id": "arxiv:allowed",
                     "chunk_id": "chunk0001",
                     "stages": {
-                        "anti_ai": {
+                        "terminology": {
                             "status": "complete",
                             "bounded_segmented_retry": True,
                             "request_key": "stale-key",
@@ -1430,12 +1453,14 @@ class ProcessChunkTests(unittest.TestCase):
                 self.task,
                 StopAfterCaptureClient(),
                 [],
-                stages=("anti_ai",),
+                stages=("terminology",),
                 initial_text_path=initial,
             )
 
         self.assertEqual(len(observed_inputs), 1)
-        self.assertIn("Whole original source remains valid context", observed_inputs[0])
+        self.assertTrue(
+            all("Whole original source remains valid context" in item for item in observed_inputs)
+        )
 
     def test_failed_retry_recovers_still_valid_prior_stage_output(self) -> None:
         (self.article_dir / "chunk0001.md").write_text(
@@ -1579,7 +1604,7 @@ class ProcessChunkTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "complete")
-        self.assertEqual(client.calls, 17)
+        self.assertEqual(client.calls, 3)
         self.assertTrue(client.assert_no_anchor)
         status = json.loads(
             (self.article_dir / "chunk_status" / "chunk0001.json").read_text(
@@ -1587,8 +1612,8 @@ class ProcessChunkTests(unittest.TestCase):
             )
         )
         translate = status["stages"]["translate"]
-        self.assertEqual(translate["structure_segment_count"], 17)
-        self.assertEqual(len(translate["subrequests"]), 17)
+        self.assertEqual(translate["structure_segment_count"], 3)
+        self.assertEqual(len(translate["subrequests"]), 3)
         self.assertTrue(
             all(item["status"] == "complete" for item in translate["subrequests"])
         )

@@ -84,6 +84,96 @@ class RefinedOrchestratorTests(unittest.TestCase):
             {"chunk0008", "chunk0009"},
         )
 
+    def test_reference_detection_accepts_fragmented_entries_and_running_headers(self) -> None:
+        module = load_module()
+        rows = [
+            ("chunk0001", "Body text.\n", "plain text", 1),
+            ("chunk0002", "References\n", "title", 24),
+            (
+                "chunk0003",
+                "{v1}V. C. Rubin and W. K. Ford, Jr., “Rotation of the Andromeda "
+                "Nebula,” Astroph. J. 159 (1970) 379.{v2}\n",
+                "plain text",
+                24,
+            ),
+            (
+                "chunk0004",
+                "Snowmass2021 Theory Frontier: Astrophysical and Cosmological Probes "
+                "of Dark Matter\n",
+                "abandon",
+                25,
+            ),
+            (
+                "chunk0005",
+                "of neutral hydrogen in spiral galaxies,” Astron. J. 86 (1981) 1825.\n",
+                "plain text",
+                25,
+            ),
+            (
+                "chunk0006",
+                "D. Clowe et al., “A Direct Empirical Proof,” Astrophys. J. Lett. "
+                "648 no. 2, (Sept., 2006) L109–L113.\n",
+                "plain text",
+                25,
+            ),
+        ]
+        chunks = []
+        for order, (chunk_id, text, label, page) in enumerate(rows, 1):
+            source_file = f"{chunk_id}.md"
+            (self.article / source_file).write_text(text, encoding="utf-8")
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": order,
+                    "source_file": source_file,
+                    "layout_label": label,
+                    "page_number": page,
+                }
+            )
+
+        self.assertEqual(
+            module._reference_chunk_ids(self.article, chunks),
+            {"chunk0003", "chunk0004", "chunk0005", "chunk0006"},
+        )
+
+    def test_reference_detection_rejects_early_contents_heading_before_quoted_body(self) -> None:
+        module = load_module()
+        rows = [
+            ("chunk0001", "CONTENTS\n", "title", 1),
+            ("chunk0002", "References\n", "title", 1),
+            (
+                "chunk0003",
+                "We discuss “Rotation of the Andromeda Nebula” in Astroph. J. "
+                "159 (1970) as a motivating example.\n",
+                "plain text",
+                2,
+            ),
+            (
+                "chunk0004",
+                "A second section revisits “Neutral hydrogen in spiral galaxies” "
+                "from Astron. J. 86 (1981).\n",
+                "plain text",
+                2,
+            ),
+            ("chunk0005", "Main analysis continues.\n", "plain text", 3),
+            ("chunk0006", "Conclusion.\n", "title", 10),
+        ]
+        chunks = []
+        for order, (chunk_id, text, label, page) in enumerate(rows, 1):
+            source_file = f"{chunk_id}.md"
+            (self.article / source_file).write_text(text, encoding="utf-8")
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": order,
+                    "source_file": source_file,
+                    "layout_label": label,
+                    "page_number": page,
+                }
+            )
+
+        self.assertEqual(module._reference_chunk_ids(self.article, chunks), set())
+
     def test_sharded_critique_covers_late_chunks_and_is_resumable(self) -> None:
         module = load_module()
         chunks = []
@@ -1135,14 +1225,14 @@ class RefinedOrchestratorTests(unittest.TestCase):
             )
         self.assertEqual(uncertain_calls, [0])
 
-    def test_chunk_barrier_has_bounded_in_process_recovery_headroom(self) -> None:
+    def test_chunk_barrier_allows_only_one_paid_qc_correction_retry(self) -> None:
         module = load_module()
         chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}
         calls: list[int] = []
 
         def repeatedly_flaky(_chunk, attempt):
             calls.append(attempt)
-            if attempt < 4:
+            if attempt < 1:
                 raise RuntimeError("transient structure protocol failure")
             return {"status": "complete"}
 
@@ -1154,7 +1244,7 @@ class RefinedOrchestratorTests(unittest.TestCase):
             record_id="arxiv:allowed",
         )
 
-        self.assertEqual(calls, [0, 1, 2, 3, 4])
+        self.assertEqual(calls, [0, 1])
 
     def test_chunk_barrier_still_fails_closed_after_bounded_retries(self) -> None:
         module = load_module()
@@ -1174,7 +1264,7 @@ class RefinedOrchestratorTests(unittest.TestCase):
                 record_id="arxiv:allowed",
             )
 
-        self.assertEqual(calls, [0, 1, 2, 3, 4])
+        self.assertEqual(calls, [0, 1])
 
     def test_chunk_barrier_emits_bounded_progress_heartbeats(self) -> None:
         module = load_module()

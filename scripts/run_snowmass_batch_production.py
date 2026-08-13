@@ -37,6 +37,7 @@ from snowmass_batch_budget import (
     AUTHORIZED_PROJECT_MAX_RMB,
     PersistentBudgetGuard,
     validate_budget,
+    validate_request_limit,
 )
 
 
@@ -99,6 +100,7 @@ class BatchConfig:
     through_stage: str
     translation_version: str
     packaged_on: str
+    stage_max_api_calls: int = 1000
     retry_uncertain: bool = False
     historical_roots: tuple[Path, ...] = DEFAULT_HISTORICAL_ROOTS
     preflight_only: bool = False
@@ -313,6 +315,7 @@ def _run_id(config: BatchConfig, records: list[dict[str, Any]]) -> str:
         "stage": config.stage,
         "records": [record["record_id"] for record in records],
         "stage_max_cost_rmb": config.stage_max_cost_rmb,
+        "stage_max_api_calls": config.stage_max_api_calls,
         "through_stage": config.through_stage,
         "translation_version": config.translation_version,
         "packaged_on": config.packaged_on,
@@ -650,6 +653,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         label="stage",
         maximum=config.project_max_cost_rmb,
     )
+    validate_request_limit(config.stage_max_api_calls, label="stage")
     if config.chunk_concurrency < 1 or config.chunk_concurrency > 64:
         raise ValueError("chunk_concurrency must be between 1 and 64")
     if config.article_concurrency < 1 or config.article_concurrency > 4:
@@ -673,6 +677,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         "selected_record_ids": [record["record_id"] for record in selected],
         "project_max_cost_rmb": config.project_max_cost_rmb,
         "stage_max_cost_rmb": config.stage_max_cost_rmb,
+        "stage_max_api_calls": config.stage_max_api_calls,
         "through_stage": config.through_stage,
         "translation_version": config.translation_version,
         "packaged_on": config.packaged_on,
@@ -745,6 +750,7 @@ def _run_batch_locked(
         config.control_dir,
         project_max_cost_rmb=config.project_max_cost_rmb,
         stage_max_cost_rmb=config.stage_max_cost_rmb,
+        stage_max_api_calls=config.stage_max_api_calls,
         run_id=run_id,
         usd_cny_rate=config.usd_cny_rate,
         historical_spent_rmb=historical_spent,
@@ -887,6 +893,7 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
     parser.add_argument("--max-articles", type=int)
     parser.add_argument("--project-max-cost-rmb", type=float, required=True)
     parser.add_argument("--stage-max-cost-rmb", type=float, required=True)
+    parser.add_argument("--stage-max-api-calls", type=int, default=1000)
     parser.add_argument("--usd-cny-rate", type=float, default=runner.DEFAULT_USD_CNY_RATE)
     parser.add_argument("--chunk-concurrency", type=int, default=4)
     parser.add_argument("--article-concurrency", type=int, default=1)
@@ -904,6 +911,9 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
             maximum=AUTHORIZED_PROJECT_MAX_RMB,
         )
         stage = validate_budget(args.stage_max_cost_rmb, label="stage", maximum=project)
+        stage_max_api_calls = validate_request_limit(
+            args.stage_max_api_calls, label="stage"
+        )
     except ValueError as error:
         parser.error(str(error))
     return BatchConfig(
@@ -916,6 +926,7 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
         max_articles=args.max_articles,
         project_max_cost_rmb=project,
         stage_max_cost_rmb=stage,
+        stage_max_api_calls=stage_max_api_calls,
         usd_cny_rate=args.usd_cny_rate,
         chunk_concurrency=args.chunk_concurrency,
         article_concurrency=args.article_concurrency,
