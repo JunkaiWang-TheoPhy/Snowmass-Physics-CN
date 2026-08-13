@@ -989,6 +989,194 @@ class RefinedOrchestratorTests(unittest.TestCase):
             json.dumps({"record_id": "arxiv:allowed"}), encoding="utf-8"
         )
 
+    def _write_local_glossary(self, terms: list[dict[str, object]]) -> None:
+        (Path(self.temporary.name) / "global_glossary.json").write_text(
+            json.dumps({"terms": terms}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _write_chunk_stage(
+        self,
+        module,
+        *,
+        stage: str,
+        text: str = "",
+        status: str = "complete",
+        record_id: str = "arxiv:allowed",
+        chunk_id: str = "chunk0001",
+        source_file: str = "chunk0001.md",
+        source_hash: str | None = None,
+        extra_stage: dict[str, object] | None = None,
+    ) -> None:
+        status_path = self.article / "chunk_status" / f"{chunk_id}.json"
+        if status_path.exists():
+            payload = json.loads(status_path.read_text(encoding="utf-8"))
+        else:
+            payload = {
+                "schema_version": 1,
+                "record_id": record_id,
+                "chunk_id": chunk_id,
+                "source_file": source_file,
+                "source_hash": source_hash
+                or hashlib.sha256(
+                    (self.article / source_file).read_text(encoding="utf-8").encode("utf-8")
+                ).hexdigest(),
+                "stages": {},
+            }
+        payload["record_id"] = record_id
+        payload["chunk_id"] = chunk_id
+        payload["source_file"] = source_file
+        if source_hash is not None:
+            payload["source_hash"] = source_hash
+        stage_payload = {"status": status}
+        if status == "complete":
+            output_path = module.runner.stage_output_path(
+                self.article,
+                chunk_id,
+                "output_chunk0001.md",
+                stage,
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(text, encoding="utf-8")
+            stage_payload.update(
+                {
+                    "output_file": output_path.name,
+                    "output_hash": module.runner.text_hash(text),
+                    "qc": {"ok": True, "failures": []},
+                }
+            )
+        if extra_stage:
+            stage_payload.update(extra_stage)
+        payload.setdefault("stages", {})[stage] = stage_payload
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        status_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def test_revision_ready_projection_counts_fresh_manifest_conservatively(self) -> None:
+        module = load_module()
+        self._write_local_glossary([{"source": "Original", "target": "原文"}])
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertTrue(report["projection_ready"])
+        self.assertEqual(report["record_id"], "arxiv:allowed")
+        self.assertEqual(
+            report["missing_stage_api_calls"],
+            {
+                "analysis": 1,
+                "translate": 1,
+                "terminology": 1,
+                "critique": 2,
+                "revision": 1,
+            },
+        )
+        self.assertEqual(report["projected_worst_case_api_calls"], 6)
+        self.assertEqual(report["identity_diagnostics"]["record_identity_mismatches"], [])
+        self.assertEqual(report["identity_diagnostics"]["blocking_uncertain_checkpoints"], [])
+
+    def test_revision_ready_projection_reuses_valid_translate_checkpoint_only(self) -> None:
+        module = load_module()
+        self._write_local_glossary([{"source": "Original", "target": "原文"}])
+        self._write_chunk_stage(module, stage="translate", text="初稿段落。\n")
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertTrue(report["projection_ready"])
+        self.assertEqual(
+            report["missing_stage_api_calls"],
+            {
+                "analysis": 1,
+                "translate": 0,
+                "terminology": 1,
+                "critique": 2,
+                "revision": 1,
+            },
+        )
+        self.assertEqual(report["projected_worst_case_api_calls"], 5)
+
+    def test_revision_ready_projection_returns_zero_after_complete_revision_ready_state(self) -> None:
+        module = load_module()
+
+        class FakeClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                if "paper-level content analysis" in instructions:
+                    return completed_response(
+                        "## Content Summary\n测试论文。\n\n## Terminology\nOriginal → 原文\n\n"
+                        "## Tone & Style\n学术。\n\n## Translation Challenges\n- 无。\n",
+                        "analysis",
+                    ), 0.1
+                if "critical review" in instructions:
+                    return completed_response(
+                        "## Accuracy\n- chunk0001: 无。\n\n## Native Voice\n- chunk0001: 调整句法。\n\n"
+                        "## Notes & Adaptation\n- 无。\n\n## Summary\n- 完成。\n",
+                        "critique",
+                    ), 0.1
+                if "first faithful translation pass" in instructions:
+                    return completed_response("原文初稿段落。\n", "draft"), 0.1
+                if "refined revision pass" in instructions:
+                    return completed_response("原文修订段落。\n", "revision"), 0.1
+                raise AssertionError(instructions)
+
+        result = module.run_refined_article(
+            self.article,
+            client=FakeClient(),
+            terms=[{"source": "Original", "target": "原文"}],
+            run_id="projection-ready",
+            stop_after_revision=True,
+        )
+
+        self.assertEqual(result["status"], "revision_ready")
+        report = module.revision_ready_projection(self.article)
+        self.assertTrue(report["projection_ready"])
+        self.assertEqual(
+            report["missing_stage_api_calls"],
+            {
+                "analysis": 0,
+                "translate": 0,
+                "terminology": 0,
+                "critique": 0,
+                "revision": 0,
+            },
+        )
+        self.assertEqual(report["projected_worst_case_api_calls"], 0)
+
+    def test_revision_ready_projection_fails_closed_on_record_identity_mismatch(self) -> None:
+        module = load_module()
+        (self.article / "paper_status.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:other",
+                    "phases": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertFalse(report["projection_ready"])
+        self.assertEqual(report["projected_worst_case_api_calls"], 0)
+        self.assertTrue(report["identity_diagnostics"]["record_identity_mismatches"])
+
+    def test_revision_ready_projection_fails_closed_on_uncertain_chunk_phase(self) -> None:
+        module = load_module()
+        self._write_local_glossary([{"source": "Original", "target": "原文"}])
+        self._write_chunk_stage(
+            module,
+            stage="translate",
+            status="uncertain",
+            extra_stage={"error": "transport status unknown"},
+        )
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertFalse(report["projection_ready"])
+        self.assertEqual(report["projected_worst_case_api_calls"], 0)
+        self.assertIn(
+            "chunk0001/translate",
+            report["identity_diagnostics"]["blocking_uncertain_checkpoints"],
+        )
+
     def test_refined_artifacts_causally_gate_final_translation_and_resume(self) -> None:
         module = load_module()
 

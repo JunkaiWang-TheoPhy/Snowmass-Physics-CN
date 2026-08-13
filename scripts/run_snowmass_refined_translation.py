@@ -40,6 +40,33 @@ CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS = CRITIQUE_SHARD_MAX_FINDINGS * 3
 CRITIQUE_SHARD_MAX_FINDING_CHARACTERS = 160
 CRITIQUE_SHARD_MAX_OUTPUT_TOKENS = 900
 CRITIQUE_GLOBAL_MAX_FINDINGS = 30
+ANALYSIS_MAX_OUTPUT_TOKENS = 4000
+CRITIQUE_MAX_OUTPUT_TOKENS = 4000
+
+
+def _analysis_instructions() -> str:
+    return """Perform a compact paper-level content analysis for an English-to-Simplified-Chinese academic translation.
+Return exactly these Markdown sections: ## Content Summary, ## Terminology, ## Tone & Style, and ## Translation Challenges.
+Identify the paper's argument, domain-specific meanings, preferred terminology, register, and concrete translation risks. Be selective: use at most 40 concise bullets total, do not inventory chunks, and do not reproduce source passages. Do not translate the paper yet."""
+
+
+def _critique_instructions() -> str:
+    return """Perform a paper-level critical review of the tagged Chinese draft against the tagged English source.
+Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
+Every actionable finding must start with its chunk ID (for example, `chunk0001:`). Check omissions, additions, factual drift, modality, terminology, syntax, academic register, and translationese. Report only high-impact actionable defects, at most 30 one-line findings total. If more exist, select the 30 highest-risk defects. Do not enumerate correct chunks, reproduce passages, explain your method, or rewrite the draft."""
+
+
+def _critique_shard_instructions() -> str:
+    return f"""Review one aligned English/Chinese shard of an academic paper.
+Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
+Report only high-impact actionable defects. Every actionable line must start with its exact chunk ID, for example `- chunk0001:`. Return at most {CRITIQUE_SHARD_MAX_FINDINGS} actionable lines total, ranked highest risk first. Each actionable line must contain at most {CRITIQUE_SHARD_MAX_FINDING_CHARACTERS} characters including its chunk ID. If none exist, write `- NO_ACTIONABLE_FINDINGS`. In every other empty section write only `- NO_ACTIONABLE_FINDINGS`. Do not quote passages, enumerate correct chunks, explain methods, add prose summaries, or rewrite the draft."""
+
+
+def _critique_shard_repair_instructions(allowed_chunk_ids: set[str]) -> str:
+    return f"""STRUCTURE-REPAIR: Rewrite the supplied critique without adding, deleting, or strengthening findings.
+Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
+Every actionable line must use exactly one of these allowed chunk IDs followed immediately by a colon: {', '.join(sorted(allowed_chunk_ids))}.
+Ranges, lists, invented chunk IDs, quotations, explanations, and prose outside the four sections are forbidden. Preserve at most {CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS} actionable lines, each at most {CRITIQUE_SHARD_MAX_FINDING_CHARACTERS} characters. If a range finding cannot be assigned safely to one exact allowed chunk, omit it. Empty sections must contain only `- NO_ACTIONABLE_FINDINGS`."""
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -375,6 +402,48 @@ def _tagged_source(article_dir: Path, chunks: list[dict[str, Any]]) -> str:
     return "".join(parts)
 
 
+def _merge_tagged_outputs(
+    chunks: list[dict[str, Any]],
+    texts: dict[str, str],
+) -> str:
+    parts: list[str] = []
+    for chunk in chunks:
+        chunk_id = str(chunk["id"])
+        text = texts[chunk_id]
+        unit_id = str(chunk.get("babeldoc_unit_id", ""))
+        parts.append(f"<!-- {chunk_id} {unit_id} -->\n{text.rstrip()}\n")
+    return "".join(parts)
+
+
+def _critique_shard_count(
+    chunks: list[dict[str, Any]],
+    *,
+    source_texts: dict[str, str],
+    draft_texts: dict[str, str],
+    shard_char_limit: int,
+) -> int:
+    if shard_char_limit <= 0:
+        raise ValueError("shard_char_limit must be positive")
+    count = 0
+    shard_size = 0
+    has_items = False
+    for chunk in chunks:
+        chunk_id = str(chunk["id"])
+        unit_id = str(chunk.get("babeldoc_unit_id", ""))
+        source_part = f"<!-- {chunk_id} {unit_id} -->\n{source_texts[chunk_id].rstrip()}\n"
+        draft_part = f"<!-- {chunk_id} {unit_id} -->\n{draft_texts[chunk_id].rstrip()}\n"
+        pair_size = len(source_part) + len(draft_part)
+        if has_items and shard_size + pair_size > shard_char_limit:
+            count += 1
+            shard_size = 0
+            has_items = False
+        shard_size += pair_size
+        has_items = True
+    if has_items:
+        count += 1
+    return count
+
+
 def _critique_shards(
     article_dir: Path,
     chunks: list[dict[str, Any]],
@@ -599,9 +668,7 @@ def _run_sharded_critique(
     )
     shard_dir = article_dir / "critique_shards"
     shard_outputs: list[str] = []
-    instructions = f"""Review one aligned English/Chinese shard of an academic paper.
-Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
-Report only high-impact actionable defects. Every actionable line must start with its exact chunk ID, for example `- chunk0001:`. Return at most {CRITIQUE_SHARD_MAX_FINDINGS} actionable lines total, ranked highest risk first. Each actionable line must contain at most {CRITIQUE_SHARD_MAX_FINDING_CHARACTERS} characters including its chunk ID. If none exist, write `- NO_ACTIONABLE_FINDINGS`. In every other empty section write only `- NO_ACTIONABLE_FINDINGS`. Do not quote passages, enumerate correct chunks, explain methods, add prose summaries, or rewrite the draft."""
+    instructions = _critique_shard_instructions()
     for index, (source_shard, draft_shard) in enumerate(shards, 1):
         allowed_chunk_ids = {
             item.lower() for item in re.findall(r"\bchunk\d{4}\b", source_shard, flags=re.I)
@@ -629,10 +696,7 @@ Report only high-impact actionable defects. Every actionable line must start wit
                 allowed_chunk_ids=allowed_chunk_ids,
             )
         except RuntimeError as validation_error:
-            repair_instructions = f"""STRUCTURE-REPAIR: Rewrite the supplied critique without adding, deleting, or strengthening findings.
-Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
-Every actionable line must use exactly one of these allowed chunk IDs followed immediately by a colon: {', '.join(sorted(allowed_chunk_ids))}.
-Ranges, lists, invented chunk IDs, quotations, explanations, and prose outside the four sections are forbidden. Preserve at most {CRITIQUE_SHARD_VALIDATION_MAX_FINDINGS} actionable lines, each at most {CRITIQUE_SHARD_MAX_FINDING_CHARACTERS} characters. If a range finding cannot be assigned safely to one exact allowed chunk, omit it. Empty sections must contain only `- NO_ACTIONABLE_FINDINGS`."""
+            repair_instructions = _critique_shard_repair_instructions(allowed_chunk_ids)
             output = _run_paper_model_phase(
                 phase_name=f"critique_shard_repair_{index:04d}",
                 output_path=article_dir / "critique_shard_repairs" / f"shard{index:04d}.md",
@@ -1480,6 +1544,443 @@ def _missing_stage_chunk_ids(
     ]
 
 
+def _projection_terms(article_dir: Path) -> list[dict[str, Any]]:
+    root = article_dir.parent.parent if len(article_dir.parents) >= 2 else article_dir.parent
+    return runner.merge_glossary_terms(
+        runner.load_glossary(runner.resolve_glossary_path(root, None)),
+        runner.load_article_glossary(article_dir),
+    )
+
+
+def _valid_chunk_stage_checkpoint(
+    article_dir: Path,
+    chunk: dict[str, Any],
+    stage_status: dict[str, Any],
+    stage: str,
+) -> bool:
+    if stage_status.get("status") != "complete":
+        return False
+    qc = stage_status.get("qc")
+    if not isinstance(qc, dict) or qc.get("ok") is not True:
+        return False
+    output_path = runner.stage_output_path(
+        article_dir,
+        str(chunk["id"]),
+        str(chunk["output_file"]),
+        stage,
+    )
+    output_hash = stage_status.get("output_hash")
+    if not isinstance(output_hash, str) or not output_hash or not runner.nonempty(output_path):
+        return False
+    return runner.text_hash(output_path.read_text(encoding="utf-8")) == output_hash
+
+
+def _valid_sharded_critique_checkpoint(
+    article_dir: Path,
+    *,
+    chunks: list[dict[str, Any]],
+    source_texts: dict[str, str],
+    draft_texts: dict[str, str],
+    paper_status: dict[str, Any],
+) -> bool:
+    shards = _critique_shards(article_dir, chunks, shard_char_limit=CRITIQUE_SHARD_CHAR_LIMIT)
+    instructions = _critique_shard_instructions()
+    shard_outputs: list[str] = []
+    phases = paper_status.get("phases", {})
+    for index, (source_shard, draft_shard) in enumerate(shards, 1):
+        allowed_chunk_ids = {
+            item.lower() for item in re.findall(r"\bchunk\d{4}\b", source_shard, flags=re.I)
+        }
+        input_text = (
+            f"ENGLISH SOURCE SHARD {index}/{len(shards)}:\n{source_shard}\n\n"
+            f"CHINESE DRAFT SHARD {index}/{len(shards)}:\n{draft_shard}"
+        )
+        primary_path = article_dir / "critique_shards" / f"shard{index:04d}.md"
+        primary_phase = phases.get(f"critique_shard_{index:04d}", {})
+        primary_hash = _paper_phase_input_hash(
+            instructions,
+            input_text,
+            CRITIQUE_SHARD_MAX_OUTPUT_TOKENS,
+        )
+        if not _phase_valid(primary_phase, primary_path, primary_hash):
+            return False
+        primary_output = primary_path.read_text(encoding="utf-8")
+        try:
+            _validate_shard_critique(
+                primary_output,
+                shard_index=index,
+                allowed_chunk_ids=allowed_chunk_ids,
+            )
+            shard_outputs.append(primary_output)
+            continue
+        except RuntimeError as validation_error:
+            repair_path = article_dir / "critique_shard_repairs" / f"shard{index:04d}.md"
+            repair_phase = phases.get(f"critique_shard_repair_{index:04d}", {})
+            repair_instructions = _critique_shard_repair_instructions(allowed_chunk_ids)
+            repair_hash = _paper_phase_input_hash(
+                repair_instructions,
+                f"VALIDATION ERROR:\n{validation_error}\n\nCRITIQUE TO REPAIR:\n{primary_output}",
+                CRITIQUE_SHARD_MAX_OUTPUT_TOKENS,
+            )
+            if not _phase_valid(repair_phase, repair_path, repair_hash):
+                return False
+            repair_output = repair_path.read_text(encoding="utf-8")
+            try:
+                _validate_shard_critique(
+                    repair_output,
+                    shard_index=index,
+                    allowed_chunk_ids=allowed_chunk_ids,
+                )
+            except RuntimeError:
+                return False
+            shard_outputs.append(repair_output)
+    signature = runner.text_hash(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "shard_hashes": [runner.text_hash(item) for item in shard_outputs],
+                "max_findings": CRITIQUE_GLOBAL_MAX_FINDINGS,
+            },
+            sort_keys=True,
+        )
+    )
+    critique_merge_phase = phases.get("critique_merge", {})
+    return _phase_valid(
+        critique_merge_phase,
+        article_dir / CRITIQUE_FILE,
+        signature,
+    )
+
+
+def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
+    article_dir = Path(article_dir)
+    diagnostics = {
+        "record_identity_mismatches": [],
+        "invalid_checkpoint_hashes": [],
+        "blocking_uncertain_checkpoints": [],
+    }
+    report = {
+        "record_id": "",
+        "projection_ready": False,
+        "projected_worst_case_api_calls": 0,
+        "missing_stage_api_calls": {
+            "analysis": 0,
+            "translate": 0,
+            "terminology": 0,
+            "critique": 0,
+            "revision": 0,
+        },
+        "identity_diagnostics": diagnostics,
+    }
+
+    manifest = _load_json(article_dir / "manifest.json")
+    chunking_status = _load_json(article_dir / "chunking_status.json")
+    record_id = str(manifest.get("record_id") or chunking_status.get("record_id") or "")
+    report["record_id"] = record_id
+    if not record_id or record_id != str(chunking_status.get("record_id")):
+        diagnostics["record_identity_mismatches"].append(
+            f"{article_dir}: manifest/chunking_status"
+        )
+        return report
+    chunks = sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0))
+    if not chunks:
+        diagnostics["record_identity_mismatches"].append(f"{record_id}: no prepared chunks")
+        return report
+
+    terms = _projection_terms(article_dir)
+    source_texts = {
+        str(chunk["id"]): runner.article_artifact_path(
+            article_dir, str(chunk["source_file"])
+        ).read_text(encoding="utf-8")
+        for chunk in chunks
+    }
+    source = _tagged_source(article_dir, chunks)
+    reference_ids = _reference_chunk_ids(article_dir, chunks)
+    figure_text_ids = runner.figure_text_chunk_ids(article_dir, manifest)
+    table_text_ids = runner.table_text_chunk_ids(article_dir, manifest)
+    hard_exact_translations = _hard_exact_translations(article_dir, record_id)
+    fragile_fragment_ids = {
+        str(chunk["id"])
+        for chunk in chunks
+        if str(chunk.get("layout_label", "")) == "fallback_line"
+        and len(source_texts[str(chunk["id"])].strip()) <= 12
+    }
+
+    paper_status_path = article_dir / "paper_status.json"
+    paper_status = (
+        _load_json(paper_status_path)
+        if paper_status_path.is_file()
+        else {"record_id": record_id, "phases": {}}
+    )
+    if paper_status.get("record_id") != record_id:
+        diagnostics["record_identity_mismatches"].append(str(paper_status_path))
+        return report
+    paper_phases = paper_status.get("phases", {})
+    for phase_name, phase in paper_phases.items():
+        if (
+            isinstance(phase, dict)
+            and (
+                phase_name == "analysis"
+                or phase_name == "critique"
+                or phase_name == "critique_merge"
+                or phase_name.startswith("critique_shard_")
+            )
+            and phase.get("status") in {"running", "uncertain"}
+        ):
+            diagnostics["blocking_uncertain_checkpoints"].append(f"paper:{phase_name}")
+
+    chunk_statuses: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        chunk_id = str(chunk["id"])
+        status_path = article_dir / "chunk_status" / f"{chunk_id}.json"
+        if not status_path.is_file():
+            continue
+        chunk_status = _load_json(status_path)
+        chunk_statuses[chunk_id] = chunk_status
+        if chunk_status.get("record_id") != record_id:
+            diagnostics["record_identity_mismatches"].append(str(status_path))
+            continue
+        if str(chunk_status.get("chunk_id") or "") != chunk_id:
+            diagnostics["record_identity_mismatches"].append(str(status_path))
+            continue
+        if str(chunk_status.get("source_file") or "") != str(chunk.get("source_file")):
+            diagnostics["record_identity_mismatches"].append(str(status_path))
+            continue
+        manifest_source_hash = str(chunk.get("source_hash") or "")
+        recorded_source_hash = str(chunk_status.get("source_hash") or "")
+        if manifest_source_hash and recorded_source_hash and recorded_source_hash != manifest_source_hash:
+            diagnostics["record_identity_mismatches"].append(str(status_path))
+            continue
+        for stage_name in ("translate", "terminology", "revision"):
+            stage_status = chunk_status.get("stages", {}).get(stage_name, {})
+            if (
+                isinstance(stage_status, dict)
+                and stage_status.get("status") in {"running", "uncertain"}
+            ):
+                diagnostics["blocking_uncertain_checkpoints"].append(f"{chunk_id}/{stage_name}")
+
+    if diagnostics["record_identity_mismatches"] or diagnostics["blocking_uncertain_checkpoints"]:
+        return report
+
+    analysis_phase = paper_phases.get("analysis", {})
+    analysis_valid = isinstance(analysis_phase, dict) and _phase_valid(
+        analysis_phase,
+        article_dir / ANALYSIS_FILE,
+        _paper_phase_input_hash(
+            _analysis_instructions(),
+            source,
+            ANALYSIS_MAX_OUTPUT_TOKENS,
+        ),
+    )
+    if (
+        isinstance(analysis_phase, dict)
+        and analysis_phase.get("status") == "complete"
+        and not analysis_valid
+    ):
+        diagnostics["invalid_checkpoint_hashes"].append("paper:analysis")
+    report["missing_stage_api_calls"]["analysis"] = 0 if analysis_valid else 1
+
+    chunk_runtime: dict[str, dict[str, Any]] = {}
+    predicted_terminology_texts: dict[str, str] = {}
+    actual_terminology_complete = True
+    unknown_critique_inputs = False
+
+    for chunk in chunks:
+        chunk_id = str(chunk["id"])
+        chunk_status = chunk_statuses.get(chunk_id, {})
+        stages = chunk_status.get("stages", {}) if isinstance(chunk_status, dict) else {}
+        source_text = source_texts[chunk_id]
+        selected_terms = runner.compile_glossary_terms(source_text, terms)
+        normalized_source = " ".join(source_text.split()).casefold()
+        fixed_translation = hard_exact_translations.get(normalized_source)
+        if fixed_translation is not None and source_text.endswith("\n"):
+            fixed_translation += "\n"
+        passthrough_reason = _chunk_passthrough_reason(
+            {**chunk, "source_text": source_text},
+            reference_ids=reference_ids,
+            fragile_fragment_ids=fragile_fragment_ids,
+            figure_text_ids=figure_text_ids,
+            table_text_ids=table_text_ids,
+        )
+        passthrough = passthrough_reason is not None
+        translate_stage = stages.get("translate", {}) if isinstance(stages, dict) else {}
+        translate_valid = isinstance(translate_stage, dict) and _valid_chunk_stage_checkpoint(
+            article_dir, chunk, translate_stage, "translate"
+        )
+        if (
+            isinstance(translate_stage, dict)
+            and translate_stage.get("status") == "complete"
+            and not translate_valid
+        ):
+            diagnostics["invalid_checkpoint_hashes"].append(f"{chunk_id}/translate")
+        translate_requires_model = not passthrough and fixed_translation is None
+        report["missing_stage_api_calls"]["translate"] += int(
+            translate_requires_model and not translate_valid
+        )
+        translate_reusable = translate_valid or not translate_requires_model
+        if translate_valid:
+            translate_text = runner.stage_output_path(
+                article_dir,
+                chunk_id,
+                str(chunk["output_file"]),
+                "translate",
+            ).read_text(encoding="utf-8")
+        elif fixed_translation is not None:
+            translate_text = fixed_translation
+        else:
+            translate_text = source_text
+
+        terminology_stage = stages.get("terminology", {}) if isinstance(stages, dict) else {}
+        terminology_valid = isinstance(terminology_stage, dict) and _valid_chunk_stage_checkpoint(
+            article_dir, chunk, terminology_stage, "terminology"
+        )
+        if (
+            isinstance(terminology_stage, dict)
+            and terminology_stage.get("status") == "complete"
+            and not terminology_valid
+        ):
+            diagnostics["invalid_checkpoint_hashes"].append(f"{chunk_id}/terminology")
+        terminology_requires_model = (
+            not passthrough
+            and fixed_translation is None
+            and runner.stage_decision("terminology", translate_text, selected_terms).should_call_model
+        )
+        terminology_reusable = translate_reusable and terminology_valid
+        report["missing_stage_api_calls"]["terminology"] += int(
+            terminology_requires_model and not terminology_reusable
+        )
+        if terminology_reusable:
+            terminology_text = runner.stage_output_path(
+                article_dir,
+                chunk_id,
+                str(chunk["output_file"]),
+                "terminology",
+            ).read_text(encoding="utf-8")
+            predicted_terminology_texts[chunk_id] = terminology_text
+        elif translate_reusable and not terminology_requires_model:
+            predicted_terminology_texts[chunk_id] = translate_text
+            actual_terminology_complete = False
+        else:
+            actual_terminology_complete = False
+            unknown_critique_inputs = True
+
+        chunk_runtime[chunk_id] = {
+            "passthrough": passthrough,
+            "fixed_translation": fixed_translation,
+            "translate_reusable": translate_reusable,
+            "translate_text": translate_text,
+            "terminology_requires_model": terminology_requires_model,
+            "terminology_reusable": terminology_reusable,
+            "selected_terms": selected_terms,
+            "stages": stages,
+        }
+
+    critique_valid = False
+    critique_text = ""
+    if actual_terminology_complete:
+        draft, _draft_signature = _verified_merge(article_dir, record_id, chunks, "terminology")
+        critique_text = (
+            (article_dir / CRITIQUE_FILE).read_text(encoding="utf-8")
+            if runner.nonempty(article_dir / CRITIQUE_FILE)
+            else ""
+        )
+        legacy_critique = _valid_legacy_critique(
+            article_dir=article_dir,
+            status=paper_status,
+            instructions=_critique_instructions(),
+            source=source,
+            draft=draft,
+        )
+        if legacy_critique is not None:
+            critique_valid = True
+            critique_text = legacy_critique
+        elif len(source) + len(draft) > CRITIQUE_SHARD_CHAR_LIMIT:
+            critique_valid = _valid_sharded_critique_checkpoint(
+                article_dir,
+                chunks=chunks,
+                source_texts=source_texts,
+                draft_texts={
+                    str(chunk["id"]): runner.stage_output_path(
+                        article_dir,
+                        str(chunk["id"]),
+                        str(chunk["output_file"]),
+                        "terminology",
+                    ).read_text(encoding="utf-8")
+                    for chunk in chunks
+                },
+                paper_status=paper_status,
+            )
+        else:
+            critique_phase = paper_phases.get("critique", {})
+            critique_valid = isinstance(critique_phase, dict) and _phase_valid(
+                critique_phase,
+                article_dir / CRITIQUE_FILE,
+                _paper_phase_input_hash(
+                    _critique_instructions(),
+                    f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}",
+                    CRITIQUE_MAX_OUTPUT_TOKENS,
+                ),
+            )
+        if (
+            not critique_valid
+            and critique_text
+            and isinstance(paper_phases.get("critique"), dict)
+            and paper_phases.get("critique", {}).get("status") == "complete"
+        ):
+            diagnostics["invalid_checkpoint_hashes"].append("paper:critique")
+
+    if critique_valid:
+        report["missing_stage_api_calls"]["critique"] = 0
+    elif unknown_critique_inputs:
+        report["missing_stage_api_calls"]["critique"] = max(1, len(chunks)) * 2
+    else:
+        projected_draft = _merge_tagged_outputs(chunks, predicted_terminology_texts)
+        if len(source) + len(projected_draft) <= CRITIQUE_SHARD_CHAR_LIMIT:
+            report["missing_stage_api_calls"]["critique"] = 1
+        else:
+            report["missing_stage_api_calls"]["critique"] = 2 * _critique_shard_count(
+                chunks,
+                source_texts=source_texts,
+                draft_texts=predicted_terminology_texts,
+                shard_char_limit=CRITIQUE_SHARD_CHAR_LIMIT,
+            )
+
+    if not critique_valid:
+        critique_text = ""
+
+    for chunk in chunks:
+        chunk_id = str(chunk["id"])
+        state = chunk_runtime[chunk_id]
+        if state["passthrough"] or state["fixed_translation"] is not None:
+            continue
+        revision_stage = state["stages"].get("revision", {}) if isinstance(state["stages"], dict) else {}
+        revision_context = _critique_context_for_chunk(critique_text, chunk_id)
+        expected_context_hash = runner.text_hash(revision_context)
+        revision_valid = (
+            critique_valid
+            and state["terminology_reusable"]
+            and isinstance(revision_stage, dict)
+            and _valid_chunk_stage_checkpoint(article_dir, chunk, revision_stage, "revision")
+            and revision_stage.get("paper_context_hash") == expected_context_hash
+        )
+        if (
+            isinstance(revision_stage, dict)
+            and revision_stage.get("status") == "complete"
+            and not revision_valid
+        ):
+            diagnostics["invalid_checkpoint_hashes"].append(f"{chunk_id}/revision")
+        revision_requires_model = critique_valid and NO_ACTIONABLE_CRITIQUE not in revision_context
+        if not critique_valid:
+            revision_requires_model = True
+        report["missing_stage_api_calls"]["revision"] += int(
+            revision_requires_model and not revision_valid
+        )
+
+    report["projected_worst_case_api_calls"] = sum(report["missing_stage_api_calls"].values())
+    report["projection_ready"] = True
+    return report
+
+
 def style_projection_report(
     article_dir: Path,
     *,
@@ -1698,15 +2199,13 @@ def run_refined_article(
         raise RuntimeError(f"Unsupported paper checkpoint schema: {status_path}")
 
     source = _tagged_source(article_dir, chunks)
-    analysis_instructions = """Perform a compact paper-level content analysis for an English-to-Simplified-Chinese academic translation.
-Return exactly these Markdown sections: ## Content Summary, ## Terminology, ## Tone & Style, and ## Translation Challenges.
-Identify the paper's argument, domain-specific meanings, preferred terminology, register, and concrete translation risks. Be selective: use at most 40 concise bullets total, do not inventory chunks, and do not reproduce source passages. Do not translate the paper yet."""
+    analysis_instructions = _analysis_instructions()
     analysis = _run_paper_model_phase(
         phase_name="analysis",
         output_path=article_dir / ANALYSIS_FILE,
         instructions=analysis_instructions,
         input_text=source,
-        max_output_tokens=4000,
+        max_output_tokens=ANALYSIS_MAX_OUTPUT_TOKENS,
         client=client,
         status=status,
         status_path=status_path,
@@ -1760,9 +2259,7 @@ Identify the paper's argument, domain-specific meanings, preferred terminology, 
         status_path=status_path,
     )
 
-    critique_instructions = """Perform a paper-level critical review of the tagged Chinese draft against the tagged English source.
-Return exactly these Markdown sections: ## Accuracy, ## Native Voice, ## Notes & Adaptation, and ## Summary.
-Every actionable finding must start with its chunk ID (for example, `chunk0001:`). Check omissions, additions, factual drift, modality, terminology, syntax, academic register, and translationese. Report only high-impact actionable defects, at most 30 one-line findings total. If more exist, select the 30 highest-risk defects. Do not enumerate correct chunks, reproduce passages, explain your method, or rewrite the draft."""
+    critique_instructions = _critique_instructions()
     legacy_critique = _valid_legacy_critique(
         article_dir=article_dir,
         status=status,
@@ -1789,7 +2286,7 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
             output_path=article_dir / CRITIQUE_FILE,
             instructions=critique_instructions,
             input_text=f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}",
-            max_output_tokens=4000,
+            max_output_tokens=CRITIQUE_MAX_OUTPUT_TOKENS,
             client=client,
             status=status,
             status_path=status_path,
