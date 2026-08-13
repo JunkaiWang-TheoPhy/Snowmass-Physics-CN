@@ -48,7 +48,14 @@ DEFAULT_OUTPUT_ROOT = ROOT / "output/snowmass2021/babeldoc_production"
 DEFAULT_CONTROL_DIR = ROOT / "output/snowmass2021/production_control"
 DEFAULT_HISTORICAL_ROOTS = (ROOT / "output/snowmass2021/babeldoc_ab_v1",)
 STAGE_LIMITS = {"baseline": 1, "pilot10": 10, "batch50": 50}
-TERMINAL_STAGES = ("prepared", "translated", "rendered", "qc_passed", "packaged")
+TERMINAL_STAGES = (
+    "prepared",
+    "translated",
+    "revision_ready",
+    "rendered",
+    "qc_passed",
+    "packaged",
+)
 
 
 class RunAlreadyActiveError(RuntimeError):
@@ -553,6 +560,94 @@ def _aggregate_style_projection(
     }
 
 
+def _revision_ready_projection_report_for_record(
+    config: BatchConfig,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    record_id = str(record["record_id"])
+    article_dir = _article_dir(config, record_id)
+    try:
+        report = refined.revision_ready_projection(article_dir)
+    except Exception as error:
+        return {
+            "record_id": record_id,
+            "projection_ready": False,
+            "projected_worst_case_api_calls": 0,
+            "missing_stage_api_calls": {
+                "analysis": 0,
+                "translate": 0,
+                "terminology": 0,
+                "critique": 0,
+                "revision": 0,
+            },
+            "identity_diagnostics": {
+                "record_identity_mismatches": [],
+                "invalid_checkpoint_hashes": [],
+                "blocking_uncertain_checkpoints": [],
+            },
+            "error": f"{type(error).__name__}: {error}",
+        }
+    report.setdefault("record_id", record_id)
+    return report
+
+
+def _aggregate_revision_ready_projection(
+    config: BatchConfig,
+    records: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    projections = [_revision_ready_projection_report_for_record(config, record) for record in records]
+    ready = [report for report in projections if report.get("projection_ready") is True]
+    not_ready = [report for report in projections if report.get("projection_ready") is not True]
+    diagnostic_keys = (
+        "record_identity_mismatches",
+        "invalid_checkpoint_hashes",
+        "blocking_uncertain_checkpoints",
+    )
+    revision_ready_projection = {
+        "papers": len(projections),
+        "ready_papers": len(ready),
+        "not_ready_record_ids": [str(report.get("record_id") or "") for report in not_ready],
+        "missing_stage_api_calls": {
+            stage_name: sum(
+                int((report.get("missing_stage_api_calls", {}) or {}).get(stage_name) or 0)
+                for report in ready
+            )
+            for stage_name in ("analysis", "translate", "terminology", "critique", "revision")
+        },
+        "identity_diagnostics": {
+            key: {
+                str(report.get("record_id") or ""): list(
+                    ((report.get("identity_diagnostics", {}) or {}).get(key) or [])
+                )
+                for report in not_ready
+                if ((report.get("identity_diagnostics", {}) or {}).get(key) or [])
+            }
+            for key in diagnostic_keys
+        },
+        "errors": {
+            str(report.get("record_id") or ""): str(report.get("error"))
+            for report in not_ready
+            if report.get("error")
+        },
+        "projection_ready": not not_ready,
+    }
+    return {
+        "revision_ready_projection": revision_ready_projection,
+        "projected_worst_case_api_calls": sum(
+            int(report.get("projected_worst_case_api_calls") or 0) for report in ready
+        ),
+    }
+
+
+def _projection_summary(
+    config: BatchConfig,
+    records: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    if config.through_stage == "revision_ready":
+        return _aggregate_revision_ready_projection(config, records)
+    return _aggregate_style_projection(config, records)
+
+
 def production_metrics_and_gate(
     *,
     stage: str,
@@ -705,7 +800,7 @@ def _resume_article_result(
     }
     if config.through_stage in {"rendered", "qc_passed"}:
         return result
-    if config.through_stage in {"prepared", "translated"}:
+    if config.through_stage in {"prepared", "translated", "revision_ready"}:
         return None
     safe_id = prepare.safe_record_name(str(record["record_id"])).replace("arxiv_", "")
     receipt_path = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.json"
@@ -856,7 +951,11 @@ def _run_article(
         budget_guard=budget,
         concurrency=config.chunk_concurrency,
         retry_uncertain=config.retry_uncertain,
+        stop_after_revision=config.through_stage == "revision_ready",
     )
+    if config.through_stage == "revision_ready":
+        result["status"] = "revision_ready"
+        return result
     projection_path = article_dir / "style_batch_projection.json"
     if projection_path.is_file():
         projection = json.loads(projection_path.read_text(encoding="utf-8"))
@@ -923,7 +1022,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
     historical_roots = tuple(dict.fromkeys((*config.historical_roots, config.output_root)))
     if config.preflight_only:
         recoverable, package_only_records, paid_pending = _classify_selected_records(config, selected)
-        projection_summary = _aggregate_style_projection(config, paid_pending)
+        projection_summary = _projection_summary(config, paid_pending)
         package_only_ids = [str(record["record_id"]) for record in package_only_records]
         return {
             **snapshot,
@@ -987,7 +1086,7 @@ def _run_batch_locked(
     next_outcome_ordinal = 0
     recoverable, package_only_records, pending_records = _classify_selected_records(config, selected)
     results.extend(recoverable)
-    projection_summary = _aggregate_style_projection(config, pending_records)
+    projection_summary = _projection_summary(config, pending_records)
     snapshot.update(projection_summary)
     if run_snapshot_path.is_file():
         if json.loads(run_snapshot_path.read_text(encoding="utf-8")) != snapshot:
@@ -1012,7 +1111,19 @@ def _run_batch_locked(
             0,
             int(budget.snapshot().get("stage_remaining_api_calls") or 0),
         )
-        if not projection_summary["style_projection"]["projection_ready"]:
+        if config.through_stage == "revision_ready":
+            revision_projection = projection_summary["revision_ready_projection"]
+            if not revision_projection["projection_ready"]:
+                details = {
+                    "not_ready_record_ids": revision_projection["not_ready_record_ids"],
+                    "identity_diagnostics": revision_projection["identity_diagnostics"],
+                    "errors": revision_projection["errors"],
+                }
+                raise ProjectionGateRefusedError(
+                    "revision-ready projection is not ready for paid launch: "
+                    + json.dumps(details, ensure_ascii=False, sort_keys=True),
+                )
+        elif not projection_summary["style_projection"]["projection_ready"]:
             missing = projection_summary["style_projection"]["missing_revision_chunk_ids"]
             raise ProjectionGateRefusedError(
                 "style projection is not ready for paid launch: "
@@ -1021,7 +1132,12 @@ def _run_batch_locked(
         projected_worst_case = int(projection_summary["projected_worst_case_api_calls"] or 0)
         if projected_worst_case > stage_remaining_api_calls:
             raise RequestLimitExceededError(
-                "style projection worst case would exceed the remaining stage request cap: "
+                (
+                    "revision-ready projection worst case would exceed the remaining stage request cap: "
+                    if config.through_stage == "revision_ready"
+                    else "style projection worst case would exceed the remaining stage request cap: "
+                )
+                +
                 f"{projected_worst_case} > {stage_remaining_api_calls}"
             )
         actual_client = client or runner.DeepSeekClient(runner.load_api_key())

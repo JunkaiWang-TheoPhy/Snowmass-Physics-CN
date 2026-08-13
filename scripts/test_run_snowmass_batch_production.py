@@ -903,7 +903,14 @@ class PromotionGateTests(unittest.TestCase):
 
 
 class StyleProjectionLaunchGateTests(unittest.TestCase):
-    def _config(self, module, root: Path, *, preflight_only: bool = False):
+    def _config(
+        self,
+        module,
+        root: Path,
+        *,
+        through_stage: str = "packaged",
+        preflight_only: bool = False,
+    ):
         manifest = root / "papers.json"
         manifest.write_text(
             json.dumps([{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]),
@@ -922,13 +929,63 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
             usd_cny_rate=7.2,
             chunk_concurrency=1,
             article_concurrency=1,
-            through_stage="packaged",
+            through_stage=through_stage,
             translation_version="test",
             packaged_on="2026-08-13",
             stage_max_api_calls=16,
             historical_roots=(),
             preflight_only=preflight_only,
         )
+
+    def test_preflight_revision_ready_reports_conservative_transport_ceiling(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(
+                module,
+                root,
+                through_stage="revision_ready",
+                preflight_only=True,
+            )
+            with (
+                mock.patch.object(module, "_resume_article_result", return_value=None),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+                mock.patch.object(
+                    module.refined,
+                    "revision_ready_projection",
+                    return_value={
+                        "record_id": "arxiv:a",
+                        "projection_ready": True,
+                        "projected_worst_case_api_calls": 7,
+                        "missing_stage_api_calls": {
+                            "analysis": 1,
+                            "translate": 2,
+                            "terminology": 1,
+                            "critique": 2,
+                            "revision": 1,
+                        },
+                        "identity_diagnostics": {
+                            "record_identity_mismatches": [],
+                            "invalid_checkpoint_hashes": [],
+                            "blocking_uncertain_checkpoints": [],
+                        },
+                    },
+                ),
+                mock.patch.object(
+                    module.refined,
+                    "style_projection_report",
+                    side_effect=AssertionError("revision-ready preflight must not use style projection"),
+                ),
+            ):
+                summary = module.run_batch(config, client=object())
+
+        self.assertEqual(summary["status"], "preflight")
+        self.assertEqual(summary["projected_worst_case_api_calls"], 7)
+        self.assertEqual(
+            summary["revision_ready_projection"]["missing_stage_api_calls"]["translate"],
+            2,
+        )
+        self.assertTrue(summary["revision_ready_projection"]["projection_ready"])
 
     def test_preflight_reports_aggregated_style_projection_fields(self) -> None:
         module = load_module()
@@ -968,6 +1025,73 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
             summary["style_projection"]["planned"]["academic"]["normal_requests"],
             4,
         )
+
+    def test_revision_ready_launch_gate_rejects_cap_before_client_or_reservation(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(module, root, through_stage="revision_ready")
+            guard_instances: list[object] = []
+
+            class Guard:
+                def __init__(self, *args, **kwargs) -> None:
+                    guard_instances.append(self)
+
+                def snapshot(self) -> dict[str, object]:
+                    return {
+                        "project_max_cost_rmb": 1000.0,
+                        "project_spent_rmb": 0.0,
+                        "project_reserved_rmb": 0.0,
+                        "stage_max_cost_rmb": 10.0,
+                        "stage_spent_rmb": 0.0,
+                        "stage_reserved_rmb": 0.0,
+                        "stage_usage": {},
+                        "stage_remaining_api_calls": 6,
+                    }
+
+                def reserve(self, *_args, **_kwargs):
+                    raise AssertionError("launch gate must fire before any reservation")
+
+            with (
+                mock.patch.object(module, "PersistentBudgetGuard", Guard),
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+                mock.patch.object(
+                    module.refined,
+                    "revision_ready_projection",
+                    return_value={
+                        "record_id": "arxiv:a",
+                        "projection_ready": True,
+                        "projected_worst_case_api_calls": 7,
+                        "missing_stage_api_calls": {
+                            "analysis": 1,
+                            "translate": 2,
+                            "terminology": 1,
+                            "critique": 2,
+                            "revision": 1,
+                        },
+                        "identity_diagnostics": {
+                            "record_identity_mismatches": [],
+                            "invalid_checkpoint_hashes": [],
+                            "blocking_uncertain_checkpoints": [],
+                        },
+                    },
+                ),
+                mock.patch.object(
+                    module.runner,
+                    "load_api_key",
+                    side_effect=AssertionError("must fail before loading credentials"),
+                ),
+                mock.patch.object(
+                    module.runner,
+                    "DeepSeekClient",
+                    side_effect=AssertionError("must fail before creating client"),
+                ),
+            ):
+                with self.assertRaisesRegex(Exception, "7.*6|6.*7|cap|projection"):
+                    module.run_batch(config)
+
+        self.assertEqual(len(guard_instances), 1)
 
     def test_launch_gate_rejects_aggregate_worst_case_before_client_or_reservation(self) -> None:
         module = load_module()
@@ -1225,6 +1349,81 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
         self.assertEqual(payload["status"], "gate_refused")
         self.assertEqual(payload["reason_code"], "stage_request_limit")
         self.assertIn("17 > 16", payload["message"])
+
+
+class RevisionReadyRunArticleTests(unittest.TestCase):
+    def test_run_article_stops_after_revision_without_refill_or_package(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps([{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]),
+                encoding="utf-8",
+            )
+            config = module.BatchConfig(
+                rights_manifest=manifest,
+                pdf_root=root / "pdf",
+                output_root=root / "output",
+                control_dir=root / "control",
+                stage="baseline",
+                explicit_ids=("arxiv:a",),
+                max_articles=None,
+                project_max_cost_rmb=1000.0,
+                stage_max_cost_rmb=10.0,
+                usd_cny_rate=7.2,
+                chunk_concurrency=3,
+                article_concurrency=1,
+                through_stage="revision_ready",
+                translation_version="test",
+                packaged_on="2026-08-13",
+                historical_roots=(),
+            )
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+
+            with (
+                mock.patch.object(module, "_source_character_count", return_value=7),
+                mock.patch.object(module.runner, "resolve_glossary_path", return_value=root / "glossary.json"),
+                mock.patch.object(module.runner, "load_glossary", return_value=[{"en": "x", "zh": "y"}]),
+                mock.patch.object(module.runner, "load_article_glossary", return_value=[{"en": "a", "zh": "b"}]),
+                mock.patch.object(module.runner, "merge_glossary_terms", return_value=[{"en": "term", "zh": "术语"}]),
+                mock.patch.object(
+                    module.refined,
+                    "run_refined_article",
+                    return_value={"record_id": "arxiv:a", "status": "revision_ready", "chunks": 1},
+                ) as run_refined_article,
+                mock.patch.object(
+                    module,
+                    "_refill_article",
+                    side_effect=AssertionError("revision_ready must not refill or render"),
+                ),
+                mock.patch.object(
+                    module,
+                    "_package_article",
+                    side_effect=AssertionError("revision_ready must not package"),
+                ),
+                mock.patch.object(
+                    module,
+                    "evaluate_article_qc",
+                    side_effect=AssertionError("revision_ready must not run publication QC"),
+                ),
+            ):
+                result = module._run_article(config, record, "run-1", object(), object())
+
+        self.assertEqual(
+            result,
+            {"record_id": "arxiv:a", "status": "revision_ready", "source_characters": 7},
+        )
+        run_refined_article.assert_called_once_with(
+            mock.ANY,
+            client=mock.ANY,
+            terms=[{"en": "term", "zh": "术语"}],
+            run_id="run-1",
+            budget_guard=mock.ANY,
+            concurrency=3,
+            retry_uncertain=False,
+            stop_after_revision=True,
+        )
 
 
 if __name__ == "__main__":
