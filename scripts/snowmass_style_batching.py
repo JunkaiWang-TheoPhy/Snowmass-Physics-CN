@@ -94,6 +94,7 @@ class StyleStagePlan:
     normal_batches: tuple[StyleBatch, ...]
     worst_case_requests: int
     restoration_data: dict[str, tuple[dict[str, str], Any]] = field(default_factory=dict)
+    input_stage: str = ""
 
 
 @dataclass(frozen=True)
@@ -272,7 +273,14 @@ def _checkpoint_matches(
         return False
     if stage_status.get("item_key") != item_key:
         return False
-    if not runner.checkpoint_policy_matches(stage_status, policy):
+    recorded_policy = stage_status.get("execution_policy")
+    audited_fallback = (
+        recorded_policy == "verified_prior_style_fallback"
+        and policy == "model_pipeline"
+        and stage_status.get("decision")
+        == {"action": "copy_prior_text", "reason": "style_recovery_exhausted"}
+    )
+    if not audited_fallback and not runner.checkpoint_policy_matches(stage_status, policy):
         return False
     qc = stage_status.get("qc")
     if not isinstance(qc, dict) or qc.get("ok") is not True:
@@ -598,6 +606,7 @@ def prepare_style_items(
         normal_batches=normal_batches,
         worst_case_requests=worst_case_requests,
         restoration_data=restoration_data,
+        input_stage=input_stage,
     )
 
 
@@ -1228,10 +1237,83 @@ def execute_style_stage(
             failed_after_recovery.extend(process_batch(batch))
 
     if failed_after_recovery:
-        failed = ", ".join(failed_after_recovery)
-        raise RuntimeError(
-            f"style stage {stage} failed after one recovery pass for {record_id}: {failed}"
-        )
+        if not plan.input_stage:
+            raise RuntimeError("style fallback requires an explicit planned input stage")
+        for chunk_id in failed_after_recovery:
+            item = item_map[chunk_id]
+            chunk = chunk_map[chunk_id]
+            task = dict(task_factory(chunk))
+            source_path = runner.article_artifact_path(
+                article_dir, str(chunk["source_file"])
+            )
+            source = source_path.read_text(encoding="utf-8")
+            selected_terms = runner.compile_glossary_terms(source, terms)
+            status_path, status = _load_status(
+                article_dir, task, chunk, item.source_hash
+            )
+            prior_path = runner.stage_output_path(
+                article_dir,
+                chunk_id,
+                str(chunk["output_file"]),
+                plan.input_stage,
+            )
+            prior_status = status.get("stages", {}).get(plan.input_stage, {})
+            prior_checkpoint_verified = (
+                status.get("chunk_id") == chunk_id
+                and status.get("source_hash") == item.source_hash
+                and isinstance(prior_status, dict)
+                and runner.checkpoint_is_reusable_after_contract_change(
+                    prior_status, prior_path
+                )
+                and runner.nonempty(prior_path)
+                and text_hash(prior_path.read_text(encoding="utf-8"))
+                == item.prior_hash
+            )
+            if not prior_checkpoint_verified:
+                raise RuntimeError(
+                    f"style prior checkpoint is not verified for {record_id} {chunk_id}"
+                )
+            prior = prior_path.read_text(encoding="utf-8")
+            qc = runner.validate_chunk(source, prior, {}, selected_terms)
+            if not qc.ok:
+                failures = ", ".join(qc.failures)
+                raise RuntimeError(
+                    f"verified prior style fallback failed QC for {record_id} {chunk_id}: {failures}"
+                )
+            output_path = runner.stage_output_path(
+                article_dir,
+                chunk_id,
+                str(chunk["output_file"]),
+                stage,
+            )
+            runner.atomic_text(output_path, prior)
+            last_request_key = str(status.get("stages", {}).get(stage, {}).get("request_key", ""))
+            _update_stage_status(
+                article_dir=article_dir,
+                task=task,
+                chunk=chunk,
+                source_hash=item.source_hash,
+                stage=stage,
+                mutate=lambda stage_status, prior=prior, qc=qc, output_path=output_path, last_request_key=last_request_key: (
+                    [stage_status.pop(field_name, None) for field_name in _LOCAL_STAGE_STALE_FIELDS],
+                    stage_status.update(
+                        {
+                            "status": "complete",
+                            "finished_at": runner.now(),
+                            "item_key": item.item_key,
+                            "execution_policy": "verified_prior_style_fallback",
+                            "decision": {
+                                "action": "copy_prior_text",
+                                "reason": "style_recovery_exhausted",
+                            },
+                            "last_failed_model_request_key": last_request_key,
+                            "output_file": output_path.name,
+                            "output_hash": text_hash(prior),
+                            "qc": qc.to_dict(),
+                        }
+                    ),
+                ),
+            )
 
     planned_chunks = len(plan.reused) + len(plan.local) + len(plan.model_items)
     completed_chunks = planned_chunks

@@ -1552,8 +1552,39 @@ class StyleExecutionTests(unittest.TestCase):
         self.assertEqual(client.calls, 1)
         self.assertEqual(guard.reservations, 1)
 
-    def test_recovery_exhaustion_error_mentions_stage_and_record_id(self) -> None:
+    def test_recovery_exhaustion_falls_back_to_verified_prior_text(self) -> None:
         single_chunk = self.chunks[:1]
+        source_text = (self.article_dir / "chunk0001.md").read_text(encoding="utf-8")
+        prior_path = self.runner.stage_output_path(
+            self.article_dir,
+            "chunk0001",
+            "output_chunk0001.md",
+            "revision",
+        )
+        status_path = self.article_dir / "chunk_status" / "chunk0001.json"
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        status_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:test:chunk0001",
+                    "chunk_id": "chunk0001",
+                    "source_file": "chunk0001.md",
+                    "source_hash": self.runner.text_hash(source_text),
+                    "stages": {
+                        "revision": {
+                            "status": "complete",
+                            "output_file": prior_path.name,
+                            "output_hash": self.runner.text_hash(
+                                prior_path.read_text(encoding="utf-8")
+                            ),
+                            "qc": {"ok": True, "failures": []},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         plan = self._prepare(single_chunk)
 
         class MalformedClient:
@@ -1580,10 +1611,73 @@ class StyleExecutionTests(unittest.TestCase):
                 )
 
         client = MalformedClient()
-        with self.assertRaisesRegex(
-            RuntimeError,
-            r"style stage anti_ai failed after one recovery pass for arxiv:test:chunk0001: chunk0001",
-        ):
+        result = self.batching.execute_style_stage(
+            article_dir=self.article_dir,
+            chunks=single_chunk,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            plan=plan,
+            client=client,
+            instructions="clean the prose",
+            max_output_tokens=256,
+            budget_guard=None,
+            run_id="run-recovery-exhausted",
+        )
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(result.failed_chunks, 0)
+        self.assertEqual(
+            self._output_path("chunk0001").read_text(encoding="utf-8"),
+            self.runner.stage_output_path(
+                self.article_dir,
+                "chunk0001",
+                "output_chunk0001.md",
+                "revision",
+            ).read_text(encoding="utf-8"),
+        )
+        status = self._status("chunk0001")
+        self.assertEqual(status["status"], "complete")
+        self.assertEqual(status["execution_policy"], "verified_prior_style_fallback")
+        self.assertEqual(status["decision"]["action"], "copy_prior_text")
+        self.assertEqual(status["decision"]["reason"], "style_recovery_exhausted")
+        self.assertEqual(
+            status["last_failed_model_request_key"],
+            self._batch_requests()[-1]["request_key"],
+        )
+        resumed_plan = self._prepare(single_chunk)
+        self.assertEqual(resumed_plan.reused, ("chunk0001",))
+        self.assertEqual(resumed_plan.model_items, ())
+
+    def test_style_fallback_refuses_tampered_or_unverified_prior_checkpoint(self) -> None:
+        single_chunk = self.chunks[:1]
+        plan = self._prepare(single_chunk)
+        prior_path = self.runner.stage_output_path(
+            self.article_dir,
+            "chunk0001",
+            "output_chunk0001.md",
+            "revision",
+        )
+        prior_path.write_text("Tampered but superficially valid 14.\n", encoding="utf-8")
+
+        class MalformedClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, _instructions: str, _input_text: str, _maximum: int):
+                self.calls += 1
+                return (
+                    {
+                        "id": f"resp-{self.calls}",
+                        "status": "completed",
+                        "model": "fake-style-model",
+                        "output_text": '{"translations":{}}',
+                        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                    },
+                    0.1,
+                )
+
+        with self.assertRaisesRegex(RuntimeError, "prior checkpoint is not verified"):
             self.batching.execute_style_stage(
                 article_dir=self.article_dir,
                 chunks=single_chunk,
@@ -1591,14 +1685,12 @@ class StyleExecutionTests(unittest.TestCase):
                 terms=[],
                 stage="anti_ai",
                 plan=plan,
-                client=client,
+                client=MalformedClient(),
                 instructions="clean the prose",
                 max_output_tokens=256,
                 budget_guard=None,
-                run_id="run-recovery-exhausted",
+                run_id="run-tampered-prior",
             )
-
-        self.assertEqual(client.calls, 2)
 
     def test_recovery_requests_stay_within_the_planned_near_limit_ceiling(self) -> None:
         chunks = tuple(
