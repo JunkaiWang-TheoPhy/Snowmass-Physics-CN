@@ -608,3 +608,385 @@ class StylePreparationTests(unittest.TestCase):
             self.assertNotIn(key, stage)
         self.assertEqual(stage["output_hash"], self.runner.text_hash(fixed_translation))
         self.assertEqual(stage["qc"], {"ok": True, "failures": []})
+
+
+class StyleExecutionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.batching = load_batching()
+        self.runner = load_runner()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.article_dir = Path(self.temporary.name)
+        self.chunks = (
+            {
+                "id": "chunk0001",
+                "source_file": "chunk0001.md",
+                "output_file": "output_chunk0001.md",
+            },
+            {
+                "id": "chunk0002",
+                "source_file": "chunk0002.md",
+                "output_file": "output_chunk0002.md",
+            },
+        )
+        fixtures = {
+            "chunk0001": "The yield is 14.\n",
+            "chunk0002": "The count (final) is 7.\n",
+        }
+        for chunk in self.chunks:
+            text = fixtures[chunk["id"]]
+            (self.article_dir / chunk["source_file"]).write_text(text, encoding="utf-8")
+            self.runner.stage_output_path(
+                self.article_dir,
+                chunk["id"],
+                chunk["output_file"],
+                "revision",
+            ).write_text(text, encoding="utf-8")
+
+    def _task(self, chunk: dict[str, str]) -> dict[str, str]:
+        return {"record_id": f"arxiv:test:{chunk['id']}"}
+
+    def _prepare(self, chunks=None):
+        return self.batching.prepare_style_items(
+            article_dir=self.article_dir,
+            chunks=self.chunks if chunks is None else chunks,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            input_stage="revision",
+            context_factory=lambda _chunk: "chunk-local critique",
+        )
+
+    def _status(self, chunk_id: str) -> dict[str, object]:
+        path = self.article_dir / "chunk_status" / f"{chunk_id}.json"
+        return json.loads(path.read_text(encoding="utf-8"))["stages"]["anti_ai"]
+
+    def _output_path(self, chunk_id: str) -> Path:
+        chunk = next(item for item in self.chunks if item["id"] == chunk_id)
+        return self.runner.stage_output_path(
+            self.article_dir,
+            chunk_id,
+            chunk["output_file"],
+            "anti_ai",
+        )
+
+    def _batch_status(self) -> dict[str, object]:
+        return json.loads((self.article_dir / "style_batch_status.json").read_text(encoding="utf-8"))
+
+    def _cost_events(self) -> list[dict[str, object]]:
+        return [
+            json.loads(line)
+            for line in (self.article_dir / "api_cost_ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+
+    @staticmethod
+    def _response(response_id: str, translations: dict[str, str], *, input_tokens: int, output_tokens: int):
+        return {
+            "id": response_id,
+            "status": "completed",
+            "model": "fake-style-model",
+            "output_text": json.dumps({"translations": translations}, ensure_ascii=False),
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+                "input_tokens_details": {"cached_tokens": 0},
+                "output_tokens_details": {"reasoning_tokens": 0},
+            },
+        }
+
+    def test_mixed_qc_batch_commits_good_sibling_then_recovers_only_failed_id(self) -> None:
+        class RecordingBudgetGuard:
+            usd_cny_rate = self.runner.DEFAULT_USD_CNY_RATE
+
+            def __init__(self) -> None:
+                self.reservations: list[tuple[str, int, str | None]] = []
+                self.settled: list[tuple[str, dict[str, object]]] = []
+                self.committed: list[str] = []
+
+            def reserve(self, input_text: str, maximum: int, *, uncertainty_key=None):
+                reservation = f"reservation-{len(self.reservations) + 1}"
+                self.reservations.append((input_text, maximum, uncertainty_key))
+                return reservation
+
+            def settle(self, reservation: str, usage: dict[str, object]) -> None:
+                self.settled.append((reservation, usage))
+
+            def commit_estimate(self, reservation: str) -> float:
+                self.committed.append(reservation)
+                return 0.25
+
+            def resolve_uncertain(self, _uncertainty_key: str) -> bool:
+                return True
+
+            def snapshot(self) -> dict[str, object]:
+                return {"stage_remaining_api_calls": 8}
+
+        test_case = self
+
+        plan = self._prepare()
+        protected = {item.chunk_id: item.protected_text for item in plan.model_items}
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.requested_ids: list[tuple[str, ...]] = []
+                self.calls = 0
+
+            def complete(self, _instructions: str, input_text: str, _maximum: int):
+                payload = json.loads(input_text)
+                ids = tuple(chunk["id"] for chunk in payload["chunks"])
+                self.requested_ids.append(ids)
+                self.calls += 1
+                if self.calls == 2:
+                    test_case.assertTrue(test_case._output_path("chunk0001").exists())
+                    test_case.assertFalse(test_case._output_path("chunk0002").exists())
+                    test_case.assertEqual(test_case._status("chunk0001")["status"], "complete")
+                    test_case.assertIn(test_case._status("chunk0002")["status"], {"failed", "running"})
+                    rejected = Path(str(test_case._status("chunk0002")["rejected_candidate_file"]))
+                    test_case.assertTrue((test_case.article_dir / rejected).exists())
+                    return (
+                        test_case._response(
+                            "resp-recovery",
+                            {"chunk0002": protected["chunk0002"]},
+                            input_tokens=15,
+                            output_tokens=5,
+                        ),
+                        0.2,
+                    )
+                return (
+                    test_case._response(
+                        "resp-normal",
+                        {
+                            "chunk0001": protected["chunk0001"],
+                            "chunk0002": "The count final is [[SMU_0001_NUMBER_7902699be4]].\n",
+                        },
+                        input_tokens=30,
+                        output_tokens=10,
+                    ),
+                    0.1,
+                )
+
+        guard = RecordingBudgetGuard()
+        client = FakeClient()
+
+        result = self.batching.execute_style_stage(
+            article_dir=self.article_dir,
+            chunks=self.chunks,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            plan=plan,
+            client=client,
+            instructions="clean the prose",
+            max_output_tokens=256,
+            budget_guard=guard,
+            run_id="run-mixed",
+        )
+
+        self.assertEqual(client.requested_ids, [("chunk0001", "chunk0002"), ("chunk0002",)])
+        self.assertEqual(result.planned_chunks, 2)
+        self.assertEqual(result.completed_chunks, 2)
+        self.assertEqual(result.failed_chunks, 0)
+        self.assertEqual(result.normal_requests, 1)
+        self.assertEqual(result.recovery_requests, 1)
+        self.assertEqual(result.total_tokens, 60)
+        self.assertEqual(self._status("chunk0001")["status"], "complete")
+        self.assertEqual(self._status("chunk0002")["status"], "complete")
+        self.assertNotIn("usage", self._status("chunk0001"))
+        self.assertNotIn("usage", self._status("chunk0002"))
+        batch_status = self._batch_status()
+        self.assertEqual(
+            [request["response_id"] for request in batch_status["requests"]],
+            ["resp-normal", "resp-recovery"],
+        )
+        self.assertEqual([event["event_id"] for event in self._cost_events()], ["resp-normal", "resp-recovery"])
+        self.assertEqual(len(guard.settled), 2)
+        self.assertEqual(guard.committed, [])
+
+    def test_protocol_failure_commits_nothing_before_retrying_the_whole_failed_request(self) -> None:
+        class RecordingBudgetGuard:
+            usd_cny_rate = self.runner.DEFAULT_USD_CNY_RATE
+
+            def reserve(self, _input: str, _maximum: int, *, uncertainty_key=None):
+                return "reservation"
+
+            def settle(self, _reservation: str, _usage: dict[str, object]) -> None:
+                return None
+
+            def commit_estimate(self, _reservation: str) -> float:
+                return 0.25
+
+            def resolve_uncertain(self, _uncertainty_key: str) -> bool:
+                return True
+
+            def snapshot(self) -> dict[str, object]:
+                return {"stage_remaining_api_calls": 8}
+
+        test_case = self
+
+        plan = self._prepare()
+        protected = {item.chunk_id: item.protected_text for item in plan.model_items}
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.requested_ids: list[tuple[str, ...]] = []
+                self.calls = 0
+
+            def complete(self, _instructions: str, input_text: str, _maximum: int):
+                payload = json.loads(input_text)
+                ids = tuple(chunk["id"] for chunk in payload["chunks"])
+                self.requested_ids.append(ids)
+                self.calls += 1
+                if self.calls == 2:
+                    test_case.assertFalse(test_case._output_path("chunk0001").exists())
+                    test_case.assertFalse(test_case._output_path("chunk0002").exists())
+                    return (
+                        test_case._response(
+                            "resp-recovery",
+                            {
+                                "chunk0001": protected["chunk0001"],
+                                "chunk0002": protected["chunk0002"],
+                            },
+                            input_tokens=25,
+                            output_tokens=10,
+                        ),
+                        0.2,
+                    )
+                return (
+                    test_case._response(
+                        "resp-malformed",
+                        {"chunk0001": protected["chunk0001"]},
+                        input_tokens=25,
+                        output_tokens=10,
+                    ),
+                    0.1,
+                )
+
+        client = FakeClient()
+        result = self.batching.execute_style_stage(
+            article_dir=self.article_dir,
+            chunks=self.chunks,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            plan=plan,
+            client=client,
+            instructions="clean the prose",
+            max_output_tokens=256,
+            budget_guard=RecordingBudgetGuard(),
+            run_id="run-protocol",
+        )
+
+        self.assertEqual(result.completed_chunks, 2)
+        self.assertEqual(result.recovery_requests, 1)
+        self.assertEqual(client.requested_ids, [("chunk0001", "chunk0002"), ("chunk0001", "chunk0002")])
+
+    def test_rejects_before_first_client_call_when_remaining_calls_cannot_cover_worst_case(self) -> None:
+        from scripts import snowmass_batch_budget as budget_module
+
+        class SnapshotBudgetGuard:
+            def __init__(self) -> None:
+                self.reserve_calls = 0
+
+            def snapshot(self) -> dict[str, object]:
+                return {"stage_remaining_api_calls": 1}
+
+            def reserve(self, _input: str, _maximum: int, *, uncertainty_key=None):
+                self.reserve_calls += 1
+                raise AssertionError("reserve must not run after preflight rejection")
+
+        class NoCallClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, _instructions: str, _input_text: str, _maximum: int):
+                self.calls += 1
+                raise AssertionError("client.complete must not run after preflight rejection")
+
+        plan = self._prepare()
+        budget_guard = SnapshotBudgetGuard()
+        client = NoCallClient()
+
+        with self.assertRaises(budget_module.RequestLimitExceededError):
+            self.batching.execute_style_stage(
+                article_dir=self.article_dir,
+                chunks=self.chunks,
+                task_factory=self._task,
+                terms=[],
+                stage="anti_ai",
+                plan=plan,
+                client=client,
+                instructions="clean the prose",
+                max_output_tokens=256,
+                budget_guard=budget_guard,
+                run_id="run-preflight",
+            )
+
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(budget_guard.reserve_calls, 0)
+
+    def test_ambiguous_transport_commits_estimate_once_and_persists_uncertain_batch(self) -> None:
+        single_chunk = self.chunks[:1]
+        test_case = self
+
+        class RecordingBudgetGuard:
+            usd_cny_rate = self.runner.DEFAULT_USD_CNY_RATE
+
+            def __init__(self) -> None:
+                self.reservations: list[str] = []
+                self.committed: list[str] = []
+                self.settled: list[str] = []
+
+            def reserve(self, _input: str, _maximum: int, *, uncertainty_key=None):
+                reservation = f"reservation-{len(self.reservations) + 1}"
+                self.reservations.append(reservation)
+                return reservation
+
+            def commit_estimate(self, reservation: str) -> float:
+                self.committed.append(reservation)
+                return 0.25
+
+            def settle(self, reservation: str, _usage: dict[str, object]) -> None:
+                self.settled.append(reservation)
+
+            def snapshot(self) -> dict[str, object]:
+                return {"stage_remaining_api_calls": 8}
+
+        class AmbiguousClient:
+            def __init__(self) -> None:
+                self.requested_ids: list[tuple[str, ...]] = []
+
+            def complete(self, _instructions: str, input_text: str, _maximum: int):
+                payload = json.loads(input_text)
+                self.requested_ids.append(tuple(chunk["id"] for chunk in payload["chunks"]))
+                raise test_case.batching.runner.AmbiguousTransportError(
+                    "response may have been generated"
+                )
+
+        plan = self._prepare(single_chunk)
+        guard = RecordingBudgetGuard()
+        client = AmbiguousClient()
+
+        with self.assertRaises(self.batching.runner.AmbiguousTransportError):
+            self.batching.execute_style_stage(
+                article_dir=self.article_dir,
+                chunks=single_chunk,
+                task_factory=self._task,
+                terms=[],
+                stage="anti_ai",
+                plan=plan,
+                client=client,
+                instructions="clean the prose",
+                max_output_tokens=256,
+                budget_guard=guard,
+                run_id="run-ambiguous",
+            )
+
+        self.assertEqual(client.requested_ids, [("chunk0001",)])
+        self.assertEqual(guard.committed, ["reservation-1"])
+        self.assertEqual(guard.settled, [])
+        self.assertEqual(self._status("chunk0001")["status"], "uncertain")
+        self.assertEqual(self._batch_status()["requests"][0]["status"], "uncertain")
+        events = self._cost_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["kind"], "style_batch_ambiguous_transport_reservation")

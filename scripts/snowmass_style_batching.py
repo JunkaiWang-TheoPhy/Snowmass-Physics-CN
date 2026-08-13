@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from scripts import run_snowmass_translation as runner
+from scripts.snowmass_batch_budget import RequestLimitExceededError
 from scripts.run_snowmass_translation import text_hash
 
 
@@ -70,6 +71,22 @@ class StyleStagePlan:
     normal_batches: tuple[StyleBatch, ...]
     worst_case_requests: int
     restoration_data: dict[str, tuple[dict[str, str], Any]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StyleStageResult:
+    planned_chunks: int
+    completed_chunks: int
+    reused_chunks: int
+    local_chunks: int
+    failed_chunks: int
+    normal_requests: int
+    recovery_requests: int
+    input_tokens: int
+    cached_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost_rmb: float
 
 
 class StyleBatchProtocolError(ValueError):
@@ -485,4 +502,431 @@ def prepare_style_items(
         normal_batches=normal_batches,
         worst_case_requests=worst_case_requests,
         restoration_data=restoration_data,
+    )
+
+
+def _batch_status_path(article_dir: Path) -> Path:
+    return article_dir / "style_batch_status.json"
+
+
+def _load_batch_status(article_dir: Path, stage: str) -> dict[str, Any]:
+    path = _batch_status_path(article_dir)
+    if not path.exists():
+        return {"schema_version": 1, "stage": stage, "requests": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        payload = {"schema_version": 1, "stage": stage, "requests": []}
+    if not isinstance(payload, dict):
+        payload = {"schema_version": 1, "stage": stage, "requests": []}
+    payload.setdefault("schema_version", 1)
+    payload["stage"] = stage
+    requests = payload.get("requests")
+    if not isinstance(requests, list):
+        payload["requests"] = []
+    return payload
+
+
+def _persist_batch_request(article_dir: Path, stage: str, request_status: dict[str, Any]) -> None:
+    payload = _load_batch_status(article_dir, stage)
+    requests = [
+        entry
+        for entry in payload["requests"]
+        if not (
+            isinstance(entry, dict)
+            and entry.get("request_key") == request_status.get("request_key")
+        )
+    ]
+    requests.append(request_status)
+    payload["requests"] = requests
+    runner.atomic_json(_batch_status_path(article_dir), payload)
+
+
+def _response_text(response: dict[str, Any]) -> str:
+    output_text = response.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+    return runner.extract_output(response)
+
+
+def _token_count(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
+def _update_stage_status(
+    *,
+    article_dir: Path,
+    task: dict[str, Any],
+    chunk: dict[str, Any],
+    source_hash: str,
+    stage: str,
+    mutate: Callable[[dict[str, Any]], None],
+) -> dict[str, Any]:
+    status_path, status = _load_status(article_dir, task, chunk, source_hash)
+    stage_status = status.setdefault("stages", {}).setdefault(stage, {})
+    mutate(stage_status)
+    runner.atomic_json(status_path, status)
+    return stage_status
+
+
+def execute_style_stage(
+    *,
+    article_dir: Path,
+    chunks: Iterable[dict[str, Any]],
+    task_factory: Callable[[dict[str, Any]], dict[str, Any]],
+    terms: list[dict[str, Any]],
+    stage: str,
+    plan: StyleStagePlan,
+    client: Any,
+    instructions: str,
+    max_output_tokens: int,
+    budget_guard: Any | None = None,
+    run_id: str | None = None,
+    model: str = "snowmass-style-batch",
+) -> StyleStageResult:
+    if budget_guard is not None and hasattr(budget_guard, "snapshot"):
+        snapshot = budget_guard.snapshot()
+        if isinstance(snapshot, dict):
+            remaining = snapshot.get("stage_remaining_api_calls")
+            if isinstance(remaining, (int, float)) and remaining < plan.worst_case_requests:
+                raise RequestLimitExceededError(
+                    "stage request cap would be exceeded before style batching starts"
+                )
+
+    chunk_map = {str(chunk["id"]): dict(chunk) for chunk in chunks}
+    item_map = {item.chunk_id: item for item in plan.model_items}
+    totals = {
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cost_rmb": 0.0,
+    }
+    failed_after_recovery: list[str] = []
+    normal_requests = 0
+    recovery_requests = 0
+
+    def process_batch(batch: StyleBatch) -> tuple[str, ...]:
+        nonlocal normal_requests, recovery_requests
+
+        if batch.recovery:
+            recovery_requests += 1
+        else:
+            normal_requests += 1
+        request_key = style_batch_request_key(
+            batch=batch,
+            stage=stage,
+            model=model,
+            instructions=instructions,
+            max_output_tokens=max_output_tokens,
+        )
+        uncertainty_key = f"{stage}:{request_key}"
+        payload = build_style_batch_payload(batch, stage=stage)
+        input_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        request_status = {
+            "request_key": request_key,
+            "recovery": batch.recovery,
+            "chunk_ids": [item.chunk_id for item in batch.items],
+            "started_at": runner.now(),
+            "status": "running",
+        }
+        _persist_batch_request(article_dir, stage, request_status)
+
+        for item in batch.items:
+            chunk = chunk_map[item.chunk_id]
+            task = dict(task_factory(chunk))
+            _update_stage_status(
+                article_dir=article_dir,
+                task=task,
+                chunk=chunk,
+                source_hash=item.source_hash,
+                stage=stage,
+                mutate=lambda stage_status, item=item, request_key=request_key: stage_status.update(
+                    {
+                        "status": "running",
+                        "started_at": runner.now(),
+                        "request_key": request_key,
+                        "execution_policy": "model_pipeline",
+                        "max_output_tokens": max_output_tokens,
+                        **({"run_id": run_id} if run_id is not None else {}),
+                    }
+                ),
+            )
+
+        reservation: str | None = None
+        try:
+            if budget_guard is not None:
+                reservation = budget_guard.reserve(
+                    instructions + "\n" + input_text,
+                    max_output_tokens,
+                    uncertainty_key=uncertainty_key,
+                )
+            response, _latency = client.complete(instructions, input_text, max_output_tokens)
+        except runner.AmbiguousTransportError as exc:
+            conservative_cost_rmb = (
+                float(budget_guard.commit_estimate(reservation))
+                if reservation is not None
+                else 0.0
+            )
+            request_status.update(
+                {
+                    "status": "uncertain",
+                    "finished_at": runner.now(),
+                    "error": str(exc),
+                    "conservative_cost_rmb": conservative_cost_rmb,
+                    "uncertainty_key": uncertainty_key,
+                    "uncertainty_reservation_id": reservation,
+                }
+            )
+            _persist_batch_request(article_dir, stage, request_status)
+            if conservative_cost_rmb > 0:
+                runner.append_cost_ledger(
+                    article_dir,
+                    {
+                        "event_id": request_key,
+                        "kind": "style_batch_ambiguous_transport_reservation",
+                        "stage": stage,
+                        "request_key": request_key,
+                        "chunk_ids": request_status["chunk_ids"],
+                        "cost_rmb": conservative_cost_rmb,
+                    },
+                )
+            for item in batch.items:
+                chunk = chunk_map[item.chunk_id]
+                task = dict(task_factory(chunk))
+                _update_stage_status(
+                    article_dir=article_dir,
+                    task=task,
+                    chunk=chunk,
+                    source_hash=item.source_hash,
+                    stage=stage,
+                    mutate=lambda stage_status, exc=exc, conservative_cost_rmb=conservative_cost_rmb: stage_status.update(
+                        {
+                            "status": "uncertain",
+                            "finished_at": runner.now(),
+                            "error": str(exc),
+                            "conservative_cost_rmb": conservative_cost_rmb,
+                            "uncertainty_key": uncertainty_key,
+                            "uncertainty_reservation_id": reservation,
+                        }
+                    ),
+                )
+            raise
+        except Exception:
+            if reservation is not None and budget_guard is not None:
+                budget_guard.commit_estimate(reservation)
+            raise
+
+        billed_usage = runner.coarse_response_usage(response)
+        if reservation is not None and budget_guard is not None:
+            budget_guard.settle(reservation, billed_usage)
+            if hasattr(budget_guard, "resolve_uncertain"):
+                budget_guard.resolve_uncertain(uncertainty_key)
+        cost_rmb = runner.estimate_cost_rmb(
+            billed_usage,
+            budget_guard.usd_cny_rate
+            if budget_guard is not None and hasattr(budget_guard, "usd_cny_rate")
+            else runner.DEFAULT_USD_CNY_RATE,
+        )
+        totals["input_tokens"] += _token_count(billed_usage.get("input_tokens"))
+        totals["cached_tokens"] += _token_count(billed_usage.get("cached_tokens"))
+        totals["output_tokens"] += _token_count(billed_usage.get("output_tokens"))
+        totals["total_tokens"] += _token_count(billed_usage.get("total_tokens"))
+        totals["cost_rmb"] += cost_rmb
+        request_status.update(
+            {
+                "status": "settled",
+                "finished_at": runner.now(),
+                "response_id": str(response.get("id") or request_key),
+                "usage": billed_usage,
+                "cost_rmb": cost_rmb,
+                "response": runner.response_metadata(response),
+            }
+        )
+        _persist_batch_request(article_dir, stage, request_status)
+        runner.append_cost_ledger(
+            article_dir,
+            {
+                "event_id": request_status["response_id"],
+                "kind": "style_batch_settled_response",
+                "stage": stage,
+                "request_key": request_key,
+                "chunk_ids": request_status["chunk_ids"],
+                "usage": billed_usage,
+                "cost_rmb": cost_rmb,
+            },
+        )
+
+        try:
+            parsed = parse_style_batch_response(
+                _response_text(response),
+                (item.chunk_id for item in batch.items),
+            )
+        except StyleBatchProtocolError as exc:
+            request_status.update(
+                {
+                    "status": "protocol_failed",
+                    "finished_at": runner.now(),
+                    "error": str(exc),
+                }
+            )
+            _persist_batch_request(article_dir, stage, request_status)
+            for item in batch.items:
+                chunk = chunk_map[item.chunk_id]
+                task = dict(task_factory(chunk))
+                _update_stage_status(
+                    article_dir=article_dir,
+                    task=task,
+                    chunk=chunk,
+                    source_hash=item.source_hash,
+                    stage=stage,
+                    mutate=lambda stage_status, exc=exc: stage_status.update(
+                        {
+                            "status": "failed",
+                            "finished_at": runner.now(),
+                            "error": str(exc),
+                        }
+                    ),
+                )
+            return tuple(item.chunk_id for item in batch.items)
+
+        failed_ids: list[str] = []
+        for item in batch.items:
+            chunk = chunk_map[item.chunk_id]
+            task = dict(task_factory(chunk))
+            source_path = runner.article_artifact_path(article_dir, str(chunk["source_file"]))
+            source = source_path.read_text(encoding="utf-8")
+            selected_terms = runner.compile_glossary_terms(source, terms)
+            output_path = runner.stage_output_path(
+                article_dir,
+                item.chunk_id,
+                str(chunk["output_file"]),
+                stage,
+            )
+            protected_text = parsed[item.chunk_id]
+            try:
+                mapping, typed_nodes = plan.restoration_data[item.chunk_id]
+                restored = runner.restore_stage_text(protected_text, mapping, typed_nodes)
+                qc = runner.validate_chunk(source, restored, {}, selected_terms)
+            except Exception as exc:
+                candidate_metadata = runner.persist_rejected_candidate(
+                    article_dir,
+                    item.chunk_id,
+                    stage,
+                    request_key,
+                    protected_text,
+                    protected=True,
+                )
+                failed_ids.append(item.chunk_id)
+                _update_stage_status(
+                    article_dir=article_dir,
+                    task=task,
+                    chunk=chunk,
+                    source_hash=item.source_hash,
+                    stage=stage,
+                    mutate=lambda stage_status, exc=exc, candidate_metadata=candidate_metadata: stage_status.update(
+                        {
+                            "status": "failed",
+                            "finished_at": runner.now(),
+                            "error": str(exc),
+                            "request_key": request_key,
+                            "response_id": request_status["response_id"],
+                            "item_key": item.item_key,
+                            "execution_policy": "model_pipeline",
+                            **candidate_metadata,
+                        }
+                    ),
+                )
+                continue
+
+            if not qc.ok:
+                candidate_metadata = runner.persist_rejected_candidate(
+                    article_dir,
+                    item.chunk_id,
+                    stage,
+                    request_key,
+                    restored,
+                    protected=False,
+                )
+                failed_ids.append(item.chunk_id)
+                _update_stage_status(
+                    article_dir=article_dir,
+                    task=task,
+                    chunk=chunk,
+                    source_hash=item.source_hash,
+                    stage=stage,
+                    mutate=lambda stage_status, qc=qc, candidate_metadata=candidate_metadata: stage_status.update(
+                        {
+                            "status": "failed",
+                            "finished_at": runner.now(),
+                            "error": "QC failed: " + ", ".join(qc.failures),
+                            "request_key": request_key,
+                            "response_id": request_status["response_id"],
+                            "item_key": item.item_key,
+                            "execution_policy": "model_pipeline",
+                            "qc": qc.to_dict(),
+                            **candidate_metadata,
+                        }
+                    ),
+                )
+                continue
+
+            runner.atomic_text(output_path, restored)
+            _update_stage_status(
+                article_dir=article_dir,
+                task=task,
+                chunk=chunk,
+                source_hash=item.source_hash,
+                stage=stage,
+                mutate=lambda stage_status, restored=restored, qc=qc, output_path=output_path: (
+                    [stage_status.pop(field_name, None) for field_name in _LOCAL_STAGE_STALE_FIELDS],
+                    stage_status.update(
+                        {
+                            "status": "complete",
+                            "finished_at": runner.now(),
+                            "request_key": request_key,
+                            "response_id": request_status["response_id"],
+                            "item_key": item.item_key,
+                            "execution_policy": "model_pipeline",
+                            "output_file": output_path.name,
+                            "output_hash": text_hash(restored),
+                            "qc": qc.to_dict(),
+                        }
+                    ),
+                ),
+            )
+        return tuple(failed_ids)
+
+    recovery_queue: list[str] = []
+    for batch in plan.normal_batches:
+        recovery_queue.extend(process_batch(batch))
+
+    if recovery_queue:
+        recovery_items = [item_map[chunk_id] for chunk_id in recovery_queue]
+        for batch in plan_style_batches(recovery_items, recovery=True):
+            failed_after_recovery.extend(process_batch(batch))
+
+    if failed_after_recovery:
+        failed = ", ".join(failed_after_recovery)
+        raise RuntimeError(f"style stage failed after one recovery pass: {failed}")
+
+    planned_chunks = len(plan.reused) + len(plan.local) + len(plan.model_items)
+    completed_chunks = planned_chunks
+    return StyleStageResult(
+        planned_chunks=planned_chunks,
+        completed_chunks=completed_chunks,
+        reused_chunks=len(plan.reused),
+        local_chunks=len(plan.local),
+        failed_chunks=0,
+        normal_requests=normal_requests,
+        recovery_requests=recovery_requests,
+        input_tokens=totals["input_tokens"],
+        cached_tokens=totals["cached_tokens"],
+        output_tokens=totals["output_tokens"],
+        total_tokens=totals["total_tokens"],
+        total_cost_rmb=totals["cost_rmb"],
     )
