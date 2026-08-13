@@ -1627,6 +1627,74 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertEqual(report["missing_revision_chunk_ids"], ["chunk0001"])
         self.assertNotIn("projected_normal_api_calls", report)
 
+    def test_style_projection_report_uses_conservative_academic_ceiling_when_anti_ai_is_pending(self) -> None:
+        module = load_module()
+        article = Path(self.temporary.name) / "projection-article"
+        article.mkdir()
+        chunks = []
+        for index in range(1, 4):
+            chunk_id = f"chunk{index:04d}"
+            source_file = f"{chunk_id}.md"
+            output_file = f"output_{chunk_id}.md"
+            source_text = f"{index}-" + ("a" * 7_000) + "\n"
+            (article / source_file).write_text(source_text, encoding="utf-8")
+            revision_output = module.runner.stage_output_path(
+                article,
+                chunk_id,
+                output_file,
+                "revision",
+            )
+            revision_output.parent.mkdir(parents=True, exist_ok=True)
+            revision_output.write_text(source_text, encoding="utf-8")
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": index,
+                    "source_file": source_file,
+                    "output_file": output_file,
+                    "source_hash": module.runner.text_hash(source_text),
+                }
+            )
+            stage_status = {
+                "schema_version": 1,
+                "record_id": "arxiv:allowed",
+                "chunk_id": chunk_id,
+                "source_file": source_file,
+                "stages": {
+                    "revision": {
+                        "status": "complete",
+                        "output_file": revision_output.name,
+                        "output_hash": module.runner.text_hash(source_text),
+                    }
+                },
+            }
+            (article / "chunk_status").mkdir(exist_ok=True)
+            (article / "chunk_status" / f"{chunk_id}.json").write_text(
+                json.dumps(stage_status),
+                encoding="utf-8",
+            )
+        (article / "manifest.json").write_text(
+            json.dumps({"record_id": "arxiv:allowed", "chunks": chunks}),
+            encoding="utf-8",
+        )
+        (article / "chunking_status.json").write_text(
+            json.dumps({"record_id": "arxiv:allowed"}),
+            encoding="utf-8",
+        )
+        (article / "04-critique.md").write_text("", encoding="utf-8")
+
+        report = module.style_projection_report(article, terms=[])
+
+        self.assertTrue(report["projection_ready"])
+        academic = report["style_projection"]["planned"]["academic"]
+        self.assertEqual(academic["semantics"], "conservative")
+        self.assertEqual(academic["estimated_normal_requests"], 2)
+        self.assertEqual(academic["estimated_worst_case_requests"], 4)
+        self.assertEqual(academic["normal_requests"], 3)
+        self.assertEqual(academic["worst_case_requests"], 6)
+        self.assertEqual(report["projected_normal_api_calls"], 4)
+        self.assertEqual(report["projected_worst_case_api_calls"], 10)
+
     def test_chunk_barrier_retries_qc_failure_but_not_uncertain_request(self) -> None:
         module = load_module()
         chunk = {"id": "chunk0001", "source_file": "chunk0001.md"}

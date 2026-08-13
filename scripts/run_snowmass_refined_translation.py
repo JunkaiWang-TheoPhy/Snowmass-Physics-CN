@@ -1166,10 +1166,16 @@ def _legacy_style_batch_projection(planned: dict[str, dict[str, Any]]) -> dict[s
                     seen_chunk_ids.add(chunk_id)
                     model_chunks.append(chunk_id)
             current_style_requests += len(stage_model_chunks)
-        stage_batches = plan.get("normal_batches")
-        stage_batch_characters = plan.get("normal_batch_characters")
+        stage_batches = plan.get("estimated_normal_batches") or plan.get("normal_batches")
+        stage_batch_characters = (
+            plan.get("estimated_normal_batch_characters") or plan.get("normal_batch_characters")
+        )
         if isinstance(stage_batches, list):
-            projected_style_requests += int(plan.get("normal_requests") or len(stage_batches))
+            projected_style_requests += int(
+                plan.get("estimated_normal_requests")
+                or plan.get("normal_requests")
+                or len(stage_batches)
+            )
             for index, batch in enumerate(stage_batches):
                 if not isinstance(batch, list) or not all(isinstance(chunk_id, str) for chunk_id in batch):
                     continue
@@ -1559,11 +1565,8 @@ def style_projection_report(
         input_stage="revision",
         context_factory=context_factory,
     )
-    academic_input_stage = (
-        "anti_ai"
-        if not _missing_stage_chunk_ids(article_dir, chunks, "anti_ai")
-        else "revision"
-    )
+    anti_ai_complete = not _missing_stage_chunk_ids(article_dir, chunks, "anti_ai")
+    academic_input_stage = "anti_ai" if anti_ai_complete else "revision"
     academic_plan = style_batching.prepare_style_items(
         article_dir=article_dir,
         chunks=chunks,
@@ -1573,27 +1576,38 @@ def style_projection_report(
         input_stage=academic_input_stage,
         context_factory=context_factory,
     )
+    academic_projection = (
+        style_batching.stage_plan_projection(academic_plan)
+        if anti_ai_complete
+        else style_batching.conservative_stage_plan_projection(academic_plan)
+    )
     style_projection = {
         "schema_version": 1,
         "execution_mode": "exact_id_batching",
         "planned": {
             "anti_ai": style_batching.stage_plan_projection(anti_ai_plan),
-            "academic": style_batching.stage_plan_projection(academic_plan),
+            "academic": academic_projection,
         },
         "actual": {},
     }
     style_projection.update(_legacy_style_batch_projection(style_projection["planned"]))
+    projected_normal_api_calls = sum(
+        int(
+            style_projection["planned"][stage_name].get("estimated_normal_requests")
+            or style_projection["planned"][stage_name]["normal_requests"]
+            or 0
+        )
+        for stage_name in ("anti_ai", "academic")
+    )
+    projected_worst_case_api_calls = sum(
+        int(style_projection["planned"][stage_name]["worst_case_requests"])
+        for stage_name in ("anti_ai", "academic")
+    )
     report.update(
         {
             "style_projection": style_projection,
-            "projected_normal_api_calls": sum(
-                int(style_projection["planned"][stage_name]["normal_requests"])
-                for stage_name in ("anti_ai", "academic")
-            ),
-            "projected_worst_case_api_calls": sum(
-                int(style_projection["planned"][stage_name]["worst_case_requests"])
-                for stage_name in ("anti_ai", "academic")
-            ),
+            "projected_normal_api_calls": projected_normal_api_calls,
+            "projected_worst_case_api_calls": projected_worst_case_api_calls,
         }
     )
     return report

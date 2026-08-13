@@ -104,6 +104,27 @@ def stage_plan_projection(plan: StyleStagePlan) -> dict[str, Any]:
         ],
         "normal_requests": len(plan.normal_batches),
         "worst_case_requests": plan.worst_case_requests,
+        "semantics": "exact",
+    }
+
+
+def conservative_stage_plan_projection(plan: StyleStagePlan) -> dict[str, Any]:
+    estimated = stage_plan_projection(plan)
+    conservative_model_batches = [[item.chunk_id] for item in plan.model_items]
+    conservative_batch_characters = [len(item.protected_text) for item in plan.model_items]
+    conservative_normal_requests = len(conservative_model_batches)
+    conservative_worst_case_requests = conservative_normal_requests + len(conservative_model_batches)
+    return {
+        **estimated,
+        "semantics": "conservative",
+        "estimated_normal_requests": estimated["normal_requests"],
+        "estimated_worst_case_requests": estimated["worst_case_requests"],
+        "estimated_normal_batches": estimated["normal_batches"],
+        "estimated_normal_batch_characters": estimated["normal_batch_characters"],
+        "normal_batches": conservative_model_batches,
+        "normal_batch_characters": conservative_batch_characters,
+        "normal_requests": conservative_normal_requests,
+        "worst_case_requests": conservative_worst_case_requests,
     }
 
 
@@ -528,8 +549,8 @@ def prepare_style_items(
 
     planned_items = tuple(model_items)
     normal_batches = plan_style_batches(planned_items)
-    recovery_batches = (len(planned_items) + RECOVERY_BATCH_CHUNKS - 1) // RECOVERY_BATCH_CHUNKS
-    worst_case_requests = len(normal_batches) + recovery_batches
+    recovery_batches = plan_style_batches(planned_items, recovery=True)
+    worst_case_requests = len(normal_batches) + len(recovery_batches)
     return StyleStagePlan(
         reused=tuple(reused),
         local=tuple(local),

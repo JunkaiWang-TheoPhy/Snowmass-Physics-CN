@@ -118,6 +118,7 @@ class StyleBatchPlanningTests(unittest.TestCase):
                 "normal_batch_characters": [2, 1],
                 "normal_requests": 2,
                 "worst_case_requests": 3,
+                "semantics": "exact",
             },
         )
 
@@ -525,7 +526,35 @@ class StylePreparationTests(unittest.TestCase):
 
         self.assertEqual(len(plan.model_items), 9)
         self.assertEqual(len(plan.normal_batches), 9)
-        self.assertEqual(plan.worst_case_requests, 11)
+        self.assertEqual(plan.worst_case_requests, 18)
+
+    def test_worst_case_requests_tracks_recovery_character_caps_for_near_limit_chunks(self) -> None:
+        chunks = tuple(self._chunk(f"chunk{i:04d}") for i in range(1, 4))
+        for index, chunk in enumerate(chunks, 1):
+            source_text = f"{index}-" + ("a" * 10_000) + "\n"
+            (self.article_dir / chunk["source_file"]).write_text(
+                source_text,
+                encoding="utf-8",
+            )
+            self.runner.stage_output_path(
+                self.article_dir,
+                chunk["id"],
+                chunk["output_file"],
+                "revision",
+            ).write_text(source_text, encoding="utf-8")
+
+        plan = self.batching.prepare_style_items(
+            article_dir=self.article_dir,
+            chunks=chunks,
+            task_factory=lambda _chunk: {"record_id": "arxiv:test"},
+            terms=[],
+            stage="anti_ai",
+            input_stage="revision",
+            context_factory=lambda _chunk: "",
+        )
+
+        self.assertEqual([len(batch.items) for batch in plan.normal_batches], [1, 1, 1])
+        self.assertEqual(plan.worst_case_requests, 6)
 
     def test_passthrough_local_completion_clears_old_failed_stage_metadata(self) -> None:
         stale_fields = {
@@ -1344,3 +1373,121 @@ class StyleExecutionTests(unittest.TestCase):
             )
 
         self.assertEqual(client.calls, 2)
+
+    def test_recovery_requests_stay_within_the_planned_near_limit_ceiling(self) -> None:
+        chunks = tuple(
+            {
+                "id": f"chunk{i:04d}",
+                "source_file": f"chunk{i:04d}.md",
+                "output_file": f"output_chunk{i:04d}.md",
+            }
+            for i in range(1, 4)
+        )
+        for chunk in chunks:
+            source_text = f"{chunk['id']} " + ("a" * 10_000) + "\n"
+            (self.article_dir / chunk["source_file"]).write_text(
+                source_text,
+                encoding="utf-8",
+            )
+            self.runner.stage_output_path(
+                self.article_dir,
+                chunk["id"],
+                chunk["output_file"],
+                "revision",
+            ).write_text(source_text, encoding="utf-8")
+
+        plan = self.batching.prepare_style_items(
+            article_dir=self.article_dir,
+            chunks=chunks,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            input_stage="revision",
+            context_factory=lambda _chunk: "chunk-local critique",
+        )
+
+        class CeilingBudgetGuard:
+            usd_cny_rate = self.runner.DEFAULT_USD_CNY_RATE
+
+            def reserve(self, _input: str, _maximum: int, *, uncertainty_key=None):
+                return "reservation"
+
+            def settle(self, _reservation: str, _usage: dict[str, object]) -> None:
+                return None
+
+            def commit_estimate(self, _reservation: str) -> float:
+                return 0.25
+
+            def resolve_uncertain(self, _uncertainty_key: str) -> bool:
+                return True
+
+            def snapshot(self) -> dict[str, object]:
+                return {"stage_remaining_api_calls": 16}
+
+        class SplitFailureThenRecoveryClient:
+            def __init__(self, plan):
+                self.plan = plan
+                self.calls = 0
+                self.requested_ids: list[tuple[str, ...]] = []
+
+            def complete(self, _instructions: str, input_text: str, _maximum: int):
+                payload = json.loads(input_text)
+                ids = tuple(chunk["id"] for chunk in payload["chunks"])
+                self.requested_ids.append(ids)
+                self.calls += 1
+                if self.calls <= 3:
+                    return (
+                        {
+                            "id": f"resp-{self.calls}",
+                            "status": "completed",
+                            "model": "fake-style-model",
+                            "output_text": json.dumps({"translations": {}}, ensure_ascii=False),
+                            "usage": {
+                                "input_tokens": 10,
+                                "input_tokens_details": {"cached_tokens": 0},
+                                "output_tokens": 5,
+                                "output_tokens_details": {"reasoning_tokens": 0},
+                                "total_tokens": 15,
+                            },
+                        },
+                        0.1,
+                    )
+                item = next(item for item in self.plan.model_items if item.chunk_id == ids[0])
+                return (
+                    {
+                        "id": f"resp-{self.calls}",
+                        "status": "completed",
+                        "model": "fake-style-model",
+                        "output_text": json.dumps(
+                            {"translations": {ids[0]: item.protected_text}},
+                            ensure_ascii=False,
+                        ),
+                        "usage": {
+                            "input_tokens": 10,
+                            "input_tokens_details": {"cached_tokens": 0},
+                            "output_tokens": 5,
+                            "output_tokens_details": {"reasoning_tokens": 0},
+                            "total_tokens": 15,
+                        },
+                    },
+                    0.1,
+                )
+
+        client = SplitFailureThenRecoveryClient(plan)
+        result = self.batching.execute_style_stage(
+            article_dir=self.article_dir,
+            chunks=chunks,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            plan=plan,
+            client=client,
+            instructions="clean the prose",
+            max_output_tokens=256,
+            budget_guard=CeilingBudgetGuard(),
+            run_id="run-near-limit",
+        )
+
+        self.assertEqual(result.normal_requests, 3)
+        self.assertEqual(result.recovery_requests, 3)
+        self.assertLessEqual(result.normal_requests + result.recovery_requests, plan.worst_case_requests)
