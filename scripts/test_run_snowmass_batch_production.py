@@ -695,6 +695,31 @@ class BatchResumeTests(unittest.TestCase):
             self.assertEqual(recoverable[0]["status"], "quarantined")
             self.assertTrue(recoverable[0]["resumed_from_verified_artifacts"])
 
+    def test_quarantine_reenters_queue_after_translation_contract_changes(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = module._article_dir(config, "arxiv:a")
+            article.mkdir(parents=True)
+            (article / "manifest.json").write_text('{"record_id":"arxiv:a"}\n', encoding="utf-8")
+            with mock.patch.object(module, "_translation_contract_fingerprint", return_value="old"):
+                module._persist_quarantine(config, "arxiv:a", RuntimeError("bad structure"))
+
+            with (
+                mock.patch.object(module, "_translation_contract_fingerprint", return_value="new"),
+                mock.patch.object(module, "_resume_article_result", return_value=None),
+                mock.patch.object(module, "evaluate_article_qc", return_value={"ok": False}),
+            ):
+                recoverable, package_only, paid_pending = module._classify_selected_records(
+                    config, [record]
+                )
+
+            self.assertEqual(recoverable, [])
+            self.assertEqual(package_only, [])
+            self.assertEqual(paid_pending, [record])
+
     def test_preflight_separates_package_only_work_from_paid_translation(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
