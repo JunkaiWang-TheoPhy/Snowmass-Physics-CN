@@ -522,6 +522,33 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertNotEqual(first, second)
 
+    def test_completed_legacy_revision_never_receives_full_paper_critique(self) -> None:
+        module = load_module()
+        status_dir = self.article / "chunk_status"
+        status_dir.mkdir(exist_ok=True)
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "stages": {
+                        "revision": {
+                            "status": "complete",
+                            "paper_context_scope": "paper_full",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        critique = "- chunk0001: local issue\n- chunk0002: unrelated 2021 issue\n"
+
+        context = module._revision_context_preserving_completed_checkpoint(
+            self.article, "chunk0001", critique
+        )
+
+        self.assertIn("chunk0001", context)
+        self.assertNotIn("chunk0002", context)
+        self.assertNotIn("2021", context)
+
     def test_valid_legacy_critique_is_reused_for_identical_source_and_draft(self) -> None:
         module = load_module()
         source = "<!-- chunk0001 -->\nEnglish source.\n"

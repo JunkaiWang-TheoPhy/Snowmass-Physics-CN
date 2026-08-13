@@ -1606,13 +1606,6 @@ def _revision_context_preserving_completed_checkpoint(
     chunk_id: str,
     critique: str,
 ) -> str:
-    status_path = article_dir / "chunk_status" / f"{chunk_id}.json"
-    if status_path.is_file():
-        stage = _load_json(status_path).get("stages", {}).get("revision", {})
-        if isinstance(stage, dict) and stage.get("status") == "complete":
-            if stage.get("paper_context_scope") in {"chunk_local", "no_actionable"}:
-                return _critique_context_for_chunk(critique, chunk_id)
-            return critique
     return _critique_context_for_chunk(critique, chunk_id)
 
 
