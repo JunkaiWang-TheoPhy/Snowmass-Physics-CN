@@ -18,6 +18,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import package_snowmass_translation_pdf as packager
 import prepare_snowmass_babeldoc as prepare
+import snowmass_qc_contract as qc_contract
+import snowmass_production_contract as production_contract
 from run_snowmass_batch_production import load_publication_records
 
 
@@ -83,6 +85,33 @@ def main(argv: list[str] | None = None) -> int:
     for record_id in args.record_id:
         safe_id = prepare.safe_record_name(record_id)
         source_article = args.article_root / safe_id
+        artifact_report = production_contract.validate_artifact_manifest(
+            source_article / "production_artifacts.json",
+            article_root=source_article,
+            rights_manifest_path=args.rights_manifest,
+        )
+        if not artifact_report["ok"]:
+            raise RuntimeError(
+                f"HPC snapshot artifact contract failed for {record_id}: "
+                + ", ".join(artifact_report["errors"])
+            )
+        environment_lock_sha256 = artifact_report["manifest"]["environment_lock_sha256"]
+        source_qc_paths = [source_article / "qc" / f"{kind}.json" for kind in qc_contract.ALLOWED_KINDS]
+        qc_gate = qc_contract.validate_publishability_receipts(
+            source_qc_paths,
+            article_root=source_article,
+            expected_record_id=record_id,
+            current_environment_lock_sha256=environment_lock_sha256,
+            required_contract_version=1,
+        )
+        if not qc_gate["publishable"]:
+            raise RuntimeError(
+                f"HPC snapshot QC receipt gate failed for {record_id}: "
+                + ", ".join(qc_gate["errors"])
+            )
+        qc_receipts = {
+            report["kind"]: report["receipt"]["receipt_hash"] for report in qc_gate["receipts"]
+        }
         destination = root / "papers" / safe_id
         manifest = copy_article(source_article, destination)
         qr_path = root / "assets" / f"{safe_id}.qr.png"
@@ -99,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
             "mountain_asset": "assets/mountain.png",
             "cjk_font": "assets/cjk-font.ttc",
             "paper_qr": f"assets/{safe_id}.qr.png",
+            "qc_receipt_hashes": qc_receipts,
+            "environment_lock_sha256": environment_lock_sha256,
         })
     tracked = []
     for path in sorted(item for item in root.rglob("*") if item.is_file()):

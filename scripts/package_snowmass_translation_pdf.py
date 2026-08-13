@@ -32,7 +32,7 @@ CONTRIBUTOR_LABEL = "中文翻译贡献者：WangTheoPhys*"
 WEBSITE_ORIGIN = "https://snowmass-physics-cn.netlify.app"
 DISCLAIMER_TEXT = "本译文由中文翻译协作项目制作，不代表原作者审定或认可；如有歧义，以英文原文为准。"
 CONTACT_TEXT = "*Contact: WangTheoPhys@outlook.com"
-PACKAGING_CONTRACT_VERSION = 3
+PACKAGING_CONTRACT_VERSION = 4
 LICENSE_CONDITION_LABELS = {
     "attribution": "署名",
     "indicate-changes": "注明修改",
@@ -47,6 +47,7 @@ def package_translation_pdf(
     output_pdf_path: str | Path,
     version: str,
     packaged_on: str | dt.date | dt.datetime,
+    qc_receipt_hashes: dict[str, str] | None = None,
     qr_image_path: str | Path = DEFAULT_QR_IMAGE_PATH,
     mountain_svg_path: str | Path = DEFAULT_MOUNTAIN_SVG_PATH,
     cjk_font_path: str | Path = SYSTEM_CJK_FONT,
@@ -60,6 +61,10 @@ def package_translation_pdf(
         raise ValueError("Chinese title is required")
     if re.search(r"\{v\d+\}|\[\[SM_", chinese_title):
         raise ValueError("Chinese title contains an unresolved structure placeholder")
+    if not isinstance(qc_receipt_hashes, dict) or set(qc_receipt_hashes) != {"semantic", "structural", "visual"}:
+        raise ValueError("semantic, structural and visual QC receipt hashes are required")
+    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in qc_receipt_hashes.values()):
+        raise ValueError("QC receipt hashes must be lowercase SHA-256 values")
 
     source_pdf = Path(source_pdf_path)
     output_pdf = Path(output_pdf_path)
@@ -126,6 +131,7 @@ def package_translation_pdf(
         "source_pdf_sha256": _sha256_file(source_pdf),
         "cover_pdf_sha256": _sha256_file(cover_pdf),
         "packaged_pdf_sha256": _sha256_file(output_pdf),
+        "qc_receipt_hashes": dict(sorted(qc_receipt_hashes.items())),
     }
     receipt_path.write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

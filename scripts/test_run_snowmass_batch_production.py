@@ -94,7 +94,7 @@ class BatchSelectionTests(unittest.TestCase):
         self.assertEqual([row["record_id"] for row in first], [row["record_id"] for row in second])
         self.assertEqual(len(first), 10)
         with self.assertRaisesRegex(ValueError, "not publication-allowed"):
-            module.select_stage_records(records, "baseline", explicit_ids=("arxiv:blocked",))
+            module.select_stage_records(records, "shadow", explicit_ids=("arxiv:blocked",))
 
     def test_production_stages_are_disjoint_and_cover_every_eligible_record(self) -> None:
         module = load_module()
@@ -110,14 +110,14 @@ class BatchSelectionTests(unittest.TestCase):
 
         stages = {
             stage: module.select_stage_records(records, stage)
-            for stage in ("baseline", "pilot10", "batch50", "remainder")
+            for stage in ("shadow", "pilot5", "pilot10", "pilot25", "batch50", "remainder")
         }
         stage_ids = {
             stage: {row["record_id"] for row in selected}
             for stage, selected in stages.items()
         }
 
-        self.assertEqual([len(stages[name]) for name in stages], [1, 10, 50, 19])
+        self.assertEqual([len(stages[name]) for name in stages], [1, 5, 10, 25, 39, 0])
         names = list(stage_ids)
         for index, left in enumerate(names):
             for right in names[index + 1 :]:
@@ -133,10 +133,20 @@ class BatchSelectionTests(unittest.TestCase):
 
         self.assertEqual(module.resolve_babeldoc_python(console), runtime)
 
+    def test_babeldoc_runtime_supports_env_python_shebang(self) -> None:
+        module = load_module()
+        console = self.root / "babeldoc-env"
+        console.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+        with mock.patch.object(module.shutil, "which", return_value="/verified/python3"):
+            self.assertEqual(
+                module.resolve_babeldoc_python(console), Path("/verified/python3")
+            )
+
     def test_cli_requires_a_positive_finite_stage_request_cap(self) -> None:
         module = load_module()
         base = [
-            "--stage", "baseline",
+            "--stage", "shadow",
             "--project-max-cost-rmb", "1000",
             "--stage-max-cost-rmb", "10",
         ]
@@ -154,7 +164,7 @@ class BatchSelectionTests(unittest.TestCase):
             pdf_root=self.root / "pdf",
             output_root=self.root / "output",
             control_dir=self.root / "control",
-            stage="baseline",
+            stage="shadow",
             explicit_ids=(),
             max_articles=None,
             project_max_cost_rmb=1000.0,
@@ -471,6 +481,47 @@ class ArticleQCTests(unittest.TestCase):
             self.assertFalse(report["ok"])
             self.assertIn("refill_chunk_hash_mismatch:chunk0001", report["failures"])
 
+    def test_qc_rejects_unsafe_chunk_id_before_publication_path_join(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "manifest.json").write_text(
+                json.dumps({"record_id": "arxiv:a", "chunks": [{"id": "../escape"}]}),
+                encoding="utf-8",
+            )
+            (article / "paper_status.json").write_text('{"status":"complete"}', encoding="utf-8")
+            (article / "refill_status.json").write_text('{"status":"complete"}', encoding="utf-8")
+
+            report = module.evaluate_article_qc(article)
+
+            self.assertIn("unsafe_chunk_id:../escape", report["failures"])
+
+    def test_qc_requires_explicit_not_applicable_for_zero_figure_and_table_regions(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "manifest.json").write_text(
+                json.dumps({"record_id": "arxiv:a", "chunks": []}), encoding="utf-8"
+            )
+            (article / "paper_status.json").write_text('{"status":"complete"}', encoding="utf-8")
+            (article / "refill_status.json").write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "publication_qc": {"ok": True},
+                        "reference_qc": {"verified": True},
+                        "figure_region_count": 0,
+                        "table_region_count": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = module.evaluate_article_qc(article)
+
+            self.assertIn("figure_region_classification_missing", report["failures"])
+            self.assertIn("table_region_classification_missing", report["failures"])
+
     def test_manifest_output_path_cannot_escape_article_directory(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
@@ -482,6 +533,15 @@ class ArticleQCTests(unittest.TestCase):
 
 
 class RunLockTests(unittest.TestCase):
+    def test_production_environment_lock_is_complete_and_self_validating(self) -> None:
+        module = load_module()
+
+        environment = module._production_environment_lock()
+
+        self.assertIsInstance(environment["lock_sha256"], str)
+        self.assertEqual(environment["contracts"]["model"], module.runner.MODEL)
+        self.assertEqual(module.production_contract._environment_lock_errors(environment), [])
+
     def test_same_run_cannot_be_started_twice(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
@@ -505,7 +565,7 @@ class RunLockTests(unittest.TestCase):
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "snapshot.json"
-            identity = {"run_id": "run-1", "stage": "baseline", "stage_max_api_calls": 250}
+            identity = {"run_id": "run-1", "stage": "shadow", "stage_max_api_calls": 250}
             module._write_or_refresh_run_snapshot(
                 path,
                 identity,
@@ -547,7 +607,7 @@ class BatchResumeTests(unittest.TestCase):
             pdf_root=root / "pdf",
             output_root=root / "output",
             control_dir=root / "control",
-            stage="baseline",
+            stage="shadow",
             explicit_ids=("arxiv:a", "arxiv:b"),
             max_articles=None,
             project_max_cost_rmb=1000.0,
@@ -583,8 +643,24 @@ class BatchResumeTests(unittest.TestCase):
 
             self.assertEqual(attempted, ["arxiv:a", "arxiv:b"])
             self.assertEqual(result["status"], "complete_with_quarantine")
-            self.assertEqual(result["quarantined"], 1)
-            self.assertEqual(result["not_started"], 0)
+
+    def test_unchanged_quarantine_never_reenters_paid_queue(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = module._article_dir(config, "arxiv:a")
+            article.mkdir(parents=True)
+            (article / "manifest.json").write_text('{"record_id":"arxiv:a"}\n', encoding="utf-8")
+            module._persist_quarantine(config, "arxiv:a", RuntimeError("bad structure"))
+
+            recoverable, package_only, paid_pending = module._classify_selected_records(config, [record])
+
+            self.assertEqual(package_only, [])
+            self.assertEqual(paid_pending, [])
+            self.assertEqual(recoverable[0]["status"], "quarantined")
+            self.assertTrue(recoverable[0]["resumed_from_verified_artifacts"])
 
     def test_preflight_separates_package_only_work_from_paid_translation(self) -> None:
         module = load_module()
@@ -598,6 +674,7 @@ class BatchResumeTests(unittest.TestCase):
                 return {"ok": article_dir.name == "arxiv_a", "failures": []}
 
             with (
+                mock.patch.object(module, "_prepare_all") as prepare_all,
                 mock.patch.object(module, "_resume_article_result", return_value=None),
                 mock.patch.object(module, "evaluate_article_qc", side_effect=qc),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
@@ -639,6 +716,7 @@ class BatchResumeTests(unittest.TestCase):
                 }
 
             with (
+                mock.patch.object(module, "_prepare_all"),
                 mock.patch.object(module, "_resume_article_result", return_value=None),
                 mock.patch.object(module, "evaluate_article_qc", side_effect=qc),
                 mock.patch.object(module, "_projection_report_for_record", side_effect=projection),
@@ -664,7 +742,7 @@ class BatchResumeTests(unittest.TestCase):
                 pdf_root=root / "pdf",
                 output_root=root / "output",
                 control_dir=root / "control",
-                stage="baseline",
+                stage="shadow",
                 explicit_ids=("arxiv:a",),
                 max_articles=None,
                 project_max_cost_rmb=1000.0,
@@ -680,6 +758,7 @@ class BatchResumeTests(unittest.TestCase):
             )
 
             with (
+                mock.patch.object(module, "_prepare_all"),
                 mock.patch.object(module, "_resume_article_result", return_value=None),
                 mock.patch.object(module, "evaluate_article_qc", return_value={"ok": True, "failures": []}),
                 mock.patch.object(module, "_projection_report_for_record", side_effect=AssertionError("package-only must not project as paid")),
@@ -880,6 +959,7 @@ class BatchResumeTests(unittest.TestCase):
             with (
                 mock.patch.object(module, "evaluate_article_qc", return_value={"ok": True}),
                 mock.patch.object(module, "_source_character_count", return_value=7),
+                mock.patch.object(module, "_record_stage_artifact"),
                 mock.patch.object(module, "_package_article", return_value=expected["package"]),
                 mock.patch.object(module.refined, "run_refined_article") as translate,
             ):
@@ -919,6 +999,38 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_source_character_count", return_value=7),
             ):
                 self.assertIsNone(module._resume_article_result(config, record))
+
+    def test_resume_rejects_packaged_receipt_without_current_qc_and_artifact_chain(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = module._article_dir(config, "arxiv:a")
+            (article / "packaged").mkdir(parents=True)
+            (article / "rendered").mkdir()
+            source = article / "rendered/translated_mono.pdf"
+            output = article / "packaged/snowmass-a.zh-CN.pdf"
+            source.write_bytes(b"source")
+            output.write_bytes(b"package")
+            (article / "manifest.json").write_text(
+                '{"record_id":"arxiv:a","chunks":[]}\n', encoding="utf-8"
+            )
+            (article / "packaged/snowmass-a.zh-CN.json").write_text(
+                json.dumps({
+                    "record_id": "arxiv:a",
+                    "packaging_contract_version": module.packager.PACKAGING_CONTRACT_VERSION,
+                    "version": config.translation_version,
+                    "packaged_on": config.packaged_on,
+                    "source_pdf_sha256": module._sha256(source),
+                    "packaged_pdf_sha256": module._sha256(output),
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.object(module, "evaluate_article_qc", return_value={"ok": True}):
+                result = module._resume_article_result(config, record)
+
+            self.assertIsNone(result)
 
     def test_rolling_executor_passes_exact_run_article_arguments(self) -> None:
         module = load_module()
@@ -964,7 +1076,7 @@ class BatchResumeTests(unittest.TestCase):
                 pdf_root=root / "pdf",
                 output_root=root / "output",
                 control_dir=root / "control",
-                stage="baseline",
+                stage="shadow",
                 explicit_ids=("arxiv:a",),
                 max_articles=None,
                 project_max_cost_rmb=1000.0,
@@ -1021,6 +1133,41 @@ class BatchResumeTests(unittest.TestCase):
 
 
 class PromotionGateTests(unittest.TestCase):
+    def test_recovered_or_repackaged_results_cannot_promote_a_stage(self) -> None:
+        module = load_module()
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 20.0,
+            "project_reserved_rmb": 0.0,
+            "stage_spent_rmb": 0.0,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {"api_calls": 200, "uncertain_calls": 0},
+        }
+        results = [
+            {
+                "record_id": f"arxiv:{index}",
+                "status": "packaged",
+                "source_characters": 1000,
+                "resumed_from_verified_translation": True,
+            }
+            for index in range(10)
+        ]
+
+        metrics, gate = module.production_metrics_and_gate(
+            stage="pilot5",
+            through_stage="packaged",
+            eligible_record_count=273,
+            selected_count=10,
+            results=results,
+            failures=[],
+            budget=budget,
+        )
+
+        self.assertEqual(metrics["fresh_completed_articles"], 0)
+        self.assertFalse(gate["allowed"])
+        self.assertIn("no_fresh_production_evidence", gate["reasons"])
+        self.assertIn("recovered_results_not_promotion_evidence", gate["reasons"])
+
     def test_packaged_clean_run_reports_cost_efficiency_and_allows_next_stage(self) -> None:
         module = load_module()
         results = [
@@ -1046,17 +1193,17 @@ class PromotionGateTests(unittest.TestCase):
         }
 
         metrics, gate = module.production_metrics_and_gate(
-            stage="baseline",
+            stage="shadow",
             through_stage="packaged",
             eligible_record_count=273,
-            selected_count=2,
-            results=results,
+            selected_count=1,
+            results=results[:1],
             failures=[],
             budget=budget,
         )
 
-        self.assertEqual(metrics["cost_rmb_per_10k_source_characters"], 2.0)
-        self.assertEqual(metrics["projected_total_rmb_for_eligible_records"], 1375.0)
+        self.assertEqual(metrics["cost_rmb_per_10k_source_characters"], 5.0)
+        self.assertEqual(metrics["projected_total_rmb_for_eligible_records"], 2740.0)
         self.assertFalse(gate["allowed"])
         self.assertIn("projected_full_corpus_cost_exceeds_cap", gate["reasons"])
 
@@ -1081,7 +1228,7 @@ class PromotionGateTests(unittest.TestCase):
         }
 
         _metrics, gate = module.production_metrics_and_gate(
-            stage="baseline",
+            stage="shadow",
             through_stage="packaged",
             eligible_record_count=273,
             selected_count=1,
@@ -1116,11 +1263,11 @@ class PromotionGateTests(unittest.TestCase):
         }
 
         metrics, gate = module.production_metrics_and_gate(
-            stage="pilot10",
+            stage="pilot5",
             through_stage="packaged",
             eligible_record_count=273,
-            selected_count=1,
-            results=[{"record_id": "arxiv:a", "status": "packaged", "source_characters": 10000}],
+            selected_count=5,
+            results=[{"record_id": f"arxiv:{i}", "status": "packaged", "source_characters": 10000} for i in range(5)],
             failures=[],
             budget=budget,
         )
@@ -1166,11 +1313,14 @@ class PromotionGateTests(unittest.TestCase):
         }
 
         metrics, gate = module.production_metrics_and_gate(
-            stage="pilot10",
+            stage="pilot5",
             through_stage="packaged",
             eligible_record_count=273,
-            selected_count=2,
-            results=results,
+            selected_count=5,
+            results=results + [
+                {"record_id": f"arxiv:extra-{index}", "status": "packaged", "source_characters": 10000}
+                for index in range(3)
+            ],
             failures=[],
             budget=budget,
         )
@@ -1205,7 +1355,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
             pdf_root=root / "pdf",
             output_root=root / "output",
             control_dir=root / "control",
-            stage="baseline",
+            stage="shadow",
             explicit_ids=("arxiv:a",),
             max_articles=None,
             project_max_cost_rmb=1000.0,
@@ -1232,6 +1382,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                 preflight_only=True,
             )
             with (
+                mock.patch.object(module, "_prepare_all") as prepare_all,
                 mock.patch.object(module, "_resume_article_result", return_value=None),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
                 mock.patch.object(
@@ -1263,6 +1414,8 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
             ):
                 summary = module.run_batch(config, client=object())
 
+        prepare_all.assert_called_once_with(config, mock.ANY)
+
         self.assertEqual(summary["status"], "preflight")
         self.assertEqual(summary["projected_worst_case_api_calls"], 7)
         self.assertEqual(
@@ -1277,6 +1430,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
             root = Path(temporary)
             config = self._config(module, root, preflight_only=True)
             with (
+                mock.patch.object(module, "_prepare_all"),
                 mock.patch.object(module, "_resume_article_result", return_value=None),
                 mock.patch.object(module, "evaluate_article_qc", return_value={"ok": False, "failures": []}),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
@@ -1311,6 +1465,71 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
             summary["style_projection"]["planned"]["academic"]["normal_requests"],
             4,
         )
+
+    def test_preflight_new_paper_projects_revision_stage_instead_of_future_style(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(module, root, preflight_only=True)
+            with (
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_resume_article_result", return_value=None),
+                mock.patch.object(module, "evaluate_article_qc", return_value={"ok": False, "failures": []}),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+                mock.patch.object(
+                    module,
+                    "_projection_report_for_record",
+                    return_value={
+                        "record_id": "arxiv:a",
+                        "projection_ready": False,
+                        "missing_revision_chunk_ids": ["chunk0001"],
+                    },
+                ),
+                mock.patch.object(
+                    module,
+                    "_revision_ready_projection_report_for_record",
+                    return_value={
+                        "record_id": "arxiv:a",
+                        "projection_ready": True,
+                        "projected_worst_case_api_calls": 7,
+                        "missing_stage_api_calls": {
+                            "analysis": 1,
+                            "translate": 2,
+                            "terminology": 1,
+                            "critique": 2,
+                            "revision": 1,
+                        },
+                        "identity_diagnostics": {},
+                    },
+                ),
+            ):
+                summary = module.run_batch(config, client=object())
+
+        self.assertTrue(summary["launch_projection"]["projection_ready"])
+        self.assertEqual(summary["launch_projection"]["projected_worst_case_api_calls"], 7)
+        self.assertEqual(summary["launch_projection"]["revision_ready_record_ids"], ["arxiv:a"])
+
+    def test_style_projection_error_is_not_misclassified_as_missing_revision(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            with mock.patch.object(
+                module,
+                "_projection_report_for_record",
+                return_value={
+                    "record_id": "arxiv:a",
+                    "projection_ready": False,
+                    "missing_revision_chunk_ids": [],
+                    "error": "invalid style checkpoint",
+                },
+            ), mock.patch.object(module, "_revision_ready_projection_report_for_record") as revision:
+                summary = module._projection_summary(config, [record])
+
+            self.assertFalse(summary["launch_projection"]["projection_ready"])
+            self.assertEqual(summary["launch_projection"]["not_ready_record_ids"], ["arxiv:a"])
+            revision.assert_not_called()
 
     def test_revision_ready_launch_gate_rejects_cap_before_client_or_reservation(self) -> None:
         module = load_module()
@@ -1516,8 +1735,21 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                     module,
                     "_projection_report_for_record",
                     return_value={
+                        "record_id": "arxiv:a",
                         "projection_ready": False,
                         "missing_revision_chunk_ids": ["chunk0007"],
+                    },
+                ),
+                mock.patch.object(
+                    module,
+                    "_revision_ready_projection_report_for_record",
+                    return_value={
+                        "record_id": "arxiv:a",
+                        "projection_ready": False,
+                        "projected_worst_case_api_calls": 0,
+                        "missing_stage_api_calls": {},
+                        "identity_diagnostics": {},
+                        "error": "invalid source identity",
                     },
                 ),
                 mock.patch.object(
@@ -1531,7 +1763,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                     side_effect=AssertionError("must fail before creating client"),
                 ),
             ):
-                with self.assertRaisesRegex(RuntimeError, "chunk0007|not ready"):
+                with self.assertRaisesRegex(RuntimeError, "arxiv:a|not ready"):
                     module.run_batch(config)
 
     def test_usage_summary_counts_each_style_batch_attempt_once(self) -> None:
@@ -1633,7 +1865,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                         "--rights-manifest", str(manifest),
                         "--output-root", str(root / "output"),
                         "--control-dir", str(root / "control"),
-                        "--stage", "baseline",
+                        "--stage", "shadow",
                         "--project-max-cost-rmb", "1000",
                         "--stage-max-cost-rmb", "10",
                     ]
@@ -1672,7 +1904,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                         "--rights-manifest", str(manifest),
                         "--output-root", str(root / "output"),
                         "--control-dir", str(root / "control"),
-                        "--stage", "baseline",
+                        "--stage", "shadow",
                         "--project-max-cost-rmb", "1000",
                         "--stage-max-cost-rmb", "10",
                     ]
@@ -1700,7 +1932,7 @@ class RevisionReadyRunArticleTests(unittest.TestCase):
                 pdf_root=root / "pdf",
                 output_root=root / "output",
                 control_dir=root / "control",
-                stage="baseline",
+                stage="shadow",
                 explicit_ids=("arxiv:a",),
                 max_articles=None,
                 project_max_cost_rmb=1000.0,
@@ -1717,6 +1949,7 @@ class RevisionReadyRunArticleTests(unittest.TestCase):
 
             with (
                 mock.patch.object(module, "_source_character_count", return_value=7),
+                mock.patch.object(module, "_record_stage_artifact"),
                 mock.patch.object(module.runner, "resolve_glossary_path", return_value=root / "glossary.json"),
                 mock.patch.object(module.runner, "load_glossary", return_value=[{"en": "x", "zh": "y"}]),
                 mock.patch.object(module.runner, "load_article_glossary", return_value=[{"en": "a", "zh": "b"}]),

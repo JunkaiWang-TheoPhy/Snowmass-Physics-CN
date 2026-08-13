@@ -16,6 +16,7 @@ import os
 import fcntl
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,9 @@ import run_snowmass_refined_translation as refined
 import run_snowmass_translation as runner
 import snowmass_constraint_compiler as constraint_compiler
 import snowmass_publication_qc as publication_qc
+import snowmass_qc_contract as qc_contract
+import snowmass_production_contract as production_contract
+import audit_snowmass_translation_pdf as pdf_audit
 from snowmass_batch_budget import (
     AUTHORIZED_PROJECT_MAX_RMB,
     PersistentBudgetGuard,
@@ -50,7 +54,7 @@ DEFAULT_PDF_ROOT = ROOT / "tmp/pdfs/snowmass2021"
 DEFAULT_OUTPUT_ROOT = ROOT / "output/snowmass2021/babeldoc_production"
 DEFAULT_CONTROL_DIR = ROOT / "output/snowmass2021/production_control"
 DEFAULT_HISTORICAL_ROOTS = (ROOT / "output/snowmass2021/babeldoc_ab_v1",)
-STAGE_LIMITS = {"baseline": 1, "pilot10": 10, "batch50": 50}
+STAGE_LIMITS = {"shadow": 1, "pilot5": 5, "pilot10": 10, "pilot25": 25, "batch50": 50}
 TERMINAL_STAGES = (
     "prepared",
     "translated",
@@ -59,6 +63,104 @@ TERMINAL_STAGES = (
     "qc_passed",
     "packaged",
 )
+
+
+def _production_environment_lock() -> dict[str, Any]:
+    contract_files = (
+        Path(__file__),
+        Path(runner.__file__),
+        Path(refined.__file__),
+        Path(refill.__file__),
+        Path(packager.__file__),
+        Path(qc_contract.__file__),
+        Path(production_contract.__file__),
+        Path(pdf_audit.__file__),
+        Path(publication_qc.__file__),
+    )
+    return production_contract.build_environment_lock(
+        root=ROOT,
+        babeldoc_version=prepare.BRIDGE.BABELDOC_VERSION,
+        ir_version=str(prepare.BRIDGE.IR_PIPELINE_VERSION),
+        model=runner.MODEL,
+        provider="deepseek",
+        pricing_contract={
+            "currency": "USD",
+            "input_cache_hit": runner.INPUT_CACHE_HIT_USD_PER_MILLION,
+            "input_cache_miss": runner.INPUT_CACHE_MISS_USD_PER_MILLION,
+            "output": runner.OUTPUT_USD_PER_MILLION,
+        },
+        contract_versions={
+            "translation_qc": runner.QC_CONTRACT_VERSION,
+            "refill": refill.REFILL_SCHEMA_VERSION,
+            "packaging": packager.PACKAGING_CONTRACT_VERSION,
+            "qc_receipt": qc_contract.SCHEMA_VERSION,
+            "source_sha256": {path.name: _sha256(path) for path in contract_files},
+        },
+        font_paths=[packager.SYSTEM_CJK_FONT],
+        cover_asset_paths=[packager.DEFAULT_MOUNTAIN_SVG_PATH, packager.DEFAULT_QR_IMAGE_PATH],
+    )
+
+
+def _artifact_manifest_path(article_dir: Path) -> Path:
+    return article_dir / "production_artifacts.json"
+
+
+def _ensure_artifact_contract(config: BatchConfig, record: dict[str, Any], article_dir: Path) -> dict[str, Any]:
+    environment_lock = _production_environment_lock()
+    manifest_path = _artifact_manifest_path(article_dir)
+    if not manifest_path.is_file():
+        production_contract.write_artifact_manifest(
+            manifest_path=manifest_path,
+            record_id=str(record["record_id"]),
+            publication_allowed=record.get("publication_allowed") is True,
+            rights_manifest_path=config.rights_manifest,
+            article_root=article_dir,
+            environment_lock=environment_lock,
+        )
+    report = production_contract.validate_artifact_manifest(
+        manifest_path,
+        article_root=article_dir,
+        current_environment_lock=environment_lock,
+        rights_manifest_path=config.rights_manifest,
+    )
+    if not report["ok"]:
+        raise RuntimeError("Production artifact contract failed: " + ", ".join(report["errors"]))
+    return environment_lock
+
+
+def _record_stage_artifact(
+    config: BatchConfig,
+    record: dict[str, Any],
+    article_dir: Path,
+    *,
+    artifact_id: str,
+    relative_path: str,
+    producer: str,
+    artifact_type: str,
+    paper_stage: str,
+    parents: tuple[str, ...] = (),
+) -> None:
+    environment_lock = _ensure_artifact_contract(config, record, article_dir)
+    manifest_path = _artifact_manifest_path(article_dir)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = next((item for item in manifest.get("artifacts", []) if item.get("artifact_id") == artifact_id), None)
+    target = _article_path(article_dir, relative_path)
+    if existing is not None:
+        if not _valid_hash(target, existing.get("sha256")):
+            raise RuntimeError(f"Immutable production artifact drifted: {artifact_id}")
+        return
+    production_contract.record_artifact(
+        manifest_path=manifest_path,
+        article_root=article_dir,
+        artifact_id=artifact_id,
+        relative_path=relative_path,
+        producer=producer,
+        artifact_type=artifact_type,
+        paper_stage=paper_stage,
+        environment_lock=environment_lock,
+        parents=parents,
+        contract_versions={"production": 1},
+    )
 
 
 class RunAlreadyActiveError(RuntimeError):
@@ -203,7 +305,7 @@ def _stratified_partition(records: list[dict[str, Any]]) -> dict[str, list[dict[
 
     remaining = sorted(records, key=_selection_key)
     cohorts: dict[str, list[dict[str, Any]]] = {}
-    for stage in ("baseline", "pilot10", "batch50"):
+    for stage in STAGE_LIMITS:
         count = min(STAGE_LIMITS[stage], len(remaining))
         if count == 0:
             cohorts[stage] = []
@@ -278,6 +380,9 @@ def evaluate_article_qc(article_dir: Path) -> dict[str, Any]:
         chunks = []
     for chunk in chunks:
         chunk_id = str(chunk.get("id") or "")
+        if not re.fullmatch(r"chunk\d{4,}", chunk_id):
+            failures.append(f"unsafe_chunk_id:{chunk_id}")
+            continue
         try:
             status = json.loads(
                 (article_dir / "chunk_status" / f"{chunk_id}.json").read_text(encoding="utf-8")
@@ -331,6 +436,8 @@ def evaluate_article_qc(article_dir: Path) -> dict[str, Any]:
         verified = refill_status.get(f"{prefix}_regions_verified")
         if count > 0 and verified is not True:
             failures.append(f"{prefix}_regions_not_verified")
+        if count == 0 and refill_status.get(f"{prefix}_regions_not_applicable") is not True:
+            failures.append(f"{prefix}_region_classification_missing")
     for label in ("mono", "dual"):
         path = article_dir / "rendered" / f"translated_{label}.pdf"
         if not _valid_hash(path, refill_status.get(f"{label}_pdf_sha256")):
@@ -369,6 +476,44 @@ def _run_id(config: BatchConfig, records: list[dict[str, Any]]) -> str:
 
 def _article_dir(config: BatchConfig, record_id: str) -> Path:
     return config.output_root / "papers" / prepare.safe_record_name(record_id)
+
+
+def _quarantine_path(config: BatchConfig, record_id: str) -> Path:
+    return _article_dir(config, record_id) / "quarantine.json"
+
+
+def _quarantine_fingerprint(article_dir: Path) -> dict[str, str]:
+    evidence: dict[str, str] = {}
+    for name in ("manifest.json", "chunking_status.json", "paper_status.json", "refill_status.json"):
+        path = article_dir / name
+        if path.is_file():
+            evidence[name] = _sha256(path)
+    return evidence
+
+
+def _persist_quarantine(config: BatchConfig, record_id: str, error: BaseException) -> None:
+    article_dir = _article_dir(config, record_id)
+    _atomic_json(
+        _quarantine_path(config, record_id),
+        {
+            "schema_version": 1,
+            "record_id": record_id,
+            "reason": f"{type(error).__name__}: {error}",
+            "input_fingerprint": _quarantine_fingerprint(article_dir),
+            "transition_required": "change_input_or_explicitly_remove_quarantine_after_review",
+        },
+    )
+
+
+def _unchanged_quarantine(config: BatchConfig, record_id: str) -> dict[str, Any] | None:
+    path = _quarantine_path(config, record_id)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    if payload.get("input_fingerprint") == _quarantine_fingerprint(_article_dir(config, record_id)):
+        return payload
+    return None
 
 
 _TITLE_PLACEHOLDER_RE = re.compile(r"\{v\d+\}")
@@ -663,6 +808,11 @@ def _aggregate_style_projection(
             str(report.get("record_id") or ""): list(report.get("missing_revision_chunk_ids") or [])
             for report in not_ready
         },
+        "errors": {
+            str(report.get("record_id") or ""): str(report.get("error"))
+            for report in not_ready
+            if report.get("error")
+        },
         "planned": {
             stage_name: {
                 "normal_requests": sum(
@@ -797,9 +947,46 @@ def _projection_summary(
     config: BatchConfig,
     records: Iterable[dict[str, Any]],
 ) -> dict[str, Any]:
+    records = list(records)
     if config.through_stage == "revision_ready":
         return _aggregate_revision_ready_projection(config, records)
-    return _aggregate_style_projection(config, records)
+    style_summary = _aggregate_style_projection(config, records)
+    style_projection = style_summary["style_projection"]
+    missing_by_record = style_projection.get("missing_revision_chunk_ids") or {}
+    style_errors = style_projection.get("errors") or {}
+    missing_revision_ids = {
+        str(record_id)
+        for record_id, chunk_ids in missing_by_record.items()
+        if chunk_ids and str(record_id) not in style_errors
+    }
+    hard_style_not_ready = set(style_projection.get("not_ready_record_ids") or []) - missing_revision_ids
+    revision_records = [
+        record for record in records if str(record["record_id"]) in missing_revision_ids
+    ]
+    revision_summary = _aggregate_revision_ready_projection(config, revision_records)
+    revision_projection = revision_summary["revision_ready_projection"]
+    style_ready_ids = [
+        str(record["record_id"])
+        for record in records
+        if str(record["record_id"]) not in missing_revision_ids
+    ]
+    launch_projection = {
+        "projection_ready": revision_projection["projection_ready"] and not hard_style_not_ready,
+        "revision_ready_record_ids": [str(record["record_id"]) for record in revision_records],
+        "style_ready_record_ids": style_ready_ids,
+        "projected_worst_case_api_calls": (
+            int(style_summary.get("launch_worst_case_api_calls") or 0)
+            + int(revision_summary.get("projected_worst_case_api_calls") or 0)
+        ),
+        "not_ready_record_ids": sorted(
+            hard_style_not_ready | set(revision_projection.get("not_ready_record_ids") or [])
+        ),
+    }
+    return {
+        **style_summary,
+        "revision_ready_projection": revision_projection,
+        "launch_projection": launch_projection,
+    }
 
 
 def production_metrics_and_gate(
@@ -814,7 +1001,16 @@ def production_metrics_and_gate(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Summarize cost efficiency and fail closed before expanding a campaign."""
 
-    source_characters = sum(max(0, int(result.get("source_characters") or 0)) for result in results)
+    recovered_results = [
+        result
+        for result in results
+        if result.get("resumed_from_verified_artifacts")
+        or result.get("resumed_from_verified_translation")
+    ]
+    fresh_results = [result for result in results if result not in recovered_results]
+    source_characters = sum(
+        max(0, int(result.get("source_characters") or 0)) for result in fresh_results
+    )
     stage_spent = float(budget.get("stage_spent_rmb") or 0)
     completed = sum(result.get("status") == through_stage for result in results)
     usage = budget.get("stage_usage") if isinstance(budget.get("stage_usage"), dict) else {}
@@ -824,7 +1020,7 @@ def production_metrics_and_gate(
         0,
         int(usage.get("unresolved_uncertain_calls", uncertain_calls) or 0),
     )
-    cost_per_article = stage_spent / len(results) if results else None
+    cost_per_article = stage_spent / len(fresh_results) if fresh_results else None
     cost_per_10k = stage_spent * 10_000 / source_characters if source_characters else None
     historical_before_stage = max(0.0, float(budget.get("project_spent_rmb") or 0) - stage_spent)
     projected_total = (
@@ -864,6 +1060,10 @@ def production_metrics_and_gate(
     metrics = {
         "source_characters": source_characters,
         "completed_articles": completed,
+        "fresh_completed_articles": sum(
+            result.get("status") == through_stage for result in fresh_results
+        ),
+        "recovered_articles": len(recovered_results),
         "failed_articles": len(failures),
         "api_calls": api_calls,
         "uncertain_paid_requests": uncertain_calls,
@@ -883,8 +1083,17 @@ def production_metrics_and_gate(
     expected_status = "qc_passed" if through_stage in {"rendered", "qc_passed"} else through_stage
     if failures:
         reasons.append("article_failures")
+    if recovered_results:
+        reasons.append("recovered_results_not_promotion_evidence")
+    if not fresh_results:
+        reasons.append("no_fresh_production_evidence")
     if len(results) != selected_count:
         reasons.append("selected_articles_incomplete")
+    required_fresh = STAGE_LIMITS.get(stage)
+    if required_fresh is not None and selected_count != min(required_fresh, eligible_record_count):
+        reasons.append("stage_fresh_sample_size_not_met")
+    if required_fresh is not None and len(fresh_results) != selected_count:
+        reasons.append("stage_fresh_sample_size_not_met")
     if any(result.get("status") != expected_status for result in results):
         reasons.append(f"selected_articles_not_{expected_status}")
     if unresolved_uncertain_calls:
@@ -895,7 +1104,13 @@ def production_metrics_and_gate(
         reasons.append("insufficient_cost_evidence")
     elif projected_total > float(budget.get("project_max_cost_rmb") or 0) + 1e-12:
         reasons.append("projected_full_corpus_cost_exceeds_cap")
-    next_stage = {"baseline": "pilot10", "pilot10": "batch50", "batch50": "remainder"}.get(stage)
+    next_stage = {
+        "shadow": "pilot5",
+        "pilot5": "pilot10",
+        "pilot10": "pilot25",
+        "pilot25": "batch50",
+        "batch50": "remainder",
+    }.get(stage)
     gate = {
         "allowed": not reasons and next_stage is not None,
         "next_stage": next_stage,
@@ -905,16 +1120,113 @@ def production_metrics_and_gate(
 
 
 def _package_article(config: BatchConfig, record: dict[str, Any], article_dir: Path) -> dict[str, Any]:
+    environment_lock = _production_environment_lock()
+    article_qc = evaluate_article_qc(article_dir)
+    if not article_qc["ok"]:
+        raise RuntimeError("publication QC failed: " + ", ".join(article_qc["failures"]))
+    _adopt_verified_translation_chain(config, record, article_dir)
+    _write_article_qc_receipts(config, record, article_dir, article_qc)
+    qc_paths = [article_dir / "qc" / f"{kind}.json" for kind in qc_contract.ALLOWED_KINDS]
+    qc_report = qc_contract.validate_publishability_receipts(
+        qc_paths,
+        article_root=article_dir,
+        expected_record_id=str(record["record_id"]),
+        current_environment_lock_sha256=environment_lock["lock_sha256"],
+        required_contract_version=1,
+    )
+    if not qc_report["publishable"]:
+        raise RuntimeError("QC receipt gate failed: " + ", ".join(qc_report["errors"]))
     safe_id = prepare.safe_record_name(str(record["record_id"])).replace("arxiv_", "")
     output = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.pdf"
-    return packager.package_translation_pdf(
+    receipt = packager.package_translation_pdf(
         record=record,
         chinese_title=_chinese_title(article_dir, str(record.get("title") or "")),
         source_pdf_path=article_dir / "rendered/translated_mono.pdf",
         output_pdf_path=output,
         version=config.translation_version,
         packaged_on=config.packaged_on,
+        qc_receipt_hashes={
+            report["kind"]: report["receipt"]["receipt_hash"] for report in qc_report["receipts"]
+        },
     )
+    _record_stage_artifact(
+        config, record, article_dir,
+        artifact_id="packaged", relative_path=str(output.relative_to(article_dir)),
+        producer="package_snowmass_translation_pdf", artifact_type="publication_pdf",
+        paper_stage="packaged", parents=("visual_qc",),
+    )
+    return receipt
+
+
+def _adopt_verified_translation_chain(config: BatchConfig, record: dict[str, Any], article_dir: Path) -> None:
+    """Bind verified legacy outputs before a package-only recovery.
+
+    This records recovery evidence but does not make the paper fresh promotion
+    evidence; callers retain the recovered-result flag.
+    """
+
+    stages = (
+        ("prepared", "manifest.json", "prepare_snowmass_babeldoc", "article_manifest", "prepared", ()),
+        ("revision_ready", refined.REVISION_FILE, "run_snowmass_refined_translation", "revision", "revision_ready", ("prepared",)),
+        ("translated", refined.FINAL_FILE, "run_snowmass_refined_translation", "translation", "translated", ("revision_ready",)),
+        ("rendered", "rendered/translated_mono.pdf", "refill_snowmass_babeldoc", "rendered_pdf", "rendered", ("translated",)),
+    )
+    for artifact_id, relative_path, producer, artifact_type, paper_stage, parents in stages:
+        _record_stage_artifact(
+            config,
+            record,
+            article_dir,
+            artifact_id=artifact_id,
+            relative_path=relative_path,
+            producer=producer,
+            artifact_type=artifact_type,
+            paper_stage=paper_stage,
+            parents=parents,
+        )
+
+
+def _write_article_qc_receipts(config: BatchConfig, record: dict[str, Any], article_dir: Path, qc: dict[str, Any]) -> dict[str, Any]:
+    environment_lock = _production_environment_lock()
+    target = article_dir / "rendered/translated_mono.pdf"
+    audit = pdf_audit.audit_pdf(target)
+    evidence = {
+        "semantic": {"article_qc": qc, "checks": ["numbers", "units", "citations", "protected_literals", "model_meta"]},
+        "structural": {"article_qc": qc, "checks": ["chunk_order", "parent_hashes", "references", "figure_table_regions"]},
+        "visual": audit,
+    }
+    receipts = {}
+    for kind in qc_contract.ALLOWED_KINDS:
+        receipts[kind] = qc_contract.write_qc_receipt(
+            receipt_path=article_dir / "qc" / f"{kind}.json",
+            article_root=article_dir,
+            record_id=str(record["record_id"]),
+            kind=kind,
+            target_artifact_id="rendered-mono",
+            target_path=target,
+            environment_lock_sha256=environment_lock["lock_sha256"],
+            contract_version=1,
+            ok=qc["ok"] is True and (audit["ok"] is True if kind == "visual" else True),
+            evidence_summary=evidence[kind],
+        )
+    verdict = qc_contract.validate_publishability_receipts(
+        [article_dir / "qc" / f"{kind}.json" for kind in qc_contract.ALLOWED_KINDS],
+        article_root=article_dir,
+        expected_record_id=str(record["record_id"]),
+        current_environment_lock_sha256=environment_lock["lock_sha256"],
+        required_contract_version=1,
+    )
+    if not verdict["publishable"]:
+        raise RuntimeError("QC receipt creation failed: " + ", ".join(verdict["errors"]))
+    parent = "rendered"
+    for kind, stage in (("semantic", "semantic_qc"), ("structural", "structural_qc"), ("visual", "visual_qc")):
+        _record_stage_artifact(
+            config, record, article_dir,
+            artifact_id=f"{kind}_qc", relative_path=f"qc/{kind}.json",
+            producer="snowmass_qc_contract", artifact_type="qc_receipt",
+            paper_stage=stage, parents=(parent,),
+        )
+        parent = f"{kind}_qc"
+    return receipts
 
 
 def _package_only_result(
@@ -964,6 +1276,26 @@ def _resume_article_result(
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    environment_lock = _production_environment_lock()
+    qc_paths = [article_dir / "qc" / f"{kind}.json" for kind in qc_contract.ALLOWED_KINDS]
+    receipt_gate = qc_contract.validate_publishability_receipts(
+        qc_paths,
+        article_root=article_dir,
+        expected_record_id=str(record["record_id"]),
+        current_environment_lock_sha256=environment_lock["lock_sha256"],
+        required_contract_version=1,
+    )
+    observed_qc_hashes = {
+        report["kind"]: report["receipt"]["receipt_hash"]
+        for report in receipt_gate.get("receipts", [])
+        if report.get("ok") is True and isinstance(report.get("kind"), str)
+    }
+    artifact_state = production_contract.derive_paper_state(
+        _artifact_manifest_path(article_dir),
+        article_root=article_dir,
+        current_environment_lock=environment_lock,
+        rights_manifest_path=config.rights_manifest,
+    )
     if (
         receipt.get("record_id") != record["record_id"]
         or receipt.get("packaging_contract_version") != packager.PACKAGING_CONTRACT_VERSION
@@ -971,6 +1303,10 @@ def _resume_article_result(
         or receipt.get("packaged_on") != config.packaged_on
         or not _valid_hash(source_path, receipt.get("source_pdf_sha256"))
         or not _valid_hash(output_path, receipt.get("packaged_pdf_sha256"))
+        or receipt_gate["publishable"] is not True
+        or receipt.get("qc_receipt_hashes") != observed_qc_hashes
+        or artifact_state.get("publishable") is not True
+        or artifact_state.get("artifact_id") != "packaged"
     ):
         return None
     result.update({"status": "packaged", "package": receipt})
@@ -985,6 +1321,18 @@ def _classify_selected_records(
     package_only: list[dict[str, Any]] = []
     paid_pending: list[dict[str, Any]] = []
     for record in selected:
+        quarantine = _unchanged_quarantine(config, str(record["record_id"]))
+        if quarantine is not None:
+            recoverable.append(
+                {
+                    "record_id": str(record["record_id"]),
+                    "status": "quarantined",
+                    "source_characters": 0,
+                    "quarantine": quarantine,
+                    "resumed_from_verified_artifacts": True,
+                }
+            )
+            continue
         resumed = _resume_article_result(config, record)
         if resumed is not None:
             recoverable.append(resumed)
@@ -1011,7 +1359,18 @@ def resolve_babeldoc_python(console_script: Path | None = None) -> Path:
         raise RuntimeError(f"Cannot inspect BabelDOC runtime: {console_script}") from error
     if not first_line.startswith("#!"):
         raise RuntimeError(f"BabelDOC console script has no Python shebang: {console_script}")
-    runtime = Path(first_line[2:].strip())
+    words = shlex.split(first_line[2:].strip())
+    if not words:
+        raise RuntimeError(f"BabelDOC console script has an empty shebang: {console_script}")
+    if Path(words[0]).name == "env":
+        command = next((word for word in words[1:] if not word.startswith("-")), None)
+        resolved_runtime = shutil.which(command) if command else None
+        if not resolved_runtime:
+            raise RuntimeError(
+                f"BabelDOC env Python runtime is unavailable: {command or '<missing>'}"
+            )
+        return Path(resolved_runtime)
+    runtime = Path(words[0])
     if not runtime.is_file():
         raise RuntimeError(f"BabelDOC Python runtime is unavailable: {runtime}")
     return runtime
@@ -1082,6 +1441,11 @@ def _run_article(
         "status": "prepared",
         "source_characters": _source_character_count(article_dir),
     }
+    _record_stage_artifact(
+        config, record, article_dir,
+        artifact_id="prepared", relative_path="manifest.json", producer="prepare_snowmass_babeldoc",
+        artifact_type="article_manifest", paper_stage="prepared",
+    )
     if config.through_stage == "packaged":
         existing_qc = evaluate_article_qc(article_dir)
         if existing_qc["ok"]:
@@ -1110,6 +1474,12 @@ def _run_article(
         retry_uncertain=config.retry_uncertain,
         stop_after_revision=config.through_stage == "revision_ready",
     )
+    _record_stage_artifact(
+        config, record, article_dir,
+        artifact_id="revision_ready", relative_path=refined.REVISION_FILE,
+        producer="run_snowmass_refined_translation", artifact_type="revision",
+        paper_stage="revision_ready", parents=("prepared",),
+    )
     if config.through_stage == "revision_ready":
         result["status"] = "revision_ready"
         return result
@@ -1120,10 +1490,22 @@ def _run_article(
             raise RuntimeError("style batch projection must be a JSON object")
         result["style_batch_projection"] = projection
     result["status"] = "translated"
+    _record_stage_artifact(
+        config, record, article_dir,
+        artifact_id="translated", relative_path=refined.FINAL_FILE,
+        producer="run_snowmass_refined_translation", artifact_type="translation",
+        paper_stage="translated", parents=("revision_ready",),
+    )
     if config.through_stage == "translated":
         return result
     _refill_article(config, article_dir)
     result["status"] = "rendered"
+    _record_stage_artifact(
+        config, record, article_dir,
+        artifact_id="rendered", relative_path="rendered/translated_mono.pdf",
+        producer="refill_snowmass_babeldoc", artifact_type="rendered_pdf",
+        paper_stage="rendered", parents=("translated",),
+    )
     qc = evaluate_article_qc(article_dir)
     result["qc"] = qc
     if not qc["ok"]:
@@ -1178,7 +1560,12 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
     }
     historical_roots = tuple(dict.fromkeys((*config.historical_roots, config.output_root)))
     if config.preflight_only:
+        # Preparation is local and zero-paid. Projection is meaningless until the
+        # source PDF has been parsed into a concrete chunk manifest.
+        _prepare_all(config, selected)
         recoverable, package_only_records, paid_pending = _classify_selected_records(config, selected)
+        quarantined = [result for result in recoverable if result.get("status") == "quarantined"]
+        recoverable = [result for result in recoverable if result.get("status") != "quarantined"]
         projection_summary = _projection_summary(config, paid_pending)
         package_only_ids = [str(record["record_id"]) for record in package_only_records]
         return {
@@ -1193,6 +1580,8 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
             "verified_package_only_count": len(package_only_ids),
             "verified_package_only_record_ids": package_only_ids,
             "paid_translation_pending_count": len(paid_pending),
+            "quarantined_count": len(quarantined),
+            "quarantined_record_ids": [result["record_id"] for result in quarantined],
             "pending_record_count": len(selected) - len(recoverable),
         }
     run_dir = config.control_dir / "runs" / run_id
@@ -1242,7 +1631,13 @@ def _run_batch_locked(
     resolved_content_outcomes: dict[int, bool] = {}
     next_outcome_ordinal = 0
     recoverable, package_only_records, pending_records = _classify_selected_records(config, selected)
+    quarantined = [result for result in recoverable if result.get("status") == "quarantined"]
+    recoverable = [result for result in recoverable if result.get("status") != "quarantined"]
     results.extend(recoverable)
+    failures.extend(
+        {"record_id": result["record_id"], "error": result["quarantine"]["reason"], "persisted_quarantine": True}
+        for result in quarantined
+    )
     projection_summary = _projection_summary(config, pending_records)
     _write_or_refresh_run_snapshot(run_snapshot_path, snapshot, projection_summary)
     snapshot.update(projection_summary)
@@ -1276,16 +1671,15 @@ def _run_batch_locked(
                     "revision-ready projection is not ready for paid launch: "
                     + json.dumps(details, ensure_ascii=False, sort_keys=True),
                 )
-        elif not projection_summary["style_projection"]["projection_ready"]:
-            missing = projection_summary["style_projection"]["missing_revision_chunk_ids"]
+        elif not projection_summary["launch_projection"]["projection_ready"]:
+            missing = projection_summary["launch_projection"]["not_ready_record_ids"]
             raise ProjectionGateRefusedError(
-                "style projection is not ready for paid launch: "
+                "next-stage projection is not ready for paid launch: "
                 + json.dumps(missing, ensure_ascii=False, sort_keys=True),
             )
         projected_worst_case = int(
-            projection_summary.get("launch_worst_case_api_calls")
+            projection_summary["launch_projection"]["projected_worst_case_api_calls"]
             if config.through_stage != "revision_ready"
-            and projection_summary.get("launch_worst_case_api_calls") is not None
             else projection_summary["projected_worst_case_api_calls"]
             or 0
         )
@@ -1395,6 +1789,7 @@ def _run_batch_locked(
                         hard_failures.append(failure)
                     else:
                         failures.append(failure)
+                        _persist_quarantine(config, str(record["record_id"]), error)
                         resolved_content_outcomes[ordinal] = False
                 while next_outcome_ordinal in resolved_content_outcomes:
                     if resolved_content_outcomes.pop(next_outcome_ordinal):

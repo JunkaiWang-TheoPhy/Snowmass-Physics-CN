@@ -19,6 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import package_snowmass_translation_pdf as packager
 import refill_snowmass_babeldoc as refill
+import snowmass_qc_contract as qc_contract
 from run_snowmass_batch_production import evaluate_article_qc
 
 
@@ -82,6 +83,24 @@ def run_task(root: Path, manifest: dict[str, Any], task: dict[str, Any]) -> dict
     qc = evaluate_article_qc(article_dir)
     if not qc["ok"]:
         raise RuntimeError("publication QC failed: " + ", ".join(qc["failures"]))
+    qc_receipt_hashes = task.get("qc_receipt_hashes")
+    if not isinstance(qc_receipt_hashes, dict):
+        raise RuntimeError("HPC task is missing validated QC receipt hashes")
+    receipt_paths = [article_dir / "qc" / f"{kind}.json" for kind in qc_contract.ALLOWED_KINDS]
+    receipt_gate = qc_contract.validate_publishability_receipts(
+        receipt_paths,
+        article_root=article_dir,
+        expected_record_id=str(task["record_id"]),
+        current_environment_lock_sha256=str(task.get("environment_lock_sha256") or ""),
+        required_contract_version=1,
+    )
+    if not receipt_gate["publishable"]:
+        raise RuntimeError("HPC QC receipt gate failed: " + ", ".join(receipt_gate["errors"]))
+    observed_hashes = {
+        report["kind"]: report["receipt"]["receipt_hash"] for report in receipt_gate["receipts"]
+    }
+    if observed_hashes != qc_receipt_hashes:
+        raise RuntimeError("HPC task QC receipt hashes do not match snapshot receipts")
     output = safe_path(root, task["output_pdf"])
     receipt = packager.package_translation_pdf(
         record=task["record"],
@@ -93,6 +112,7 @@ def run_task(root: Path, manifest: dict[str, Any], task: dict[str, Any]) -> dict
         mountain_svg_path=safe_path(root, task["mountain_asset"]),
         cjk_font_path=safe_path(root, task["cjk_font"]),
         paper_qr_image_path=safe_path(root, task["paper_qr"]),
+        qc_receipt_hashes=qc_receipt_hashes,
     )
     result = {"record_id": task["record_id"], "status": "complete", "qc": qc, "receipt": receipt}
     result_path = output.with_suffix(".hpc-result.json")

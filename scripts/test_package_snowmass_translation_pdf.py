@@ -30,6 +30,12 @@ def sha256_file(path: Path) -> str:
 
 
 class PackageSnowmassTranslationPdfTests(unittest.TestCase):
+    QC_RECEIPT_HASHES = {
+        "semantic": "1" * 64,
+        "structural": "2" * 64,
+        "visual": "3" * 64,
+    }
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -42,6 +48,10 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         if PACKAGER is None:
             self.fail(f"Missing packager module: {MODULE_PATH}")
         return PACKAGER
+
+    def package_translation_pdf(self, **kwargs):
+        kwargs.setdefault("qc_receipt_hashes", self.QC_RECEIPT_HASHES)
+        return self.require_module().package_translation_pdf(**kwargs)
 
     def write_source_pdf(self, path: Path, pages: list[str]) -> None:
         document = fitz.open()
@@ -96,7 +106,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         version: str = "v3.0",
     ) -> fitz.Page:
         packager = self.require_module()
-        packager.package_translation_pdf(
+        self.package_translation_pdf(
             record=record or self.visual_record(),
             chinese_title=chinese_title,
             source_pdf_path=self.source_pdf,
@@ -128,7 +138,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         packager = self.require_module()
 
         with self.assertRaisesRegex(ValueError, "publication_allowed"):
-            packager.package_translation_pdf(
+            self.package_translation_pdf(
                 record=self.base_record(publication_allowed=False),
                 chinese_title="中文标题",
                 source_pdf_path=self.source_pdf,
@@ -141,7 +151,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         packager = self.require_module()
 
         with self.assertRaisesRegex(ValueError, "placeholder"):
-            packager.package_translation_pdf(
+            self.package_translation_pdf(
                 record=self.base_record(),
                 chinese_title="拟议的 e{v1}e{v2} 希格斯工厂",
                 source_pdf_path=self.source_pdf,
@@ -153,7 +163,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         self.assertFalse(self.output_pdf.exists())
 
         with self.assertRaisesRegex(ValueError, "publication_allowed"):
-            packager.package_translation_pdf(
+            self.package_translation_pdf(
                 record=self.base_record(publication_allowed=1),
                 chinese_title="中文标题",
                 source_pdf_path=self.source_pdf,
@@ -163,7 +173,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
             )
 
         with self.assertRaisesRegex(ValueError, "Chinese title"):
-            packager.package_translation_pdf(
+            self.package_translation_pdf(
                 record=self.base_record(),
                 chinese_title="  ",
                 source_pdf_path=self.source_pdf,
@@ -179,7 +189,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         source_hash = sha256_file(self.source_pdf)
 
         with self.assertRaisesRegex(ValueError, "must differ"):
-            packager.package_translation_pdf(
+            self.package_translation_pdf(
                 record=self.base_record(),
                 chinese_title="相同路径回归测试",
                 source_pdf_path=self.source_pdf,
@@ -197,7 +207,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         qr = self.root / "paper-qr.png"
         qr.write_bytes(packager.DEFAULT_QR_IMAGE_PATH.read_bytes())
 
-        receipt = packager.package_translation_pdf(
+        receipt = self.package_translation_pdf(
             record=self.visual_record(),
             chinese_title="可移植装订测试",
             source_pdf_path=self.source_pdf,
@@ -219,7 +229,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "旋风加速器.*回旋加速器"):
-            packager.package_translation_pdf(
+            self.package_translation_pdf(
                 record=self.base_record(),
                 chinese_title="已知误译阻断测试",
                 source_pdf_path=self.source_pdf,
@@ -241,7 +251,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         document.close()
 
         with self.assertRaisesRegex(ValueError, "no extractable text"):
-            packager.package_translation_pdf(
+            self.package_translation_pdf(
                 record=self.base_record(),
                 chinese_title="不可抽取文本阻断测试",
                 source_pdf_path=self.source_pdf,
@@ -310,7 +320,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
     def test_receipt_uses_portable_artifact_references_instead_of_absolute_paths(self) -> None:
         packager = self.require_module()
 
-        receipt = packager.package_translation_pdf(
+        receipt = self.package_translation_pdf(
             record=self.base_record(),
             chinese_title="便携路径回归测试",
             source_pdf_path=self.source_pdf,
@@ -333,7 +343,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
     def test_rerun_with_identical_inputs_produces_identical_cover_and_receipt_bytes(self) -> None:
         packager = self.require_module()
 
-        first = packager.package_translation_pdf(
+        first = self.package_translation_pdf(
             record=self.base_record(),
             chinese_title="可复现性回归测试",
             source_pdf_path=self.source_pdf,
@@ -347,7 +357,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         first_receipt_hash = sha256_file(self.output_pdf.with_suffix(".json"))
         first_packaged_hash = sha256_file(self.output_pdf)
 
-        second = packager.package_translation_pdf(
+        second = self.package_translation_pdf(
             record=self.base_record(),
             chinese_title="可复现性回归测试",
             source_pdf_path=self.source_pdf,
@@ -373,7 +383,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         long_title = "超长标题回归测试" * 40
 
         with self.assertRaisesRegex(ValueError, "text overflow"):
-            packager.package_translation_pdf(
+            self.package_translation_pdf(
                 record=self.base_record(),
                 chinese_title=long_title,
                 source_pdf_path=self.source_pdf,
@@ -390,7 +400,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         packager = self.require_module()
         title = "Snowmass2021 宇宙学前沿白皮书：充分发挥旗舰暗能量实验的全部潜力"
 
-        packager.package_translation_pdf(
+        self.package_translation_pdf(
             record=self.base_record(),
             chinese_title=title,
             source_pdf_path=self.source_pdf,
@@ -411,7 +421,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
     def test_prepends_cover_with_visible_fields_links_qr_and_receipt_hashes(self) -> None:
         packager = self.require_module()
 
-        receipt = packager.package_translation_pdf(
+        receipt = self.package_translation_pdf(
             record=self.base_record(),
             chinese_title="费米实验室加速器复合体的低成本升级路径",
             source_pdf_path=self.source_pdf,
@@ -491,7 +501,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
         packager = self.require_module()
         source_url = "https://example.org/papers/original.pdf"
 
-        packager.package_translation_pdf(
+        self.package_translation_pdf(
             record=self.base_record(source_url=source_url),
             chinese_title="带 arXiv 字段的测试标题",
             source_pdf_path=self.source_pdf,
@@ -521,7 +531,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
     def test_includes_clickable_doi_when_record_provides_one(self) -> None:
         packager = self.require_module()
 
-        packager.package_translation_pdf(
+        self.package_translation_pdf(
             record=self.base_record(doi="10.1234/example-doi"),
             chinese_title="带 DOI 的测试标题",
             source_pdf_path=self.source_pdf,
@@ -548,7 +558,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
     def test_derives_old_style_arxiv_from_source_url_without_truncating_category(self) -> None:
         packager = self.require_module()
 
-        packager.package_translation_pdf(
+        self.package_translation_pdf(
             record=self.base_record(
                 record_id="",
                 source_url="https://arxiv.org/abs/hep-ph/9709356v2?download=1#page=3",
@@ -581,7 +591,7 @@ class PackageSnowmassTranslationPdfTests(unittest.TestCase):
     def test_derives_modern_arxiv_from_source_url_while_stripping_valid_version_suffix(self) -> None:
         packager = self.require_module()
 
-        packager.package_translation_pdf(
+        self.package_translation_pdf(
             record=self.base_record(
                 record_id="",
                 source_url="https://arxiv.org/abs/2111.06932v3?context=hep-ex#section",

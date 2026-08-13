@@ -14,6 +14,16 @@ from scripts.audit_snowmass_translation_pdf import audit_pdf
 
 
 class PackagedPdfAuditTests(unittest.TestCase):
+    def test_missing_pdf_returns_structured_failure_instead_of_raising(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary) / "missing.pdf"
+
+            report = audit_pdf(missing)
+
+            self.assertFalse(report["ok"])
+            self.assertIsNone(report["pdf_sha256"])
+            self.assertTrue(any(item.startswith("unreadable_pdf:") for item in report["failures"]))
+
     def _write_pdf(self, path: Path, pages: list[str]) -> None:
         document = fitz.open()
         for text in pages:

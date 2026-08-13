@@ -59,3 +59,11 @@ The information page must use the project mountain artwork and include the colla
 ## Snowmass figure-text contract
 
 Keep all text inside figures, plots, and vector graphics verbatim in the source language. This includes axes, legends, annotations, experiment or mission names, symbols, and units. Translate only captions outside the figure. In BabelDOC IR, every paragraph with a nonzero `xobj_id` must use the `verbatim_figure_text` policy, bypass all model stages, and pass an exact source-text check again during refill. Do not implement per-name exceptions such as translating Euclid or Planck inside a figure, and do not infer figure membership from wording when the IR object boundary is available.
+
+## Snowmass production release contract
+
+- Production progresses only through `shadow -> pilot5 -> pilot10 -> pilot25 -> batch50 -> remainder`. Promotion requires the complete fresh sample for the current stage; recovered, resumed, migrated, or repackaged papers are audit evidence only and never promotion evidence.
+- Every run must have a finite positive project budget and request cap. Zero never means unlimited, and the project budget must not exceed RMB 1000 without a newer explicit user instruction.
+- Every publishable paper must have a validated live rights record, complete environment lock, immutable parent-hash artifact chain, and valid semantic, structural, and visual QC receipts bound to the rendered PDF. Missing, stale, ambiguous, cyclic, incomplete, or unknown evidence fails closed into quarantine.
+- Packaging contract v4 or later must reject missing QC receipt hashes. HPC snapshots must carry the same three validated receipt hashes; HPC is not an alternate route around local publication gates.
+- An unchanged quarantined input must not re-enter a paid queue. Clearing quarantine requires a changed input fingerprint or explicit operator review. Paid production remains frozen until the zero-paid-call shadow gate passes.

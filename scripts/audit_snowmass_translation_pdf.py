@@ -72,7 +72,7 @@ def audit_pdf(
         return {
             "schema_version": 1,
             "pdf_path": pdf_path.name,
-            "pdf_sha256": _sha256(pdf_path),
+            "pdf_sha256": _sha256(pdf_path) if pdf_path.is_file() else None,
             "page_count": None,
             "expected_pages": expected_pages,
             "low_text_pages": [],
