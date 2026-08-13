@@ -95,6 +95,66 @@ class StyleBatchPlanningTests(unittest.TestCase):
         self.assertEqual([len(batch.items) for batch in batches], [1, 1, 1])
         self.assertEqual(batches[1].items[0].chunk_id, "chunk0002")
 
+    def test_stage_plan_projection_reports_exact_batches_and_worst_case_requests(self) -> None:
+        batching = load_batching()
+        plan = batching.StyleStagePlan(
+            reused=("chunk0004",),
+            local=("chunk0005",),
+            model_items=(item("chunk0001", "甲"), item("chunk0002", "乙"), item("chunk0003", "丙")),
+            normal_batches=(
+                batching.StyleBatch((item("chunk0001", "甲"), item("chunk0002", "乙"))),
+                batching.StyleBatch((item("chunk0003", "丙"),)),
+            ),
+            worst_case_requests=3,
+        )
+
+        self.assertEqual(
+            batching.stage_plan_projection(plan),
+            {
+                "reused_chunks": ["chunk0004"],
+                "local_chunks": ["chunk0005"],
+                "model_chunks": ["chunk0001", "chunk0002", "chunk0003"],
+                "normal_batches": [["chunk0001", "chunk0002"], ["chunk0003"]],
+                "normal_requests": 2,
+                "worst_case_requests": 3,
+            },
+        )
+
+    def test_stage_result_projection_reports_actual_request_counts(self) -> None:
+        batching = load_batching()
+        result = batching.StyleStageResult(
+            planned_chunks=3,
+            completed_chunks=3,
+            reused_chunks=1,
+            local_chunks=1,
+            failed_chunks=0,
+            normal_requests=1,
+            recovery_requests=1,
+            input_tokens=100,
+            cached_tokens=10,
+            output_tokens=50,
+            total_tokens=150,
+            total_cost_rmb=0.75,
+        )
+
+        self.assertEqual(
+            batching.stage_result_projection(result),
+            {
+                "planned_chunks": 3,
+                "completed_chunks": 3,
+                "reused_chunks": 1,
+                "local_chunks": 1,
+                "failed_chunks": 0,
+                "normal_requests": 1,
+                "recovery_requests": 1,
+                "input_tokens": 100,
+                "cached_tokens": 10,
+                "output_tokens": 50,
+                "total_tokens": 150,
+                "total_cost_rmb": 0.75,
+            },
+        )
+
 
 class StyleBatchProtocolTests(unittest.TestCase):
     def test_response_requires_exact_nonblank_id_mapping(self) -> None:

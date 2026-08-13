@@ -18,6 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_snowmass_translation as runner
+import snowmass_style_batching as style_batching
 from snowmass_document_units import compare_numeric_literals
 from snowmass_reference_boundaries import reference_boundary
 from snowmass_translation_qc import _extract_unit_values, _parenthesis_residue
@@ -1128,92 +1129,151 @@ def _print_barrier_progress(event: dict[str, Any]) -> None:
     )
 
 
-def _style_batch_projection(
+def _style_batch_max_output_tokens(plan: style_batching.StyleStagePlan) -> int:
+    batch_characters = max(
+        (
+            sum(len(item.protected_text) for item in batch.items)
+            for batch in plan.normal_batches
+        ),
+        default=0,
+    )
+    return max(4096, min(20000, int(max(batch_characters, 4000) * 0.8)))
+
+
+def _persist_style_batch_projection(
     article_dir: Path,
+    *,
+    status: dict[str, Any],
+    status_path: Path,
+    planned_updates: dict[str, dict[str, Any]] | None = None,
+    actual_updates: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    projection_path = article_dir / "style_batch_projection.json"
+    payload = {
+        "schema_version": 1,
+        "execution_mode": "exact_id_batching",
+        "planned": {},
+        "actual": {},
+    }
+    if projection_path.exists():
+        try:
+            existing = json.loads(projection_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = None
+        if isinstance(existing, dict):
+            payload.update(
+                {
+                    "planned": existing.get("planned", {}) if isinstance(existing.get("planned"), dict) else {},
+                    "actual": existing.get("actual", {}) if isinstance(existing.get("actual"), dict) else {},
+                }
+            )
+    if planned_updates:
+        payload["planned"].update(planned_updates)
+    if actual_updates:
+        payload["actual"].update(actual_updates)
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    runner.atomic_text(projection_path, text)
+    phase = status.setdefault("phases", {}).setdefault("style_batch_projection", {})
+    phase.update(
+        {
+            "status": "complete",
+            "output_file": projection_path.name,
+            "output_hash": runner.text_hash(text),
+            "execution_mode": "exact_id_batching",
+            "finished_at": runner.now(),
+        }
+    )
+    _persist_status(status_path, status)
+
+
+def run_batched_final_style_passes(
+    article_dir: Path,
+    *,
     chunks: list[dict[str, Any]],
     chunk_task: Any,
-    *,
-    max_group_size: int = 4,
-    max_group_characters: int = 6000,
-) -> dict[str, Any]:
-    """Estimate safe final-style grouping without changing execution behavior."""
+    terms: list[dict[str, Any]],
+    critique: str,
+    client: Any,
+    status: dict[str, Any],
+    status_path: Path,
+    budget_guard: runner.BudgetGuard | None,
+    run_id: str | None,
+) -> dict[str, style_batching.StyleStageResult]:
+    context_factory = lambda chunk: _critique_context_for_chunk(critique, str(chunk["id"]))
 
-    if max_group_size <= 0 or max_group_characters <= 0:
-        raise ValueError("style batch projection limits must be positive")
-    eligible = 0
-    groupable = 0
-    groups: list[list[str]] = []
-    current_group: list[str] = []
-    current_characters = 0
-
-    def flush() -> None:
-        nonlocal current_group, current_characters
-        if current_group:
-            groups.append(current_group)
-            current_group = []
-            current_characters = 0
-
-    for chunk in chunks:
-        task = chunk_task(chunk)
-        if task.get("passthrough") or task.get("fixed_translation") is not None:
-            flush()
-            continue
-        eligible += 1
-        chunk_id = str(chunk["id"])
-        input_path = runner.stage_output_path(
-            article_dir,
-            chunk_id,
-            str(chunk["output_file"]),
-            "revision",
-        )
-        if not runner.nonempty(input_path):
-            flush()
-            continue
-        text = input_path.read_text(encoding="utf-8")
-        protected, _mapping, _typed = runner.protect_stage_text(text)
-        segments = runner.split_protected_model_input(
-            protected,
-            runner.MODEL_STRUCTURE_SEGMENT_LIMIT,
-        )
-        safe = len(segments) == 1 and runner._MODEL_SENTINEL_RE.search(segments[0]) is None
-        if not safe:
-            flush()
-            continue
-        groupable += 1
-        if (
-            current_group
-            and (
-                len(current_group) >= max_group_size
-                or current_characters + len(text) > max_group_characters
-            )
-        ):
-            flush()
-        current_group.append(chunk_id)
-        current_characters += len(text)
-    flush()
-    non_groupable = eligible - groupable
-    per_stage_groups = len(groups) + non_groupable
-    current_style_requests = eligible * 2
-    projected_style_requests = per_stage_groups * 2
-    reduction = (
-        (current_style_requests - projected_style_requests) / current_style_requests
-        if current_style_requests
-        else 0.0
+    anti_ai_plan = style_batching.prepare_style_items(
+        article_dir=article_dir,
+        chunks=chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="anti_ai",
+        input_stage="revision",
+        context_factory=context_factory,
     )
-    return {
-        "schema_version": 1,
-        "execution_mode": "observational_projection_only",
-        "eligible_chunks": eligible,
-        "groupable_chunks": groupable,
-        "non_groupable_chunks": non_groupable,
-        "projected_groups": per_stage_groups,
-        "max_group_size": max_group_size,
-        "max_group_characters": max_group_characters,
-        "current_style_requests": current_style_requests,
-        "projected_style_requests": projected_style_requests,
-        "projected_request_reduction_fraction": reduction,
-        "groups": groups,
-    }
+    _persist_style_batch_projection(
+        article_dir,
+        status=status,
+        status_path=status_path,
+        planned_updates={"anti_ai": style_batching.stage_plan_projection(anti_ai_plan)},
+    )
+    anti_ai_result = style_batching.execute_style_stage(
+        article_dir=article_dir,
+        chunks=chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="anti_ai",
+        plan=anti_ai_plan,
+        client=client,
+        instructions=runner.stage_instructions("anti_ai", ""),
+        max_output_tokens=_style_batch_max_output_tokens(anti_ai_plan),
+        budget_guard=budget_guard,
+        run_id=run_id,
+        model=runner.MODEL,
+    )
+    _persist_style_batch_projection(
+        article_dir,
+        status=status,
+        status_path=status_path,
+        actual_updates={"anti_ai": style_batching.stage_result_projection(anti_ai_result)},
+    )
+
+    academic_plan = style_batching.prepare_style_items(
+        article_dir=article_dir,
+        chunks=chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="academic",
+        input_stage="anti_ai",
+        context_factory=context_factory,
+    )
+    _persist_style_batch_projection(
+        article_dir,
+        status=status,
+        status_path=status_path,
+        planned_updates={"academic": style_batching.stage_plan_projection(academic_plan)},
+    )
+    academic_result = style_batching.execute_style_stage(
+        article_dir=article_dir,
+        chunks=chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="academic",
+        plan=academic_plan,
+        client=client,
+        instructions=runner.stage_instructions("academic", ""),
+        max_output_tokens=_style_batch_max_output_tokens(academic_plan),
+        budget_guard=budget_guard,
+        run_id=run_id,
+        model=runner.MODEL,
+    )
+    _persist_style_batch_projection(
+        article_dir,
+        status=status,
+        status_path=status_path,
+        actual_updates={"academic": style_batching.stage_result_projection(academic_result)},
+    )
+
+    return {"anti_ai": anti_ai_result, "academic": academic_result}
 
 
 def _qc_retry_context(
@@ -1548,50 +1608,17 @@ Every actionable finding must start with its chunk ID (for example, `chunk0001:`
         status_path=status_path,
     )
 
-    style_projection = _style_batch_projection(article_dir, chunks, chunk_task)
-    projection_text = json.dumps(
-        style_projection,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-    ) + "\n"
-    _deterministic_phase(
-        name="style_batch_projection",
-        path=article_dir / "style_batch_projection.json",
-        text=projection_text,
-        input_hash=runner.text_hash(projection_text),
+    run_batched_final_style_passes(
+        article_dir,
+        chunks=chunks,
+        chunk_task=chunk_task,
+        terms=terms,
+        critique=critique,
+        client=client,
         status=status,
         status_path=status_path,
-    )
-
-    _run_chunk_barrier(
-        chunks,
-        concurrency=concurrency,
-        phase="final",
-        record_id=record_id,
-        progress_callback=_print_barrier_progress,
-        stop_event=getattr(budget_guard, "stop_event", None),
-        invoke=lambda chunk, attempt: runner.process_chunk(
-            chunk_task(chunk),
-            client,
-            terms,
-            run_id,
-            budget_guard,
-            stages=("anti_ai", "academic"),
-            paper_context=_qc_retry_context(
-                article_dir,
-                chunk,
-                _critique_context_for_chunk(critique, str(chunk["id"])),
-                attempt,
-                terms=terms,
-            ),
-            initial_text_path=runner.stage_output_path(
-                article_dir,
-                str(chunk["id"]),
-                str(chunk["output_file"]),
-                "revision",
-            ),
-        ),
+        budget_guard=budget_guard,
+        run_id=run_id,
     )
     _apply_manual_corrections(article_dir, record_id, chunks)
     final, final_signature = _verified_merge(article_dir, record_id, chunks, "academic")

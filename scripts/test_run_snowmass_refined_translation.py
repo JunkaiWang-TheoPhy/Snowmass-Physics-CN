@@ -981,6 +981,7 @@ class RefinedOrchestratorTests(unittest.TestCase):
         class FakeClient:
             calls = 0
             paper_phase_limits: dict[str, int] = {}
+            test_case = self
 
             def complete(self, instructions: str, input_text: str, max_output_tokens: int):
                 self.calls += 1
@@ -1009,9 +1010,42 @@ class RefinedOrchestratorTests(unittest.TestCase):
                         raise AssertionError("revision did not receive critique")
                     return completed_response("原文修订段落。", "revision"), 0.1
                 if "AI-mannerism cleanup pass" in instructions:
-                    return completed_response("原文自然段落。", "anti-ai"), 0.1
+                    payload = json.loads(input_text)
+                    return {
+                        "id": "anti-ai",
+                        "status": "completed",
+                        "model": "fake-style-model",
+                        "output_text": json.dumps(
+                            {"translations": {"chunk0001": "原文自然段落。"}},
+                            ensure_ascii=False,
+                        ),
+                        "usage": {
+                            "input_tokens": 10,
+                            "input_tokens_details": {"cached_tokens": 0},
+                            "output_tokens": 10,
+                            "output_tokens_details": {"reasoning_tokens": 0},
+                            "total_tokens": 20,
+                        },
+                    }, 0.1
                 if "final Chinese naturalization" in instructions:
-                    return completed_response("原文最终学术段落。", "academic"), 0.1
+                    payload = json.loads(input_text)
+                    self.test_case.assertEqual(payload["chunks"][0]["id"], "chunk0001")
+                    return {
+                        "id": "academic",
+                        "status": "completed",
+                        "model": "fake-style-model",
+                        "output_text": json.dumps(
+                            {"translations": {"chunk0001": "原文最终学术段落。"}},
+                            ensure_ascii=False,
+                        ),
+                        "usage": {
+                            "input_tokens": 10,
+                            "input_tokens_details": {"cached_tokens": 0},
+                            "output_tokens": 10,
+                            "output_tokens_details": {"reasoning_tokens": 0},
+                            "total_tokens": 20,
+                        },
+                    }, 0.1
                 raise AssertionError(instructions)
 
         client = FakeClient()
@@ -1077,6 +1111,249 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertEqual(resumed["status"], "complete")
         status = json.loads((self.article / "paper_status.json").read_text(encoding="utf-8"))
         self.assertTrue(all(item["status"] == "complete" for item in status["phases"].values()))
+
+    def test_final_style_uses_ordered_exact_id_batches(self) -> None:
+        module = load_module()
+        module.load_neighbor_context = lambda *_args, **_kwargs: ""
+        module._reference_chunk_ids = lambda _article_dir, _chunks: {"chunk0004"}
+
+        chunks = []
+        for index, source_text in enumerate(
+            (
+                "Alpha body source.\n",
+                "Beta body source.\n",
+                "Gamma body source.\n",
+                "A. Author. Reference entry.\n",
+            ),
+            1,
+        ):
+            chunk_id = f"chunk{index:04d}"
+            source_hash = hashlib.sha256(source_text.encode()).hexdigest()
+            source_file = f"{chunk_id}.md"
+            output_file = f"output_{chunk_id}.md"
+            (self.article / source_file).write_text(source_text, encoding="utf-8")
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": index,
+                    "source_file": source_file,
+                    "output_file": output_file,
+                    "source_hash": source_hash,
+                    "babeldoc_unit_id": f"p{index:04d}-i0000",
+                }
+            )
+        (self.article / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "record_id": "arxiv:allowed",
+                    "input_mode": "babeldoc_ir",
+                    "chunks": chunks,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        style_calls: list[tuple[str, tuple[str, ...]]] = []
+        release_third_anti_ai = __import__("threading").Event()
+        labels = {
+            "chunk0001": "阿尔法",
+            "chunk0002": "贝塔",
+            "chunk0003": "伽马",
+        }
+
+        def style_response(
+            stage: str,
+            ids: tuple[str, ...],
+            *,
+            response_id: str,
+        ) -> dict[str, object]:
+            if len(ids) == 1:
+                chunk_id = ids[0]
+                text = (
+                    f"自然润色 {chunk_id}。\n"
+                    if stage == "anti_ai"
+                    else f"学术润色 {chunk_id}。\n"
+                )
+                return completed_response(text, response_id)
+            translations = {
+                chunk_id: (
+                    f"自然润色 {chunk_id}。\n"
+                    if stage == "anti_ai"
+                    else f"学术润色 {chunk_id}。\n"
+                )
+                for chunk_id in ids
+            }
+            return {
+                "id": response_id,
+                "status": "completed",
+                "model": "fake-style-model",
+                "output_text": json.dumps(
+                    {"translations": translations},
+                    ensure_ascii=False,
+                ),
+                "usage": {
+                    "input_tokens": 10,
+                    "input_tokens_details": {"cached_tokens": 0},
+                    "output_tokens": 10,
+                    "output_tokens_details": {"reasoning_tokens": 0},
+                    "total_tokens": 20,
+                },
+            }
+
+        class FakeClient:
+            paper_phase_limits: dict[str, int] = {}
+
+            @staticmethod
+            def _chunk_ids_from_text(input_text: str) -> tuple[str, ...]:
+                if '"protocol": "snowmass-style-batch-v1"' in input_text:
+                    payload = json.loads(input_text)
+                    return tuple(chunk["id"] for chunk in payload["chunks"])
+                markers = {
+                    "chunk0001": ("Alpha body source", "初稿 阿尔法 正文", "修订 阿尔法 正文", "自然润色 阿尔法 正文"),
+                    "chunk0002": ("Beta body source", "初稿 贝塔 正文", "修订 贝塔 正文", "自然润色 贝塔 正文"),
+                    "chunk0003": ("Gamma body source", "初稿 伽马 正文", "修订 伽马 正文", "自然润色 伽马 正文"),
+                }
+                for chunk_id, candidates in markers.items():
+                    if any(candidate in input_text for candidate in candidates):
+                        return (chunk_id,)
+                raise AssertionError(f"cannot infer chunk id from input: {input_text}")
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                if "paper-level content analysis" in instructions:
+                    self.paper_phase_limits["analysis"] = max_output_tokens
+                    return completed_response(
+                        "## Content Summary\n测试论文。\n\n## Terminology\n- 无。\n\n"
+                        "## Tone & Style\n学术。\n\n## Translation Challenges\n- 无。\n",
+                        "analysis",
+                    ), 0.1
+                if "critical review" in instructions:
+                    self.paper_phase_limits["critique"] = max_output_tokens
+                    return completed_response(
+                        "## Accuracy\n- chunk0001: 无。\n- chunk0002: 无。\n- chunk0003: 无。\n\n"
+                        "## Native Voice\n- chunk0001: 调整句法。\n- chunk0002: 调整句法。\n- chunk0003: 调整句法。\n\n"
+                        "## Notes & Adaptation\n- 无。\n\n## Summary\n- 完成。\n",
+                        "critique",
+                    ), 0.1
+                if "first faithful translation pass" in instructions:
+                    chunk_id = self._chunk_ids_from_text(input_text)[0]
+                    return completed_response(
+                        f"初稿 {labels[chunk_id]} 正文。\n",
+                        f"draft-{chunk_id}",
+                    ), 0.1
+                if "refined revision pass" in instructions:
+                    chunk_id = self._chunk_ids_from_text(input_text)[0]
+                    return completed_response(
+                        f"修订 {labels[chunk_id]} 正文。\n",
+                        f"revision-{chunk_id}",
+                    ), 0.1
+                if "AI-mannerism cleanup pass" in instructions:
+                    ids = self._chunk_ids_from_text(input_text)
+                    style_calls.append(("anti_ai", ids))
+                    if ids == ("chunk0003",):
+                        released = release_third_anti_ai.wait(timeout=5)
+                        if not released:
+                            raise AssertionError("anti_ai gate did not release chunk0003")
+                    if '"protocol": "snowmass-style-batch-v1"' in input_text:
+                        payload = json.loads(input_text)
+                        return {
+                            "id": "anti-ai-" + "-".join(ids),
+                            "status": "completed",
+                            "model": "fake-style-model",
+                            "output_text": json.dumps(
+                                {
+                                    "translations": {
+                                        chunk["id"]: chunk["text"]
+                                        for chunk in payload["chunks"]
+                                    }
+                                },
+                                ensure_ascii=False,
+                            ),
+                            "usage": {
+                                "input_tokens": 10,
+                                "input_tokens_details": {"cached_tokens": 0},
+                                "output_tokens": 10,
+                                "output_tokens_details": {"reasoning_tokens": 0},
+                                "total_tokens": 20,
+                            },
+                        }, 0.1
+                    return style_response("anti_ai", ids, response_id="anti-ai-" + "-".join(ids)), 0.1
+                if "final Chinese naturalization" in instructions:
+                    ids = self._chunk_ids_from_text(input_text)
+                    style_calls.append(("academic", ids))
+                    release_third_anti_ai.set()
+                    if '"protocol": "snowmass-style-batch-v1"' in input_text:
+                        payload = json.loads(input_text)
+                        return {
+                            "id": "academic-" + "-".join(ids),
+                            "status": "completed",
+                            "model": "fake-style-model",
+                            "output_text": json.dumps(
+                                {
+                                    "translations": {
+                                        chunk["id"]: chunk["text"]
+                                        for chunk in payload["chunks"]
+                                    }
+                                },
+                                ensure_ascii=False,
+                            ),
+                            "usage": {
+                                "input_tokens": 10,
+                                "input_tokens_details": {"cached_tokens": 0},
+                                "output_tokens": 10,
+                                "output_tokens_details": {"reasoning_tokens": 0},
+                                "total_tokens": 20,
+                            },
+                        }, 0.1
+                    return style_response("academic", ids, response_id="academic-" + "-".join(ids)), 0.1
+                raise AssertionError(instructions)
+
+        result = module.run_refined_article(
+            self.article,
+            client=FakeClient(),
+            terms=[],
+            run_id="run-batched-style",
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            style_calls,
+            [
+                ("anti_ai", ("chunk0001", "chunk0002", "chunk0003")),
+                ("academic", ("chunk0001", "chunk0002", "chunk0003")),
+            ],
+        )
+        projection = json.loads(
+            (self.article / "style_batch_projection.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(projection["execution_mode"], "exact_id_batching")
+        self.assertEqual(
+            projection["planned"]["anti_ai"]["normal_batches"],
+            [["chunk0001", "chunk0002", "chunk0003"]],
+        )
+        self.assertEqual(
+            projection["planned"]["academic"]["normal_batches"],
+            [["chunk0001", "chunk0002", "chunk0003"]],
+        )
+        self.assertEqual(projection["planned"]["anti_ai"]["worst_case_requests"], 2)
+        self.assertEqual(projection["planned"]["academic"]["worst_case_requests"], 2)
+        self.assertEqual(projection["actual"]["anti_ai"]["normal_requests"], 1)
+        self.assertEqual(projection["actual"]["academic"]["normal_requests"], 1)
+        self.assertEqual(projection["actual"]["anti_ai"]["recovery_requests"], 0)
+        self.assertEqual(projection["actual"]["academic"]["recovery_requests"], 0)
+        request_chunk_ids = [
+            chunk_id
+            for _stage, ids in style_calls
+            for chunk_id in ids
+        ]
+        self.assertNotIn("chunk0004", request_chunk_ids)
+        for chunk in chunks:
+            output_path = module.runner.stage_output_path(
+                self.article,
+                str(chunk["id"]),
+                str(chunk["output_file"]),
+                "academic",
+            )
+            self.assertTrue(output_path.is_file(), chunk["id"])
 
     def test_existing_cost_recovers_partial_subrequests_and_uncertain_replay(self) -> None:
         module = load_module()
@@ -1285,38 +1562,6 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertTrue(all(event["total"] == 5 for event in events))
         self.assertTrue(all(event["phase"] == "revision" for event in events))
         self.assertTrue(all(event["attempt"] == 0 for event in events))
-
-    def test_style_batch_projection_is_observational_and_excludes_structured_chunks(self) -> None:
-        module = load_module()
-        chunks = []
-        texts = ["简洁正文一。\n", "简洁正文二。\n", "含有 14 TeV 的结构正文。\n", "简洁正文四。\n"]
-        for index, text in enumerate(texts, 1):
-            chunk_id = f"chunk{index:04d}"
-            (self.article / f"stage_revision_{chunk_id}.md").write_text(text, encoding="utf-8")
-            chunks.append({"id": chunk_id, "order": index, "output_file": f"out{index}.md"})
-
-        def task(chunk):
-            return {
-                "passthrough": chunk["id"] == "chunk0004",
-                "fixed_translation": None,
-            }
-
-        projection = module._style_batch_projection(
-            self.article,
-            chunks,
-            task,
-            max_group_size=4,
-            max_group_characters=2000,
-        )
-
-        self.assertEqual(projection["eligible_chunks"], 3)
-        self.assertEqual(projection["groupable_chunks"], 2)
-        self.assertEqual(projection["non_groupable_chunks"], 1)
-        self.assertEqual(projection["projected_groups"], 2)
-        self.assertEqual(projection["current_style_requests"], 6)
-        self.assertEqual(projection["projected_style_requests"], 4)
-        self.assertAlmostEqual(projection["projected_request_reduction_fraction"], 1 / 3)
-        self.assertFalse((self.article / "style_batch_projection.json").exists())
 
     def test_retry_context_reports_literal_parenthesis_and_term_differences(self) -> None:
         module = load_module()

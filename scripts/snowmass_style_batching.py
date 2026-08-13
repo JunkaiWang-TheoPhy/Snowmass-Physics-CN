@@ -89,6 +89,37 @@ class StyleStageResult:
     total_cost_rmb: float
 
 
+def stage_plan_projection(plan: StyleStagePlan) -> dict[str, Any]:
+    return {
+        "reused_chunks": list(plan.reused),
+        "local_chunks": list(plan.local),
+        "model_chunks": [item.chunk_id for item in plan.model_items],
+        "normal_batches": [
+            [item.chunk_id for item in batch.items]
+            for batch in plan.normal_batches
+        ],
+        "normal_requests": len(plan.normal_batches),
+        "worst_case_requests": plan.worst_case_requests,
+    }
+
+
+def stage_result_projection(result: StyleStageResult) -> dict[str, Any]:
+    return {
+        "planned_chunks": result.planned_chunks,
+        "completed_chunks": result.completed_chunks,
+        "reused_chunks": result.reused_chunks,
+        "local_chunks": result.local_chunks,
+        "failed_chunks": result.failed_chunks,
+        "normal_requests": result.normal_requests,
+        "recovery_requests": result.recovery_requests,
+        "input_tokens": result.input_tokens,
+        "cached_tokens": result.cached_tokens,
+        "output_tokens": result.output_tokens,
+        "total_tokens": result.total_tokens,
+        "total_cost_rmb": result.total_cost_rmb,
+    }
+
+
 class StyleBatchProtocolError(ValueError):
     """Raised when a style-batch response violates the exact-ID protocol."""
 
@@ -668,6 +699,7 @@ def execute_style_stage(
         request_status = {
             "attempt_id": attempt_id,
             "attempt_ordinal": attempt_ordinal,
+            "stage": stage,
             "request_key": request_key,
             "recovery": batch.recovery,
             "chunk_ids": [item.chunk_id for item in batch.items],
