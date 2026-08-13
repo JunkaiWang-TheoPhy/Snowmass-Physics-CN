@@ -1209,6 +1209,28 @@ def _style_batch_max_output_tokens(plan: style_batching.StyleStagePlan) -> int:
     return max(4096, min(20000, int(max(batch_characters, 4000) * 0.8)))
 
 
+def _require_style_request_capacity(
+    budget_guard: Any,
+    *,
+    stage: str,
+    worst_case_requests: int,
+) -> None:
+    """Fail before a style stage when its exact plan exceeds the durable call cap."""
+
+    if budget_guard is None or not hasattr(budget_guard, "snapshot"):
+        return
+    snapshot = budget_guard.snapshot()
+    remaining = snapshot.get("stage_remaining_api_calls")
+    if remaining is None:
+        return
+    remaining = max(0, int(remaining))
+    if worst_case_requests > remaining:
+        raise runner.BudgetExceededError(
+            f"{stage} style projection worst case would exceed the remaining stage request cap: "
+            f"{worst_case_requests} > {remaining}"
+        )
+
+
 def _legacy_style_batch_projection(planned: dict[str, dict[str, Any]]) -> dict[str, Any]:
     model_chunks: list[str] = []
     seen_chunk_ids: set[str] = set()
@@ -1353,6 +1375,11 @@ def run_batched_final_style_passes(
         status_path=status_path,
         planned_updates={"anti_ai": style_batching.stage_plan_projection(anti_ai_plan)},
     )
+    _require_style_request_capacity(
+        budget_guard,
+        stage="anti_ai",
+        worst_case_requests=anti_ai_plan.worst_case_requests,
+    )
     anti_ai_result = style_batching.execute_style_stage(
         article_dir=article_dir,
         chunks=chunks,
@@ -1388,6 +1415,11 @@ def run_batched_final_style_passes(
         status=status,
         status_path=status_path,
         planned_updates={"academic": style_batching.stage_plan_projection(academic_plan)},
+    )
+    _require_style_request_capacity(
+        budget_guard,
+        stage="academic",
+        worst_case_requests=academic_plan.worst_case_requests,
     )
     academic_result = style_batching.execute_style_stage(
         article_dir=article_dir,
@@ -2328,6 +2360,11 @@ def style_projection_report(
             "style_projection": style_projection,
             "projected_normal_api_calls": projected_normal_api_calls,
             "projected_worst_case_api_calls": projected_worst_case_api_calls,
+            "launch_worst_case_api_calls": (
+                projected_worst_case_api_calls
+                if anti_ai_complete
+                else int(style_projection["planned"]["anti_ai"]["worst_case_requests"])
+            ),
         }
     )
     return report

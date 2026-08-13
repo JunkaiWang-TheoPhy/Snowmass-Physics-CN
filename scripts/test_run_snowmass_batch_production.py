@@ -281,6 +281,38 @@ class RunLockTests(unittest.TestCase):
             self.assertTrue(mkstemp.called)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"status": "complete"})
 
+    def test_run_snapshot_refreshes_progress_projection_but_rejects_identity_change(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "snapshot.json"
+            identity = {"run_id": "run-1", "stage": "baseline", "stage_max_api_calls": 250}
+            module._write_or_refresh_run_snapshot(
+                path,
+                identity,
+                {"projected_worst_case_api_calls": 201},
+            )
+            module._write_or_refresh_run_snapshot(
+                path,
+                identity,
+                {"projected_worst_case_api_calls": 1},
+            )
+            self.assertEqual(
+                json.loads(path.read_text(encoding="utf-8"))["projected_worst_case_api_calls"],
+                1,
+            )
+            with self.assertRaisesRegex(RuntimeError, "Run snapshot collision"):
+                module._write_or_refresh_run_snapshot(
+                    path,
+                    {**identity, "stage_max_api_calls": 251},
+                    {"projected_worst_case_api_calls": 1},
+                )
+            with self.assertRaisesRegex(ValueError, "overlap"):
+                module._write_or_refresh_run_snapshot(
+                    path,
+                    identity,
+                    {"stage": "mutable-stage"},
+                )
+
 
 class BatchResumeTests(unittest.TestCase):
     def _two_record_config(self, module, root: Path):
@@ -1003,6 +1035,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                         "projection_ready": True,
                         "projected_normal_api_calls": 7,
                         "projected_worst_case_api_calls": 11,
+                        "launch_worst_case_api_calls": 5,
                         "style_projection": {
                             "planned": {
                                 "anti_ai": {"normal_requests": 3, "worst_case_requests": 5},
@@ -1017,6 +1050,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
         self.assertEqual(summary["status"], "preflight")
         self.assertEqual(summary["projected_normal_api_calls"], 7)
         self.assertEqual(summary["projected_worst_case_api_calls"], 11)
+        self.assertEqual(summary["launch_worst_case_api_calls"], 5)
         self.assertEqual(
             summary["style_projection"]["planned"]["anti_ai"]["normal_requests"],
             3,
@@ -1148,6 +1182,54 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                     module.run_batch(config)
 
             self.assertEqual(len(guard_instances), 1)
+
+    def test_style_launch_gate_uses_current_exact_stage_not_downstream_ceiling(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(module, root)
+
+            class Guard:
+                def __init__(self, *args, **kwargs) -> None:
+                    return None
+
+                def snapshot(self) -> dict[str, object]:
+                    return {
+                        "project_max_cost_rmb": 1000.0,
+                        "project_spent_rmb": 0.0,
+                        "project_reserved_rmb": 0.0,
+                        "stage_max_cost_rmb": 10.0,
+                        "stage_spent_rmb": 0.0,
+                        "stage_reserved_rmb": 0.0,
+                        "stage_usage": {},
+                        "stage_remaining_api_calls": 5,
+                    }
+
+            with (
+                mock.patch.object(module, "PersistentBudgetGuard", Guard),
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+                mock.patch.object(
+                    module,
+                    "_projection_report_for_record",
+                    return_value={
+                        "projection_ready": True,
+                        "projected_normal_api_calls": 7,
+                        "projected_worst_case_api_calls": 100,
+                        "launch_worst_case_api_calls": 5,
+                        "style_projection": {"planned": {}},
+                    },
+                ),
+                mock.patch.object(module, "_run_article", return_value={
+                    "record_id": "arxiv:a",
+                    "status": "packaged",
+                    "source_characters": 1,
+                }) as run_article,
+            ):
+                summary = module.run_batch(config, client=object())
+
+            self.assertEqual(summary["status"], "complete")
+            run_article.assert_called_once()
 
     def test_launch_gate_rejects_not_ready_projection_before_client_or_reservation(self) -> None:
         module = load_module()

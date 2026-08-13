@@ -2258,6 +2258,25 @@ class RefinedOrchestratorTests(unittest.TestCase):
         self.assertEqual(academic["worst_case_requests"], 6)
         self.assertEqual(report["projected_normal_api_calls"], 4)
         self.assertEqual(report["projected_worst_case_api_calls"], 10)
+        self.assertEqual(report["launch_worst_case_api_calls"], 4)
+
+    def test_style_stage_capacity_is_rechecked_against_live_remaining_calls(self) -> None:
+        module = load_module()
+
+        class Guard:
+            def snapshot(self):
+                return {"stage_remaining_api_calls": 3}
+
+        module._require_style_request_capacity(
+            Guard(), stage="anti_ai", worst_case_requests=3
+        )
+        with self.assertRaisesRegex(
+            module.runner.BudgetExceededError,
+            "academic style projection worst case.*4 > 3",
+        ):
+            module._require_style_request_capacity(
+                Guard(), stage="academic", worst_case_requests=4
+            )
 
     def test_chunk_barrier_retries_qc_failure_but_not_uncertain_request(self) -> None:
         module = load_module()

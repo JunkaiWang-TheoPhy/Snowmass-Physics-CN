@@ -147,6 +147,24 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
             os.unlink(temporary_name)
 
 
+def _write_or_refresh_run_snapshot(
+    path: Path,
+    identity: dict[str, Any],
+    projection: dict[str, Any],
+) -> None:
+    """Keep run identity immutable while refreshing checkpoint-dependent forecasts."""
+
+    overlap = sorted(identity.keys() & projection.keys())
+    if overlap:
+        raise ValueError("Run snapshot identity/projection fields overlap: " + ", ".join(overlap))
+    if path.is_file():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        for key, value in identity.items():
+            if existing.get(key) != value:
+                raise RuntimeError(f"Run snapshot collision: {identity.get('run_id')}")
+    _atomic_json(path, {**identity, **projection})
+
+
 def load_publication_records(path: Path) -> list[dict[str, Any]]:
     records = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(records, list):
@@ -556,6 +574,15 @@ def _aggregate_style_projection(
         ),
         "projected_worst_case_api_calls": sum(
             int(report.get("projected_worst_case_api_calls") or 0) for report in ready
+        ),
+        "launch_worst_case_api_calls": sum(
+            int(
+                report.get("launch_worst_case_api_calls")
+                if report.get("launch_worst_case_api_calls") is not None
+                else report.get("projected_worst_case_api_calls")
+                or 0
+            )
+            for report in ready
         ),
     }
 
@@ -1087,12 +1114,8 @@ def _run_batch_locked(
     recoverable, package_only_records, pending_records = _classify_selected_records(config, selected)
     results.extend(recoverable)
     projection_summary = _projection_summary(config, pending_records)
+    _write_or_refresh_run_snapshot(run_snapshot_path, snapshot, projection_summary)
     snapshot.update(projection_summary)
-    if run_snapshot_path.is_file():
-        if json.loads(run_snapshot_path.read_text(encoding="utf-8")) != snapshot:
-            raise RuntimeError(f"Run snapshot collision: {run_id}")
-    else:
-        _atomic_json(run_snapshot_path, snapshot)
 
     for record in package_only_records:
         try:
@@ -1129,7 +1152,13 @@ def _run_batch_locked(
                 "style projection is not ready for paid launch: "
                 + json.dumps(missing, ensure_ascii=False, sort_keys=True),
             )
-        projected_worst_case = int(projection_summary["projected_worst_case_api_calls"] or 0)
+        projected_worst_case = int(
+            projection_summary.get("launch_worst_case_api_calls")
+            if config.through_stage != "revision_ready"
+            and projection_summary.get("launch_worst_case_api_calls") is not None
+            else projection_summary["projected_worst_case_api_calls"]
+            or 0
+        )
         if projected_worst_case > stage_remaining_api_calls:
             raise RequestLimitExceededError(
                 (
