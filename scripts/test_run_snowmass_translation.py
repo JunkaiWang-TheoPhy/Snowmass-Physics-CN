@@ -801,6 +801,27 @@ class ProcessChunkTests(unittest.TestCase):
         ):
             RUNNER.restore_structure_slot_output(response, anchors, parts)
 
+    def test_structure_slots_allow_short_connector_to_move_for_chinese_syntax(self) -> None:
+        _, anchors, parts = RUNNER.build_structure_slot_input(
+            "Production cross sections [[SM_0001_0000000001]]"
+            " in BPs 4 and 5 [[SM_0002_0000000002]], respectively, "
+        )
+        response = json.dumps(
+            {
+                "translations": {
+                    "T0000": "产生截面",
+                    "T0001": "在基准点4和5中分别为",
+                    "T0002": "，",
+                }
+            },
+            ensure_ascii=False,
+        )
+
+        restored = RUNNER.restore_structure_slot_output(response, anchors, parts)
+
+        self.assertIn("分别", restored)
+        self.assertEqual(RUNNER._MODEL_SENTINEL_RE.findall(restored), list(anchors))
+
     def test_anchor_fallback_hides_real_nodes_and_allows_syntax_repositioning(self) -> None:
         source = "given parameters [[SM_0001_0000000001]], calculate the matrix"
         payload, anchors, markers = RUNNER.build_structure_anchor_input(source)

@@ -58,6 +58,9 @@ STRUCTURE_ANCHOR_PROTOCOL = "snowmass-anchor-template-v1"
 _TRANSLATABLE_SLOT_RE = re.compile(r"[A-Za-z\u3400-\u9fff]")
 _SOURCE_LEXICAL_RE = re.compile(r"[A-Za-z]")
 _TARGET_LEXICAL_RE = re.compile(r"[A-Za-z\u3400-\u9fff]")
+_MOVABLE_CONNECTOR_TRANSLATIONS = {
+    "respectively": ("分别",),
+}
 _CONTEXT_ANCHOR_RE = re.compile(r"<ANCHOR_[0-9]{4}>")
 _ACADEMIC_PUNCTUATION_TABLE = str.maketrans({".": "。", ",": "，", ";": "；", ":": "："})
 _MONTH_NAMES_ZH = {
@@ -607,11 +610,20 @@ def restore_structure_slot_output(
     target_lexical = sum(
         len(_TARGET_LEXICAL_RE.findall(value)) for value in translations.values()
     )
+    combined_translation = "".join(translations.values())
     for index, source_part in enumerate(source_parts):
         slot_id = f"T{index:04d}"
+        source_connector = " ".join(
+            re.findall(r"[A-Za-z]+", source_part.casefold())
+        )
+        connector_moved = source_connector in _MOVABLE_CONNECTOR_TRANSLATIONS and any(
+            target in combined_translation
+            for target in _MOVABLE_CONNECTOR_TRANSLATIONS[source_connector]
+        )
         if (
             len(_SOURCE_LEXICAL_RE.findall(source_part)) >= 12
             and not _TARGET_LEXICAL_RE.search(translations.get(slot_id, ""))
+            and not connector_moved
         ):
             raise StructureMismatchError(
                 f"Structure-slot response omitted substantive slot {slot_id}"
