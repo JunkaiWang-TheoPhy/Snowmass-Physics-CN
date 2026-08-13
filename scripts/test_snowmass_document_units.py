@@ -46,6 +46,7 @@ class TypedProtectionTests(unittest.TestCase):
     def test_cpu_model_suffix_is_not_misread_as_seconds(self) -> None:
         units = load_units()
         self.assertEqual(units.extract_unit_values("Intel Xeon Gold 5220S CPUs"), ())
+        self.assertEqual(units.extract_unit_values("双插槽 Intel Xeon Gold5220SCPU"), ())
 
     def test_unit_before_uppercase_acronym_is_detected(self) -> None:
         units = load_units()

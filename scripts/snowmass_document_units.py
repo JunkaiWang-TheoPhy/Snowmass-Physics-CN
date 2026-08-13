@@ -56,7 +56,9 @@ _UNIT_VALUE_RE = re.compile(
     r"\s*(?P<unit>%(?![0-9_])|(?:eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|km|m|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?=$|[^A-Za-z0-9_]|(?-i:[A-Z][A-Za-z])))",
     re.IGNORECASE,
 )
-_CPU_MODEL_SECONDS_RE = re.compile(r"\b\d{3,}S\s*(?:CPU|CPUs|processor|processors)\b")
+_CPU_MODEL_SECONDS_RE = re.compile(
+    r"(?<!\d)\d{3,}S\s*(?:CPU|CPUs|processor|processors)(?![A-Za-z])"
+)
 _COMPARE_NUMBER_RE = re.compile(
     r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)"
     r"(?:\.\d+)?(?:[eE][-+]?\d+)?%?s?"
