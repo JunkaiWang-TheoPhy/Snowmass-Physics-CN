@@ -888,6 +888,15 @@ class RefinedOrchestratorTests(unittest.TestCase):
             module._critique_context_for_chunk(critique, "chunk0003"),
         )
 
+    def test_chunk_critique_context_ignores_ids_mentioned_inside_another_finding(self) -> None:
+        module = load_module()
+        critique = "- chunk0005: 与chunk0016统一术语。\n"
+
+        self.assertIn(
+            module.NO_ACTIONABLE_CRITIQUE,
+            module._critique_context_for_chunk(critique, "chunk0016"),
+        )
+
     def test_figure_internal_policy_has_priority_over_fragment_heuristics(self) -> None:
         module = load_module()
 

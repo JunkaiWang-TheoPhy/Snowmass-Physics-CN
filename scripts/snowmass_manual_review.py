@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,10 +35,14 @@ def collect_manual_review_queue(output_root: Path) -> dict[str, Any]:
         source = (article_dir / source_file).read_text(encoding="utf-8")
         terminology = (article_dir / f"stage2_{chunk_id}.md").read_text(encoding="utf-8")
         critique_path = article_dir / "04-critique.md"
+        finding_prefix = re.compile(
+            rf"^\s*(?:[-*+]\s*)?{re.escape(chunk_id)}\s*:",
+            flags=re.I,
+        )
         critique = [
             line
             for line in critique_path.read_text(encoding="utf-8").splitlines()
-            if chunk_id in line
+            if finding_prefix.match(line)
         ] if critique_path.is_file() else []
         items.append(
             {

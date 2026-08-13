@@ -1581,7 +1581,13 @@ def _qc_retry_context(
 
 
 def _critique_context_for_chunk(critique: str, chunk_id: str) -> str:
-    findings = [line.strip() for line in critique.splitlines() if chunk_id in line]
+    finding_prefix = re.compile(
+        rf"^\s*(?:[-*+]\s*)?{re.escape(chunk_id)}\s*:",
+        flags=re.I,
+    )
+    findings = [
+        line.strip() for line in critique.splitlines() if finding_prefix.match(line)
+    ]
     if not findings:
         return f"{NO_ACTIONABLE_CRITIQUE}: {chunk_id}"
     return "# Actionable critique for this chunk only\n" + "\n".join(findings)
@@ -1592,11 +1598,11 @@ def _require_critique_revision_targets_within_bound(
     chunks: list[dict[str, Any]],
 ) -> None:
     known_ids = {str(chunk["id"]) for chunk in chunks}
-    target_ids = {
-        match.lower()
-        for match in re.findall(r"\bchunk\d{4}\b", critique, flags=re.I)
-        if match.lower() in known_ids
-    }
+    target_ids = set()
+    for line in critique.splitlines():
+        match = re.match(r"^\s*(?:[-*+]\s*)?(chunk\d{4})\s*:", line, flags=re.I)
+        if match and match.group(1).lower() in known_ids:
+            target_ids.add(match.group(1).lower())
     if len(target_ids) > CRITIQUE_GLOBAL_MAX_FINDINGS:
         raise RuntimeError(
             "Critique exceeds the revision target cap: "

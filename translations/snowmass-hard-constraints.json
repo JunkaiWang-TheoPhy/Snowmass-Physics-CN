@@ -161,6 +161,18 @@
           "target": "欧洲粒子物理战略的2019年更新和2021年Snowmass进程均将μ子对撞机视为轻子碰撞达到极高质心能量的一条极具前景的途径。这类装置兼具出色的新物理发现潜力和高精度测量能力。就事件探测和重建而言，区分{v1}与{v2}对应装置的关键挑战是束流诱导本底。μ子不稳定，会在飞行中衰变并产生电子；这些电子随后与加速器和探测器部件进一步相互作用，产生数量极多、且大多较软的次级粒子，其中一部分最终进入探测器。次级粒子在探测器中产生的击中对粒子探测和重建构成重大挑战。本文给出了μ子对撞机探测器的初步设计和技术指标，描述了探测器将承受的辐射水平，并概述了减轻BIB影响的可能途径。结果表明，其辐射水平与HL-LHC实验相近。我们还说明，BIB对μ子对撞机探测器的粒度、分辨率和时间性能提出了严格要求，并介绍了若干有望应对这一挑战的新兴探测器技术。最后，我们认为，还需开展研发以进一步完善这些技术，使其成熟度达到探测器建造所需水平。",
           "scope": "all_occurrences",
           "reason": "Manual review restores spacing in 2021 Snowmass and preserves both structural counterparts without inferring their hidden formulas."
+        },
+        {
+          "source": "A recent simulation study was conducted to determine granularity and timing requirements for the tracker sensors in order to reduce the hit occupancy to under 1% target level. In this study, we varied pixel size and per hit timing resolution in each layer of the detector. Hits were integrated in the time period of 1 ns following the bunch crossing. It was found that for the vertex detector granularity of {v1}and time resolution of 30 ps were needed to achieve the desired occupancy goal. In the inner tracker, asymmetric macropixels with {v2}size and 60 ps timing resolution were sufficient to satisfy the requirement, while in the outer tracker featured microstrips with the size of {v3}mm and 60 ps time resolution. It is thus evident that R&D efforts towards 4D tracking are necessary to achieve the required spacial granularity and timing resolution. Below we provide a description of promising technologies for achieving such goals.",
+          "target": "近期开展了一项模拟研究，以确定径迹探测器传感器所需的粒度和时间性能，从而将击中占用率降至1%目标水平以下。研究改变了探测器各层的像素尺寸和单次击中的时间分辨率，并对束团交叉后1 ns时间窗内的击中进行积分。结果表明，为达到目标占用率，顶点探测器需要{v1}的粒度和30 ps的时间分辨率；内径迹探测器采用尺寸为{v2}、时间分辨率为60 ps的非对称宏像素即可满足要求；外径迹探测器则采用尺寸为{v3}mm、时间分辨率为60 ps的微条。由此可见，为获得所需的空间粒度和时间分辨率，必须推进4D径迹测量技术的研发。下文介绍若干有望实现这些目标的技术。",
+          "scope": "all_occurrences",
+          "reason": "Manual review naturalizes the occupancy threshold and preserves every detector dimension, time resolution, and structural placeholder."
+        },
+        {
+          "source": "Fig. 14: Estimated hit rate from neutrons (left) and photons (right) at a 1.5TeV muon collider. Different colors represent different gaseous detector technologies considered.",
+          "target": "图14：1.5TeV μ子对撞机中由中子（左）和光子（右）产生的估计命中率。不同颜色表示所考虑的不同气体探测器技术。",
+          "scope": "all_occurrences",
+          "reason": "Manual review repairs nested parenthesis corruption and separates the collider energy from the Chinese detector name without changing the source unit literal."
         }
       ]
     },
@@ -309,6 +321,18 @@
           "target": "3.1 与CAD公司会谈 . . . . . . . . . . . . . . . . . . . . . . . . . 4 3.2 DARPA会谈 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5 3.3 ICPT参与 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5",
           "scope": "all_occurrences",
           "reason": "Manual review normalizes table-of-contents spacing while preserving all section and page numbers."
+        },
+        {
+          "source": "Microelectronics development is critical to a wide number of DOE projects and mission space. Creating Helpful Incentives to Produce Semiconductors (CHIPS) and manufacturing Application Specific Integrated Circuits (ASIC) are important to DOE, so the infrastructure that allows DOE to carry out its mission needs to exist. This paper discusses the current initiatives and recom- mends a business model to build an ecosystem for microelectronics design for DOE which includes three main building blocks: the Computer Aided Design (CAD) – Electronic Design Automation (EDA) design tools, basic design IPs, and access to semiconductor fabrication facilities.",
+          "target": "微电子技术开发对美国能源部（DOE）的众多项目和任务领域至关重要。《芯片与科学法案》（CHIPS）和专用集成电路（ASIC）制造对DOE具有重要意义，因此必须建设支持DOE履行其使命的基础设施。本文讨论当前举措，并提出一种商业模式，以构建面向DOE的微电子设计生态系统。该生态系统包括三个主要组成部分：计算机辅助设计（CAD）—电子设计自动化（EDA）设计工具、基础设计IP，以及使用半导体制造设施的渠道。",
+          "scope": "all_occurrences",
+          "reason": "Manual review unifies the CHIPS Act and ASIC terminology, removes doubled parentheses, and preserves all three ecosystem components."
+        },
+        {
+          "source": "The major bottleneck is the access to low-cost, high-volume microelectronics CAD tools. The increasing complexity of designing in smaller geometry nodes has led to complicated and expensive licensing frameworks, often with one license being shared among multiple (e.g., more than 10) designers. As the technology node scales, even small designs take significantly long completion time and are harder to debug with limited licenses. Moreover, the existing framework is not suitable for collaborative development especially in joint teams composed of groups from national labs, international labs, universities, and small businesses. Finally, legal clauses for standard IP access are independently renegotiated by each DOE lab, resulting in significant delays and different outcomes.",
+          "target": "主要瓶颈在于难以获得低成本、可供大规模使用的微电子CAD工具。随着较小工艺节点的设计复杂度不断提高，许可证体系也日益复杂且昂贵；一个许可证往往需要由多名设计人员共享（例如超过10人）。工艺节点继续缩小时，即使规模较小的设计也需要显著更长的完成时间，并且在许可证有限的条件下更难调试。此外，现有框架不适合协作开发，尤其不适合由国家实验室、国际实验室、高校和小型企业共同组成的联合团队。最后，各DOE实验室分别重新谈判标准IP访问的法律条款，造成显著延误，并产生不同结果。",
+          "scope": "all_occurrences",
+          "reason": "Manual review places the more-than-10 example naturally while preserving licensing, collaboration, and legal-access semantics."
         }
       ]
     },
