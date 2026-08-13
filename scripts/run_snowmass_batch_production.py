@@ -109,6 +109,36 @@ def _artifact_manifest_path(article_dir: Path) -> Path:
 def _ensure_artifact_contract(config: BatchConfig, record: dict[str, Any], article_dir: Path) -> dict[str, Any]:
     environment_lock = _production_environment_lock()
     manifest_path = _artifact_manifest_path(article_dir)
+    if manifest_path.is_file():
+        stored_report = production_contract.validate_artifact_manifest(
+            manifest_path,
+            article_root=article_dir,
+            rights_manifest_path=config.rights_manifest,
+        )
+        current_report = production_contract.validate_artifact_manifest(
+            manifest_path,
+            article_root=article_dir,
+            current_environment_lock=environment_lock,
+            rights_manifest_path=config.rights_manifest,
+        )
+        if (
+            stored_report["ok"] is True
+            and current_report["errors"] == ["environment_lock_drift"]
+        ):
+            stored = json.loads(manifest_path.read_text(encoding="utf-8"))
+            old_lock = str(stored.get("environment_lock_sha256") or "unknown")
+            history_path = (
+                article_dir
+                / "production_artifact_history"
+                / f"production_artifacts.{old_lock}.json"
+            )
+            history_path.parent.mkdir(parents=True, exist_ok=True)
+            if history_path.exists():
+                if history_path.read_bytes() != manifest_path.read_bytes():
+                    raise RuntimeError("Production artifact history collision")
+                manifest_path.unlink()
+            else:
+                manifest_path.replace(history_path)
     if not manifest_path.is_file():
         production_contract.write_artifact_manifest(
             manifest_path=manifest_path,

@@ -575,6 +575,37 @@ class RunLockTests(unittest.TestCase):
         )
         self.assertEqual(module.production_contract._environment_lock_errors(environment), [])
 
+    def test_environment_drift_archives_and_rebinds_verified_artifact_manifest(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = BatchResumeTests()._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = module._article_dir(config, "arxiv:a")
+            article.mkdir(parents=True)
+            old_lock = module._production_environment_lock()
+            module.production_contract.write_artifact_manifest(
+                manifest_path=module._artifact_manifest_path(article),
+                record_id="arxiv:a",
+                publication_allowed=True,
+                rights_manifest_path=config.rights_manifest,
+                article_root=article,
+                environment_lock=old_lock,
+            )
+            new_lock = {**old_lock, "git": {**old_lock["git"], "commit": "new-commit"}}
+            new_lock["lock_sha256"] = module.production_contract._json_sha256(
+                {key: value for key, value in new_lock.items() if key != "lock_sha256"}
+            )
+
+            with mock.patch.object(module, "_production_environment_lock", return_value=new_lock):
+                rebound = module._ensure_artifact_contract(config, record, article)
+
+            manifest = json.loads(module._artifact_manifest_path(article).read_text())
+            self.assertEqual(rebound["lock_sha256"], new_lock["lock_sha256"])
+            self.assertEqual(manifest["environment_lock_sha256"], new_lock["lock_sha256"])
+            self.assertEqual(manifest["artifacts"], [])
+            self.assertEqual(len(list((article / "production_artifact_history").glob("*.json"))), 1)
+
     def test_same_run_cannot_be_started_twice(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
