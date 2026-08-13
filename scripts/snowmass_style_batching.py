@@ -748,6 +748,43 @@ def _has_unresolved_uncertain_attempt(article_dir: Path, stage: str, request_key
     )
 
 
+def _matching_recovery_was_already_paid(
+    article_dir: Path,
+    stage: str,
+    request_key: str,
+    batch: StyleBatch,
+    chunk_map: dict[str, dict[str, Any]],
+    task_factory: Callable[[dict[str, Any]], dict[str, Any]],
+) -> bool:
+    expected_ids = tuple(item.chunk_id for item in batch.items)
+    attempts = _batch_attempt_history(article_dir, stage, request_key)
+    paid_recovery = any(
+        attempt.get("recovery") is True
+        and attempt.get("status") in {"settled", "protocol_failed", "recovered_offline"}
+        and tuple(attempt.get("chunk_ids") or ()) == expected_ids
+        for attempt in attempts
+    )
+    if not paid_recovery:
+        return False
+    for item in batch.items:
+        chunk = chunk_map[item.chunk_id]
+        task = dict(task_factory(chunk))
+        _status_path_value, status = _load_status(
+            article_dir, task, chunk, item.source_hash
+        )
+        stage_status = status.get("stages", {}).get(stage, {})
+        if not (
+            status.get("chunk_id") == item.chunk_id
+            and status.get("source_hash") == item.source_hash
+            and isinstance(stage_status, dict)
+            and stage_status.get("status") == "failed"
+            and stage_status.get("item_key") == item.item_key
+            and stage_status.get("request_key") == request_key
+        ):
+            return False
+    return True
+
+
 def _recover_paid_protocol_response(
     article_dir: Path,
     stage: str,
@@ -861,6 +898,15 @@ def execute_style_stage(
                 f"style stage {stage} has unresolved uncertain paid request for {record_id}; "
                 "explicit retry authorization required"
             )
+        if _matching_recovery_was_already_paid(
+            article_dir,
+            stage,
+            request_key,
+            batch,
+            chunk_map,
+            task_factory,
+        ):
+            return tuple(item.chunk_id for item in batch.items)
         offline_recovery = _recover_paid_protocol_response(
             article_dir,
             stage,

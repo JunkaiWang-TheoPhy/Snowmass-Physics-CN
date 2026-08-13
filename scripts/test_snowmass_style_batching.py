@@ -1692,6 +1692,91 @@ class StyleExecutionTests(unittest.TestCase):
                 run_id="run-tampered-prior",
             )
 
+    def test_prepare_resolves_matching_prior_recovery_failure_without_new_request(self) -> None:
+        single_chunk = self.chunks[:1]
+        source_text = (self.article_dir / "chunk0001.md").read_text(encoding="utf-8")
+        prior_path = self.runner.stage_output_path(
+            self.article_dir, "chunk0001", "output_chunk0001.md", "revision"
+        )
+        status_path = self.article_dir / "chunk_status" / "chunk0001.json"
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        status_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:test:chunk0001",
+                    "chunk_id": "chunk0001",
+                    "source_file": "chunk0001.md",
+                    "source_hash": self.runner.text_hash(source_text),
+                    "stages": {
+                        "revision": {
+                            "status": "complete",
+                            "output_file": prior_path.name,
+                            "output_hash": self.runner.text_hash(prior_path.read_text(encoding="utf-8")),
+                            "qc": {"ok": True, "failures": []},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        initial = self._prepare(single_chunk)
+        item = initial.model_items[0]
+        recovery_batch = self.batching.StyleBatch((item,), recovery=True)
+        instructions = self.batching.style_batch_instructions("clean the prose")
+        request_key = self.batching.style_batch_request_key(
+            batch=recovery_batch,
+            stage="anti_ai",
+            model="fake-style-model",
+            instructions=instructions,
+            max_output_tokens=256,
+        )
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        payload["stages"]["anti_ai"] = {
+            "status": "failed",
+            "item_key": item.item_key,
+            "request_key": request_key,
+            "execution_policy": "model_pipeline",
+            "error": "QC failed",
+        }
+        status_path.write_text(json.dumps(payload), encoding="utf-8")
+        self.batching._persist_batch_request(
+            self.article_dir,
+            "anti_ai",
+            {
+                "attempt_id": f"{request_key}:recovery:1",
+                "request_key": request_key,
+                "recovery": True,
+                "chunk_ids": ["chunk0001"],
+                "status": "settled",
+            },
+        )
+
+        resumed = self._prepare(single_chunk)
+
+        class NoCallClient:
+            def complete(self, *_args):
+                raise AssertionError("settled recovery must fall back before a new request")
+
+        result = self.batching.execute_style_stage(
+            article_dir=self.article_dir,
+            chunks=single_chunk,
+            task_factory=self._task,
+            terms=[],
+            stage="anti_ai",
+            plan=resumed,
+            client=NoCallClient(),
+            instructions="clean the prose",
+            max_output_tokens=256,
+            budget_guard=None,
+            run_id="run-cross-run-fallback",
+            model="fake-style-model",
+        )
+
+        self.assertEqual(result.normal_requests, 0)
+        self.assertEqual(result.recovery_requests, 0)
+        self.assertEqual(self._status("chunk0001")["execution_policy"], "verified_prior_style_fallback")
+
     def test_recovery_requests_stay_within_the_planned_near_limit_ceiling(self) -> None:
         chunks = tuple(
             {
