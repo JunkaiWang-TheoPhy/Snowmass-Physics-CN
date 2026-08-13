@@ -1919,6 +1919,13 @@ def _planned_stage_model_subrequests(
     decision = runner.stage_decision(stage, current, selected_terms)
     if stage == "revision" and NO_ACTIONABLE_CRITIQUE in paper_context:
         decision = runner.StageDecision(False, "revision_no_actionable_chunk_critique")
+    elif stage == "revision" and runner.refinement_context_contains_factual_literals(
+        paper_context
+    ):
+        decision = runner.StageDecision(
+            False,
+            "revision_literal_rebinding_requires_manual_review",
+        )
 
     return {
         "decision": decision,

@@ -881,6 +881,18 @@ def sanitize_refinement_context(context: str) -> str:
     return sanitized
 
 
+def refinement_context_contains_factual_literals(context: str) -> bool:
+    """Return true when critique could ask the model to rebind a number or unit."""
+
+    critique = re.sub(
+        r"^# QC-CORRECTION RETRY \d+\s*\n?",
+        "",
+        context,
+        flags=re.I,
+    )
+    return "<PROTECTED_" in sanitize_refinement_context(critique)
+
+
 def localize_source_month_years(text: str) -> str:
     """Replace unambiguous English month-year pairs before model submission."""
 
@@ -1684,6 +1696,15 @@ def process_chunk(
         max_output = max_outputs[0]
         passthrough = bool(task.get("passthrough"))
         qc_terms = [] if passthrough else selected_terms
+        stable_paper_context = (
+            paper_context_identity
+            if paper_context_identity is not None
+            else paper_context
+        )
+        literal_rebinding_review = (
+            stage == "revision"
+            and refinement_context_contains_factual_literals(stable_paper_context)
+        )
         expected_policy = (
             f"passthrough:{task.get('passthrough_reason')}"
             if bool(task.get("passthrough"))
@@ -1693,7 +1714,11 @@ def process_chunk(
                 + ":"
                 + str(task.get("constraint_plan_sha256") or "legacy")
                 if fixed_translation is not None
-                else "model_pipeline"
+                else (
+                    "revision_manual_review:literal_rebinding"
+                    if literal_rebinding_review
+                    else "model_pipeline"
+                )
             )
         )
         if checkpoint_policy_matches(stage_status, expected_policy) and checkpoint_is_valid(
@@ -1701,11 +1726,6 @@ def process_chunk(
         ):
             current = output_path.read_text(encoding="utf-8")
             continue
-        stable_paper_context = (
-            paper_context_identity
-            if paper_context_identity is not None
-            else paper_context
-        )
         context_hash = text_hash(stable_paper_context) if stage == "revision" else None
         context_allows_reuse = (
             stage != "revision"
@@ -1785,6 +1805,11 @@ def process_chunk(
         decision = stage_decision(stage, current, selected_terms)
         if stage == "revision" and "NO_ACTIONABLE_CHUNK_CRITIQUE" in paper_context:
             decision = StageDecision(False, "revision_no_actionable_chunk_critique")
+        elif literal_rebinding_review:
+            decision = StageDecision(
+                False,
+                "revision_literal_rebinding_requires_manual_review",
+            )
         if fixed_translation is not None:
             decision = StageDecision(
                 False,

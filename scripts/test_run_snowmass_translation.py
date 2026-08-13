@@ -832,6 +832,89 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertGreaterEqual(sanitized.count("<PROTECTED_NUMBER>"), 1)
         self.assertEqual(sanitized.count("<PROTECTED_UNIT>"), 1)
 
+    def test_revision_with_literal_bearing_critique_preserves_prior_text_without_model(self) -> None:
+        source = "The repository has 24 nodes and 2.5PB of storage.\n"
+        prior = "该仓库有24个节点，存储容量为2.5PB。\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage2_chunk0001.md"
+        initial.write_text(prior, encoding="utf-8")
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("literal-bearing critique must not reach the model")
+
+        result = RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=initial,
+            paper_context="chunk0001: move 24 after the year and place 2.5PB before nodes.",
+        )
+
+        self.assertEqual(result["status"], "complete")
+        output = self.article_dir / "stage_revision_chunk0001.md"
+        self.assertEqual(output.read_text(encoding="utf-8"), prior)
+        status = json.loads(
+            (self.article_dir / "chunk_status" / "chunk0001.json").read_text(
+                encoding="utf-8"
+            )
+        )["stages"]["revision"]
+        self.assertEqual(
+            status["decision"]["reason"],
+            "revision_literal_rebinding_requires_manual_review",
+        )
+
+    def test_literal_review_policy_invalidates_a_prior_model_revision_checkpoint(self) -> None:
+        source = "The repository has 24 nodes and 2.5PB of storage.\n"
+        prior = "该仓库有24个节点，存储容量为2.5PB。\n"
+        unsafe = "该仓库于24年提供2.5PB个节点。\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage2_chunk0001.md"
+        initial.write_text(prior, encoding="utf-8")
+        output = self.article_dir / "stage_revision_chunk0001.md"
+        output.write_text(unsafe, encoding="utf-8")
+        status_dir = self.article_dir / "chunk_status"
+        status_dir.mkdir()
+        (status_dir / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "chunk_id": "chunk0001",
+                    "source_file": "chunk0001.md",
+                    "source_hash": "source-hash",
+                    "stages": {
+                        "revision": {
+                            "status": "complete",
+                            "request_key": "legacy-key",
+                            "output_file": output.name,
+                            "output_hash": RUNNER.text_hash(unsafe),
+                            "qc": {"ok": True, "failures": []},
+                            "decision": {"action": "call_model", "reason": "stage_requires_model"},
+                            "execution_policy": "model_pipeline",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class NoCallClient:
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                raise AssertionError("unsafe revision checkpoint must downgrade without a call")
+
+        RUNNER.process_chunk(
+            self.task,
+            NoCallClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=initial,
+            paper_context="chunk0001: move 24 and 2.5PB to different clauses.",
+        )
+
+        self.assertEqual(output.read_text(encoding="utf-8"), prior)
+
     def test_structure_slot_requests_enable_official_json_output_mode(self) -> None:
         structured = RUNNER.build_request_payload(
             "Return JSON. STRUCTURE-SLOT PROTOCOL", "{}", 128
