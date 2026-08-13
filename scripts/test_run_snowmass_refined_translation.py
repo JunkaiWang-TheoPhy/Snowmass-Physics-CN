@@ -717,6 +717,23 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(mapping, {"header": "统一页眉"})
 
+    def test_tracked_mu3e_figure_caption_preserves_formula_placeholder_position(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            mapping = module._hard_exact_translations(
+                Path(temporary),
+                "arxiv:2204.00001",
+            )
+
+        source = (
+            "figure 10. expected sensitivity to prompt dark photon decays in "
+            "{v1}in the first phase of the mu3e experiment."
+        )
+        self.assertEqual(
+            mapping[source],
+            "图10。Mu3e 实验第一阶段对 {v1} 过程中瞬发暗光子衰变的预期灵敏度。",
+        )
+
     def test_hard_exact_translations_merge_local_overrides_with_tracked_baseline(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

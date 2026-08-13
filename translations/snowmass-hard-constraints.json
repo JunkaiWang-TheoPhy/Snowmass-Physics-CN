@@ -59,6 +59,16 @@
           "reason": "Correct source extraction spacing and keep the visible parenthetical phrase balanced."
         }
       ]
+    },
+    "arxiv:2204.00001": {
+      "exact_translations": [
+        {
+          "source": "Figure 10. Expected sensitivity to prompt dark photon decays in {v1}in the first phase of the Mu3e experiment.",
+          "target": "图10。Mu3e 实验第一阶段对 {v1} 过程中瞬发暗光子衰变的预期灵敏度。",
+          "scope": "all_occurrences",
+          "reason": "Lock the Figure 10 caption after an early model pass moved the Mu3e numeral across the BabelDOC formula placeholder and corrupted the decay expression."
+        }
+      ]
     }
   }
 }
