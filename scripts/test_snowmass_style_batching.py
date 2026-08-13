@@ -115,6 +115,7 @@ class StyleBatchPlanningTests(unittest.TestCase):
                 "local_chunks": ["chunk0005"],
                 "model_chunks": ["chunk0001", "chunk0002", "chunk0003"],
                 "normal_batches": [["chunk0001", "chunk0002"], ["chunk0003"]],
+                "normal_batch_characters": [2, 1],
                 "normal_requests": 2,
                 "worst_case_requests": 3,
             },
@@ -733,8 +734,11 @@ class StyleExecutionTests(unittest.TestCase):
     def _batch_status(self) -> dict[str, object]:
         return json.loads((self.article_dir / "style_batch_status.json").read_text(encoding="utf-8"))
 
-    def _batch_requests(self) -> list[dict[str, object]]:
-        return list(self._batch_status()["requests"])
+    def _batch_requests(self, stage: str = "anti_ai") -> list[dict[str, object]]:
+        payload = self._batch_status()
+        if "stages" in payload:
+            return list(payload["stages"][stage]["requests"])
+        return list(payload["requests"])
 
     def _cost_events(self) -> list[dict[str, object]]:
         return [
@@ -859,12 +863,57 @@ class StyleExecutionTests(unittest.TestCase):
         self.assertNotIn("usage", self._status("chunk0002"))
         batch_status = self._batch_status()
         self.assertEqual(
-            [request["response_id"] for request in batch_status["requests"]],
+            [request["response_id"] for request in batch_status["stages"]["anti_ai"]["requests"]],
             ["resp-normal", "resp-recovery"],
         )
         self.assertEqual([event["event_id"] for event in self._cost_events()], ["resp-normal", "resp-recovery"])
         self.assertEqual(len(guard.settled), 2)
         self.assertEqual(guard.committed, [])
+
+    def test_batch_status_groups_requests_by_stage_and_migrates_legacy_shape(self) -> None:
+        path = self.article_dir / "style_batch_status.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "stage": "anti_ai",
+                    "requests": [
+                        {
+                            "attempt_id": "legacy-1",
+                            "request_key": "legacy-request",
+                            "status": "settled",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.batching._persist_batch_request(
+            self.article_dir,
+            "academic",
+            {
+                "attempt_id": "academic-1",
+                "request_key": "academic-request",
+                "status": "running",
+            },
+        )
+
+        batch_status = self._batch_status()
+        self.assertEqual(batch_status["schema_version"], 2)
+        self.assertNotIn("stage", batch_status)
+        self.assertNotIn("requests", batch_status)
+        self.assertEqual(
+            [request["attempt_id"] for request in batch_status["stages"]["anti_ai"]["requests"]],
+            ["legacy-1"],
+        )
+        self.assertEqual(
+            [request["attempt_id"] for request in batch_status["stages"]["academic"]["requests"]],
+            ["academic-1"],
+        )
 
     def test_protocol_failure_commits_nothing_before_retrying_the_whole_failed_request(self) -> None:
         class RecordingBudgetGuard:
@@ -1057,7 +1106,10 @@ class StyleExecutionTests(unittest.TestCase):
         self.assertEqual(guard.committed, ["reservation-1"])
         self.assertEqual(guard.settled, [])
         self.assertEqual(self._status("chunk0001")["status"], "uncertain")
-        self.assertEqual(self._batch_status()["requests"][0]["status"], "uncertain")
+        self.assertEqual(
+            self._batch_status()["stages"]["anti_ai"]["requests"][0]["status"],
+            "uncertain",
+        )
         events = self._cost_events()
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["kind"], "style_batch_ambiguous_transport_reservation")
@@ -1224,7 +1276,10 @@ class StyleExecutionTests(unittest.TestCase):
                 run_id="run-uncertain-1",
             )
 
-        with self.assertRaisesRegex(RuntimeError, "explicit retry authorization"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"style stage anti_ai has unresolved uncertain paid request for arxiv:test:chunk0001; explicit retry authorization required",
+        ):
             self.batching.execute_style_stage(
                 article_dir=self.article_dir,
                 chunks=single_chunk,
@@ -1241,3 +1296,51 @@ class StyleExecutionTests(unittest.TestCase):
 
         self.assertEqual(client.calls, 1)
         self.assertEqual(guard.reservations, 1)
+
+    def test_recovery_exhaustion_error_mentions_stage_and_record_id(self) -> None:
+        single_chunk = self.chunks[:1]
+        plan = self._prepare(single_chunk)
+
+        class MalformedClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, _instructions: str, _input_text: str, _maximum: int):
+                self.calls += 1
+                return (
+                    {
+                        "id": f"resp-{self.calls}",
+                        "status": "completed",
+                        "model": "fake-style-model",
+                        "output_text": json.dumps({"translations": {}}, ensure_ascii=False),
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "total_tokens": 15,
+                            "input_tokens_details": {"cached_tokens": 0},
+                            "output_tokens_details": {"reasoning_tokens": 0},
+                        },
+                    },
+                    0.1,
+                )
+
+        client = MalformedClient()
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"style stage anti_ai failed after one recovery pass for arxiv:test:chunk0001: chunk0001",
+        ):
+            self.batching.execute_style_stage(
+                article_dir=self.article_dir,
+                chunks=single_chunk,
+                task_factory=self._task,
+                terms=[],
+                stage="anti_ai",
+                plan=plan,
+                client=client,
+                instructions="clean the prose",
+                max_output_tokens=256,
+                budget_guard=None,
+                run_id="run-recovery-exhausted",
+            )
+
+        self.assertEqual(client.calls, 2)

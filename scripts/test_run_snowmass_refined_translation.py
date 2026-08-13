@@ -14,12 +14,24 @@ import unittest
 
 
 MODULE_PATH = Path(__file__).with_name("run_snowmass_refined_translation.py")
+PRODUCTION_MODULE_PATH = Path(__file__).with_name("run_snowmass_batch_production.py")
 
 
 def load_module():
     if not MODULE_PATH.exists():
         raise AssertionError("Refined Snowmass orchestrator is not implemented")
     spec = importlib.util.spec_from_file_location("run_snowmass_refined_translation", MODULE_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_production_module():
+    spec = importlib.util.spec_from_file_location(
+        "run_snowmass_batch_production", PRODUCTION_MODULE_PATH
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -1326,6 +1338,17 @@ class RefinedOrchestratorTests(unittest.TestCase):
             (self.article / "style_batch_projection.json").read_text(encoding="utf-8")
         )
         self.assertEqual(projection["execution_mode"], "exact_id_batching")
+        self.assertEqual(projection["schema_version"], 1)
+        self.assertEqual(projection["eligible_chunks"], 3)
+        self.assertEqual(projection["groupable_chunks"], 3)
+        self.assertEqual(projection["non_groupable_chunks"], 0)
+        self.assertEqual(projection["current_style_requests"], 6)
+        self.assertEqual(projection["projected_style_requests"], 2)
+        self.assertAlmostEqual(projection["projected_request_reduction_fraction"], 2 / 3)
+        self.assertEqual(projection["projected_groups"], 1)
+        self.assertEqual(projection["max_group_size"], 3)
+        self.assertGreater(projection["max_group_characters"], 0)
+        self.assertEqual(projection["groups"], [["chunk0001", "chunk0002", "chunk0003"]])
         self.assertEqual(
             projection["planned"]["anti_ai"]["normal_batches"],
             [["chunk0001", "chunk0002", "chunk0003"]],
@@ -1346,6 +1369,35 @@ class RefinedOrchestratorTests(unittest.TestCase):
             for chunk_id in ids
         ]
         self.assertNotIn("chunk0004", request_chunk_ids)
+        production = load_production_module()
+        metrics, _gate = production.production_metrics_and_gate(
+            stage="pilot10",
+            through_stage="translated",
+            eligible_record_count=1,
+            selected_count=1,
+            results=[
+                {
+                    "status": "translated",
+                    "source_characters": 100,
+                    "style_batch_projection": projection,
+                }
+            ],
+            failures=[],
+            budget={
+                "stage_spent_rmb": 1.0,
+                "project_spent_rmb": 1.0,
+                "stage_usage": {"api_calls": 1},
+            },
+        )
+        self.assertEqual(metrics["style_batch_projection"]["papers"], 1)
+        self.assertEqual(metrics["style_batch_projection"]["eligible_chunks"], 3)
+        self.assertEqual(metrics["style_batch_projection"]["groupable_chunks"], 3)
+        self.assertEqual(metrics["style_batch_projection"]["current_style_requests"], 6)
+        self.assertEqual(metrics["style_batch_projection"]["projected_style_requests"], 2)
+        self.assertAlmostEqual(
+            metrics["style_batch_projection"]["projected_request_reduction_fraction"],
+            2 / 3,
+        )
         for chunk in chunks:
             output_path = module.runner.stage_output_path(
                 self.article,

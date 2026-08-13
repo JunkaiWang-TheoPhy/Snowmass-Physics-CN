@@ -1140,6 +1140,67 @@ def _style_batch_max_output_tokens(plan: style_batching.StyleStagePlan) -> int:
     return max(4096, min(20000, int(max(batch_characters, 4000) * 0.8)))
 
 
+def _legacy_style_batch_projection(planned: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    model_chunks: list[str] = []
+    seen_chunk_ids: set[str] = set()
+    groups: list[list[str]] = []
+    seen_groups: set[tuple[str, ...]] = set()
+    groupable_chunk_ids: set[str] = set()
+    max_group_characters = 0
+    current_style_requests = 0
+    projected_style_requests = 0
+
+    for stage_name in ("anti_ai", "academic"):
+        plan = planned.get(stage_name)
+        if not isinstance(plan, dict):
+            continue
+        stage_model_chunks = plan.get("model_chunks")
+        if isinstance(stage_model_chunks, list):
+            for chunk_id in stage_model_chunks:
+                if isinstance(chunk_id, str) and chunk_id not in seen_chunk_ids:
+                    seen_chunk_ids.add(chunk_id)
+                    model_chunks.append(chunk_id)
+            current_style_requests += len(stage_model_chunks)
+        stage_batches = plan.get("normal_batches")
+        stage_batch_characters = plan.get("normal_batch_characters")
+        if isinstance(stage_batches, list):
+            projected_style_requests += int(plan.get("normal_requests") or len(stage_batches))
+            for index, batch in enumerate(stage_batches):
+                if not isinstance(batch, list) or not all(isinstance(chunk_id, str) for chunk_id in batch):
+                    continue
+                batch_key = tuple(batch)
+                if batch_key not in seen_groups:
+                    seen_groups.add(batch_key)
+                    groups.append(list(batch))
+                if len(batch) > 1:
+                    groupable_chunk_ids.update(batch)
+                if isinstance(stage_batch_characters, list) and index < len(stage_batch_characters):
+                    max_group_characters = max(
+                        max_group_characters,
+                        int(stage_batch_characters[index] or 0),
+                    )
+
+    eligible_chunks = len(model_chunks)
+    projected_groups = len(groups)
+    groupable_chunks = len(groupable_chunk_ids)
+    return {
+        "eligible_chunks": eligible_chunks,
+        "groupable_chunks": groupable_chunks,
+        "non_groupable_chunks": max(0, eligible_chunks - groupable_chunks),
+        "current_style_requests": current_style_requests,
+        "projected_style_requests": projected_style_requests,
+        "projected_request_reduction_fraction": (
+            (current_style_requests - projected_style_requests) / current_style_requests
+            if current_style_requests
+            else 0.0
+        ),
+        "projected_groups": projected_groups,
+        "max_group_size": max((len(group) for group in groups), default=0),
+        "max_group_characters": max_group_characters,
+        "groups": groups,
+    }
+
+
 def _persist_style_batch_projection(
     article_dir: Path,
     *,
@@ -1171,6 +1232,7 @@ def _persist_style_batch_projection(
         payload["planned"].update(planned_updates)
     if actual_updates:
         payload["actual"].update(actual_updates)
+    payload.update(_legacy_style_batch_projection(payload["planned"]))
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     runner.atomic_text(projection_path, text)
     phase = status.setdefault("phases", {}).setdefault("style_batch_projection", {})

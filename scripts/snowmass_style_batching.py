@@ -98,6 +98,10 @@ def stage_plan_projection(plan: StyleStagePlan) -> dict[str, Any]:
             [item.chunk_id for item in batch.items]
             for batch in plan.normal_batches
         ],
+        "normal_batch_characters": [
+            sum(len(item.protected_text) for item in batch.items)
+            for batch in plan.normal_batches
+        ],
         "normal_requests": len(plan.normal_batches),
         "worst_case_requests": plan.worst_case_requests,
     }
@@ -540,36 +544,59 @@ def _batch_status_path(article_dir: Path) -> Path:
     return article_dir / "style_batch_status.json"
 
 
-def _load_batch_status(article_dir: Path, stage: str) -> dict[str, Any]:
+def _normalize_stage_requests(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    stages: dict[str, dict[str, Any]] = {}
+    raw_stages = payload.get("stages")
+    if isinstance(raw_stages, dict):
+        for stage_name, stage_payload in raw_stages.items():
+            if not isinstance(stage_name, str) or not stage_name:
+                continue
+            requests = (
+                stage_payload.get("requests")
+                if isinstance(stage_payload, dict)
+                else None
+            )
+            stages[stage_name] = {
+                "requests": list(requests) if isinstance(requests, list) else []
+            }
+    legacy_stage = payload.get("stage")
+    if isinstance(legacy_stage, str) and legacy_stage and legacy_stage not in stages:
+        legacy_requests = payload.get("requests")
+        stages[legacy_stage] = {
+            "requests": list(legacy_requests) if isinstance(legacy_requests, list) else []
+        }
+    return stages
+
+
+def _load_batch_status(article_dir: Path) -> dict[str, Any]:
     path = _batch_status_path(article_dir)
     if not path.exists():
-        return {"schema_version": 1, "stage": stage, "requests": []}
+        return {"schema_version": 2, "stages": {}}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        payload = {"schema_version": 1, "stage": stage, "requests": []}
+        payload = {}
     if not isinstance(payload, dict):
-        payload = {"schema_version": 1, "stage": stage, "requests": []}
-    payload.setdefault("schema_version", 1)
-    payload["stage"] = stage
-    requests = payload.get("requests")
-    if not isinstance(requests, list):
-        payload["requests"] = []
-    return payload
+        payload = {}
+    return {
+        "schema_version": 2,
+        "stages": _normalize_stage_requests(payload),
+    }
 
 
 def _persist_batch_request(article_dir: Path, stage: str, request_status: dict[str, Any]) -> None:
-    payload = _load_batch_status(article_dir, stage)
+    payload = _load_batch_status(article_dir)
+    stage_payload = payload["stages"].setdefault(stage, {"requests": []})
     requests = [
         entry
-        for entry in payload["requests"]
+        for entry in stage_payload["requests"]
         if not (
             isinstance(entry, dict)
             and entry.get("attempt_id") == request_status.get("attempt_id")
         )
     ]
     requests.append(request_status)
-    payload["requests"] = requests
+    stage_payload["requests"] = requests
     runner.atomic_json(_batch_status_path(article_dir), payload)
 
 
@@ -605,10 +632,10 @@ def _update_stage_status(
 
 
 def _batch_attempt_history(article_dir: Path, stage: str, request_key: str) -> list[dict[str, Any]]:
-    payload = _load_batch_status(article_dir, stage)
+    payload = _load_batch_status(article_dir)
     return [
         entry
-        for entry in payload["requests"]
+        for entry in payload.get("stages", {}).get(stage, {}).get("requests", [])
         if isinstance(entry, dict) and entry.get("request_key") == request_key
     ]
 
@@ -632,6 +659,31 @@ def _has_unresolved_uncertain_attempt(article_dir: Path, stage: str, request_key
     )
 
 
+def _stage_record_id(
+    article_dir: Path,
+    chunks: Iterable[dict[str, Any]],
+    task_factory: Callable[[dict[str, Any]], dict[str, Any]],
+) -> str:
+    for chunk in chunks:
+        task = dict(task_factory(chunk))
+        record_id = task.get("record_id")
+        if isinstance(record_id, str) and record_id:
+            return record_id
+        break
+    for path in (article_dir / "paper_status.json", article_dir / "manifest.json"):
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            record_id = payload.get("record_id")
+            if isinstance(record_id, str) and record_id:
+                return record_id
+    return str(article_dir.name)
+
+
 def execute_style_stage(
     *,
     article_dir: Path,
@@ -647,6 +699,8 @@ def execute_style_stage(
     run_id: str | None = None,
     model: str = "snowmass-style-batch",
 ) -> StyleStageResult:
+    chunk_list = tuple(chunks)
+    record_id = _stage_record_id(article_dir, chunk_list, task_factory)
     if budget_guard is not None and hasattr(budget_guard, "snapshot"):
         snapshot = budget_guard.snapshot()
         if isinstance(snapshot, dict):
@@ -656,7 +710,7 @@ def execute_style_stage(
                     "stage request cap would be exceeded before style batching starts"
                 )
 
-    chunk_map = {str(chunk["id"]): dict(chunk) for chunk in chunks}
+    chunk_map = {str(chunk["id"]): dict(chunk) for chunk in chunk_list}
     item_map = {item.chunk_id: item for item in plan.model_items}
     totals = {
         "input_tokens": 0,
@@ -685,7 +739,8 @@ def execute_style_stage(
         )
         if _has_unresolved_uncertain_attempt(article_dir, stage, request_key):
             raise RuntimeError(
-                "stale running paid request requires explicit retry authorization"
+                f"style stage {stage} has unresolved uncertain paid request for {record_id}; "
+                "explicit retry authorization required"
             )
         attempt_id, attempt_ordinal = _next_attempt_identity(
             article_dir=article_dir,
@@ -1028,7 +1083,9 @@ def execute_style_stage(
 
     if failed_after_recovery:
         failed = ", ".join(failed_after_recovery)
-        raise RuntimeError(f"style stage failed after one recovery pass: {failed}")
+        raise RuntimeError(
+            f"style stage {stage} failed after one recovery pass for {record_id}: {failed}"
+        )
 
     planned_chunks = len(plan.reused) + len(plan.local) + len(plan.model_items)
     completed_chunks = planned_chunks
