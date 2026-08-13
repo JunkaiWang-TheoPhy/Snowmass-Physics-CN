@@ -56,6 +56,13 @@ DEFAULT_OUTPUT_ROOT = ROOT / "output/snowmass2021/babeldoc_production"
 DEFAULT_CONTROL_DIR = ROOT / "output/snowmass2021/production_control"
 DEFAULT_HISTORICAL_ROOTS = (ROOT / "output/snowmass2021/babeldoc_ab_v1",)
 STAGE_LIMITS = {"shadow": 1, "pilot5": 5, "pilot10": 10, "pilot25": 25, "batch50": 50}
+PREVIOUS_STAGE = {
+    "pilot5": "shadow",
+    "pilot10": "pilot5",
+    "pilot25": "pilot10",
+    "batch50": "pilot25",
+    "remainder": "batch50",
+}
 TERMINAL_STAGES = (
     "prepared",
     "translated",
@@ -511,9 +518,15 @@ def discover_historical_spend(roots: Iterable[Path], usd_cny_rate: float) -> flo
     return sum(refined.existing_article_cost_rmb(path, usd_cny_rate) for path in article_dirs)
 
 
-def _run_id(config: BatchConfig, records: list[dict[str, Any]]) -> str:
+def _run_id(
+    config: BatchConfig,
+    records: list[dict[str, Any]],
+    *,
+    environment_lock_sha256: str,
+) -> str:
     payload = {
         "rights_sha256": _sha256(config.rights_manifest),
+        "environment_lock_sha256": environment_lock_sha256,
         "stage": config.stage,
         "records": [record["record_id"] for record in records],
         "stage_max_cost_rmb": config.stage_max_cost_rmb,
@@ -524,6 +537,131 @@ def _run_id(config: BatchConfig, records: list[dict[str, Any]]) -> str:
     }
     suffix = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
     return f"{config.stage}-{suffix}"
+
+
+def stage_prerequisite_report(
+    control_dir: Path,
+    *,
+    target_stage: str,
+    rights_manifest_sha256: str,
+    environment_lock_sha256: str,
+    expected_prior_record_ids: tuple[str, ...],
+) -> dict[str, Any]:
+    """Find a complete, fresh prior-stage promotion proof for this contract."""
+
+    previous_stage = PREVIOUS_STAGE.get(target_stage)
+    if previous_stage is None:
+        return {
+            "required_stage": None,
+            "target_stage": target_stage,
+            "satisfied": True,
+            "reasons": [],
+        }
+    run_paths = sorted(
+        (Path(control_dir) / "runs").glob(f"{previous_stage}-*/run.json"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    if not run_paths:
+        return {
+            "required_stage": previous_stage,
+            "target_stage": target_stage,
+            "satisfied": False,
+            "reasons": ["no_matching_prior_stage_run"],
+        }
+
+    observed_reasons: set[str] = set()
+    expected_count = STAGE_LIMITS[previous_stage]
+    for run_path in run_paths:
+        snapshot_path = run_path.with_name("snapshot.json")
+        try:
+            report = json.loads(run_path.read_text(encoding="utf-8"))
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            observed_reasons.add("prior_stage_evidence_invalid")
+            continue
+        reasons: set[str] = set()
+        identity_keys = (
+            "run_id",
+            "stage",
+            "rights_manifest_sha256",
+            "environment_lock_sha256",
+            "selected_record_ids",
+            "through_stage",
+        )
+        if any(report.get(key) != snapshot.get(key) for key in identity_keys):
+            reasons.add("prior_stage_snapshot_mismatch")
+        if report.get("stage") != previous_stage:
+            reasons.add("prior_stage_name_mismatch")
+        if report.get("rights_manifest_sha256") != rights_manifest_sha256:
+            reasons.add("prior_stage_rights_manifest_mismatch")
+        if report.get("environment_lock_sha256") != environment_lock_sha256:
+            reasons.add("prior_stage_environment_lock_mismatch")
+        selected_ids = report.get("selected_record_ids")
+        results = report.get("results")
+        if not isinstance(selected_ids, list) or len(selected_ids) != expected_count:
+            reasons.add("prior_stage_sample_size_mismatch")
+        elif (
+            len(set(selected_ids)) != len(selected_ids)
+            or selected_ids != list(expected_prior_record_ids)
+        ):
+            reasons.add("prior_stage_cohort_mismatch")
+        if not isinstance(results, list) or len(results) != expected_count:
+            reasons.add("prior_stage_results_incomplete")
+            results = []
+        result_ids = [result.get("record_id") for result in results]
+        if (
+            len(set(result_ids)) != len(result_ids)
+            or set(result_ids) != set(selected_ids or [])
+        ):
+            reasons.add("prior_stage_result_ids_mismatch")
+        if report.get("status") != "complete" or report.get("through_stage") != "packaged":
+            reasons.add("prior_stage_not_complete_packaged")
+        if report.get("failures") or report.get("hard_failures"):
+            reasons.add("prior_stage_has_failures")
+        if any(result.get("status") != "packaged" for result in results):
+            reasons.add("prior_stage_results_not_packaged")
+        if any(
+            result.get("resumed_from_verified_artifacts")
+            or result.get("resumed_from_verified_translation")
+            for result in results
+        ):
+            reasons.add("prior_stage_not_fresh")
+        metrics = report.get("metrics") if isinstance(report.get("metrics"), dict) else {}
+        if (
+            metrics.get("fresh_completed_articles") != expected_count
+            or int(metrics.get("recovered_articles") or 0) != 0
+        ):
+            reasons.add("prior_stage_not_fresh")
+        if int(metrics.get("unresolved_uncertain_paid_requests") or 0):
+            reasons.add("prior_stage_has_uncertain_requests")
+        if int(metrics.get("manual_review_chunks") or 0):
+            reasons.add("prior_stage_has_manual_review")
+        promotion = (
+            report.get("promotion_gate")
+            if isinstance(report.get("promotion_gate"), dict)
+            else {}
+        )
+        if promotion.get("allowed") is not True or promotion.get("next_stage") != target_stage:
+            reasons.add("prior_stage_promotion_not_allowed")
+        if reasons:
+            observed_reasons.update(reasons)
+            continue
+        return {
+            "required_stage": previous_stage,
+            "target_stage": target_stage,
+            "satisfied": True,
+            "run_id": str(report["run_id"]),
+            "run_report_sha256": _sha256(run_path),
+            "record_ids": list(selected_ids),
+            "reasons": [],
+        }
+    return {
+        "required_stage": previous_stage,
+        "target_stage": target_stage,
+        "satisfied": False,
+        "reasons": sorted(observed_reasons or {"no_matching_prior_stage_run"}),
+    }
 
 
 def _article_dir(config: BatchConfig, record_id: str) -> Path:
@@ -832,6 +970,74 @@ def collect_article_run_usage(article_dir: Path, run_id: str | None = None) -> d
     return totals
 
 
+def translation_provenance_report(article_dir: Path, run_id: str) -> dict[str, Any]:
+    """Prove every model-backed checkpoint was created by the active run."""
+
+    article_dir = Path(article_dir)
+    checkpoint_ids: list[str] = []
+    current_ids: list[str] = []
+    reused_ids: list[str] = []
+    reasons: list[str] = []
+
+    def observe(checkpoint_id: str, payload: Any) -> None:
+        checkpoint_ids.append(checkpoint_id)
+        if not isinstance(payload, dict) or payload.get("status") != "complete":
+            reasons.append(f"model_checkpoint_incomplete:{checkpoint_id}")
+        if isinstance(payload, dict) and payload.get("run_id") == run_id:
+            current_ids.append(checkpoint_id)
+        else:
+            reused_ids.append(checkpoint_id)
+
+    paper_status_path = article_dir / "paper_status.json"
+    try:
+        paper_status = json.loads(paper_status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        paper_status = {}
+        reasons.append("paper_status_missing_or_invalid")
+    phases = paper_status.get("phases") if isinstance(paper_status, dict) else {}
+    if isinstance(phases, dict):
+        for phase_name, phase in phases.items():
+            if isinstance(phase, dict) and int(phase.get("max_output_tokens") or 0) > 0:
+                observe(f"paper:{phase_name}", phase)
+
+    chunk_dir = article_dir / "chunk_status"
+    if chunk_dir.is_dir():
+        for status_path in sorted(chunk_dir.glob("*.json")):
+            try:
+                payload = json.loads(status_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError):
+                reasons.append(f"chunk_status_invalid:{status_path.stem}")
+                continue
+            stages = payload.get("stages") if isinstance(payload, dict) else {}
+            if not isinstance(stages, dict):
+                reasons.append(f"chunk_stages_invalid:{status_path.stem}")
+                continue
+            for stage_name, stage in stages.items():
+                if not isinstance(stage, dict):
+                    continue
+                decision = stage.get("decision")
+                model_backed = (
+                    isinstance(decision, dict)
+                    and decision.get("action") == "call_model"
+                ) or stage.get("execution_policy") == "model_pipeline"
+                if model_backed:
+                    observe(f"{status_path.stem}:{stage_name}", stage)
+
+    if not checkpoint_ids:
+        reasons.append("no_model_checkpoint_evidence")
+    if reused_ids:
+        reasons.append("reused_model_checkpoints")
+    return {
+        "fresh": not reasons,
+        "run_id": run_id,
+        "model_checkpoint_count": len(checkpoint_ids),
+        "current_run_model_checkpoint_count": len(current_ids),
+        "reused_model_checkpoint_count": len(reused_ids),
+        "reused_model_checkpoint_ids": sorted(reused_ids),
+        "reasons": sorted(set(reasons)),
+    }
+
+
 def _projection_report_for_record(
     config: BatchConfig,
     record: dict[str, Any],
@@ -1091,6 +1297,8 @@ def production_metrics_and_gate(
     results: list[dict[str, Any]],
     failures: list[dict[str, Any]],
     budget: dict[str, Any],
+    selected_record_ids: tuple[str, ...] | None = None,
+    expected_record_ids: tuple[str, ...] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Summarize cost efficiency and fail closed before expanding a campaign."""
 
@@ -1186,6 +1394,22 @@ def production_metrics_and_gate(
         reasons.append("no_fresh_production_evidence")
     if len(results) != selected_count:
         reasons.append("selected_articles_incomplete")
+    if (
+        selected_record_ids is not None
+        and expected_record_ids is not None
+        and (
+            len(set(selected_record_ids)) != len(selected_record_ids)
+            or selected_record_ids != expected_record_ids
+        )
+    ):
+        reasons.append("stage_canonical_cohort_mismatch")
+    if selected_record_ids is not None:
+        result_record_ids = tuple(str(result.get("record_id") or "") for result in results)
+        if (
+            len(set(result_record_ids)) != len(result_record_ids)
+            or set(result_record_ids) != set(selected_record_ids)
+        ):
+            reasons.append("result_ids_do_not_match_selected_cohort")
     required_fresh = STAGE_LIMITS.get(stage)
     if required_fresh is not None and selected_count != min(required_fresh, eligible_record_count):
         reasons.append("stage_fresh_sample_size_not_met")
@@ -1195,6 +1419,8 @@ def production_metrics_and_gate(
         reasons.append(f"selected_articles_not_{expected_status}")
     if unresolved_uncertain_calls:
         reasons.append("uncertain_paid_requests")
+    if stage == "shadow" and api_calls != 0:
+        reasons.append("shadow_paid_calls_not_zero")
     if manual_review_chunks:
         reasons.append("unresolved_manual_review_chunks")
     if float(budget.get("project_reserved_rmb") or 0) or float(budget.get("stage_reserved_rmb") or 0):
@@ -1573,6 +1799,10 @@ def _run_article(
         retry_uncertain=config.retry_uncertain,
         stop_after_revision=config.through_stage == "revision_ready",
     )
+    provenance = translation_provenance_report(article_dir, run_id)
+    result["translation_provenance"] = provenance
+    if provenance["fresh"] is not True:
+        result["resumed_from_verified_translation"] = True
     manual_review_chunk_ids = []
     for chunk_status_path in sorted((article_dir / "chunk_status").glob("*.json")):
         chunk_status = json.loads(chunk_status_path.read_text(encoding="utf-8"))
@@ -1653,14 +1883,65 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         config.explicit_ids,
         config.max_articles,
     )
-    run_id = _run_id(config, selected)
+    canonical_stage_records = select_stage_records(records, config.stage)
+    rights_manifest_sha256 = _sha256(config.rights_manifest)
+    environment_lock = _production_environment_lock()
+    environment_lock_sha256 = str(environment_lock["lock_sha256"])
+    prerequisite = stage_prerequisite_report(
+        config.control_dir,
+        target_stage=config.stage,
+        rights_manifest_sha256=rights_manifest_sha256,
+        environment_lock_sha256=environment_lock_sha256,
+        expected_prior_record_ids=tuple(
+            str(record["record_id"])
+            for record in select_stage_records(
+                records,
+                PREVIOUS_STAGE[config.stage],
+            )
+        ) if config.stage in PREVIOUS_STAGE else (),
+    )
+    if prerequisite["satisfied"] and prerequisite.get("record_ids"):
+        artifact_errors: list[str] = []
+        for record_id in prerequisite["record_ids"]:
+            article_dir = _article_dir(config, str(record_id))
+            state = production_contract.derive_paper_state(
+                _artifact_manifest_path(article_dir),
+                article_root=article_dir,
+                current_environment_lock=environment_lock,
+                rights_manifest_path=config.rights_manifest,
+            )
+            if state.get("publishable") is not True or state.get("state") != "packaged":
+                artifact_errors.append(str(record_id))
+        if artifact_errors:
+            prerequisite = {
+                **prerequisite,
+                "satisfied": False,
+                "reasons": ["prior_stage_artifact_chain_invalid"],
+                "invalid_record_ids": sorted(artifact_errors),
+            }
+    if not config.preflight_only and prerequisite["satisfied"] is not True:
+        raise ProjectionGateRefusedError(
+            "current prior-stage promotion evidence is required: "
+            + json.dumps(prerequisite, ensure_ascii=False, sort_keys=True),
+            reason_code="stage_prerequisite_missing",
+        )
+    run_id = _run_id(
+        config,
+        selected,
+        environment_lock_sha256=environment_lock_sha256,
+    )
     snapshot = {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": run_id,
         "stage": config.stage,
-        "rights_manifest_sha256": _sha256(config.rights_manifest),
+        "rights_manifest_sha256": rights_manifest_sha256,
+        "environment_lock_sha256": environment_lock_sha256,
+        "stage_prerequisite": prerequisite,
         "eligible_record_count": len(records),
         "selected_record_ids": [record["record_id"] for record in selected],
+        "canonical_stage_record_ids": [
+            record["record_id"] for record in canonical_stage_records
+        ],
         "project_max_cost_rmb": config.project_max_cost_rmb,
         "stage_max_cost_rmb": config.stage_max_cost_rmb,
         "stage_max_api_calls": config.stage_max_api_calls,
@@ -1841,6 +2122,8 @@ def _run_batch_locked(
                 results=results,
                 failures=failures,
                 budget=budget_snapshot,
+                selected_record_ids=tuple(snapshot["selected_record_ids"]),
+                expected_record_ids=tuple(snapshot["canonical_stage_record_ids"]),
             )
             _atomic_json(
                 run_dir / "run.json",

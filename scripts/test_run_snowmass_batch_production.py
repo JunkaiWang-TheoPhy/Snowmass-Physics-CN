@@ -183,6 +183,288 @@ class BatchSelectionTests(unittest.TestCase):
             module.run_batch(config, client=object())
 
 
+class StagePrerequisiteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.control = self.root / "control"
+
+    def _write_prior_run(
+        self,
+        *,
+        stage: str = "shadow",
+        environment_lock_sha256: str = "env-current",
+        rights_manifest_sha256: str = "rights-current",
+        recovered: bool = False,
+        selected_record_ids: list[str] | None = None,
+        result_record_ids: list[str] | None = None,
+    ) -> Path:
+        selected_record_ids = selected_record_ids or ["arxiv:a"]
+        result_record_ids = result_record_ids or selected_record_ids
+        run_id = f"{stage}-proof"
+        run_dir = self.control / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        snapshot = {
+            "schema_version": 2,
+            "run_id": run_id,
+            "stage": stage,
+            "rights_manifest_sha256": rights_manifest_sha256,
+            "environment_lock_sha256": environment_lock_sha256,
+            "selected_record_ids": selected_record_ids,
+            "through_stage": "packaged",
+        }
+        (run_dir / "snapshot.json").write_text(
+            json.dumps(snapshot), encoding="utf-8"
+        )
+        results = []
+        for record_id in result_record_ids:
+            result = {
+                "record_id": record_id,
+                "status": "packaged",
+                "source_characters": 100,
+            }
+            if recovered:
+                result["resumed_from_verified_translation"] = True
+            results.append(result)
+        report = {
+            **snapshot,
+            "status": "complete",
+            "completed": len(results),
+            "failed": 0,
+            "quarantined": 0,
+            "results": results,
+            "failures": [],
+            "hard_failures": [],
+            "metrics": {
+                "fresh_completed_articles": 0 if recovered else 1,
+                "recovered_articles": 1 if recovered else 0,
+                "unresolved_uncertain_paid_requests": 0,
+                "manual_review_chunks": 0,
+            },
+            "promotion_gate": {
+                "allowed": not recovered,
+                "next_stage": "pilot5",
+                "reasons": ["recovered_results_not_promotion_evidence"] if recovered else [],
+            },
+        }
+        (run_dir / "run.json").write_text(json.dumps(report), encoding="utf-8")
+        return run_dir
+
+    def test_non_shadow_stage_requires_current_fresh_prior_stage_evidence(self) -> None:
+        module = load_module()
+
+        missing = module.stage_prerequisite_report(
+            self.control,
+            target_stage="pilot5",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="env-current",
+            expected_prior_record_ids=("arxiv:a",),
+        )
+        self.assertFalse(missing["satisfied"])
+        self.assertIn("no_matching_prior_stage_run", missing["reasons"])
+
+        self._write_prior_run(recovered=True)
+        recovered = module.stage_prerequisite_report(
+            self.control,
+            target_stage="pilot5",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="env-current",
+            expected_prior_record_ids=("arxiv:a",),
+        )
+        self.assertFalse(recovered["satisfied"])
+        self.assertIn("prior_stage_not_fresh", recovered["reasons"])
+
+    def test_current_fresh_prior_stage_evidence_is_hash_bound(self) -> None:
+        module = load_module()
+        run_dir = self._write_prior_run()
+
+        report = module.stage_prerequisite_report(
+            self.control,
+            target_stage="pilot5",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="env-current",
+            expected_prior_record_ids=("arxiv:a",),
+        )
+
+        self.assertTrue(report["satisfied"])
+        self.assertEqual(report["run_id"], "shadow-proof")
+        self.assertRegex(report["run_report_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            report["run_report_sha256"],
+            hashlib.sha256((run_dir / "run.json").read_bytes()).hexdigest(),
+        )
+
+    def test_old_environment_or_rights_snapshot_cannot_unlock_next_stage(self) -> None:
+        module = load_module()
+        self._write_prior_run(
+            environment_lock_sha256="env-old",
+            rights_manifest_sha256="rights-old",
+        )
+
+        report = module.stage_prerequisite_report(
+            self.control,
+            target_stage="pilot5",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="env-current",
+            expected_prior_record_ids=("arxiv:a",),
+        )
+
+        self.assertFalse(report["satisfied"])
+        self.assertIn("prior_stage_environment_lock_mismatch", report["reasons"])
+        self.assertIn("prior_stage_rights_manifest_mismatch", report["reasons"])
+
+    def test_noncanonical_or_mismatched_prior_stage_ids_fail_closed(self) -> None:
+        module = load_module()
+        self._write_prior_run(
+            selected_record_ids=["arxiv:noncanonical"],
+            result_record_ids=["arxiv:other"],
+        )
+
+        report = module.stage_prerequisite_report(
+            self.control,
+            target_stage="pilot5",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="env-current",
+            expected_prior_record_ids=("arxiv:canonical",),
+        )
+
+        self.assertFalse(report["satisfied"])
+        self.assertIn("prior_stage_cohort_mismatch", report["reasons"])
+        self.assertIn("prior_stage_result_ids_mismatch", report["reasons"])
+
+    def test_paid_non_shadow_run_refuses_before_preparation_without_prerequisite(self) -> None:
+        module = load_module()
+        manifest = self.root / "papers.json"
+        manifest.write_text(
+            json.dumps(
+                [{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]
+            ),
+            encoding="utf-8",
+        )
+        config = module.BatchConfig(
+            rights_manifest=manifest,
+            pdf_root=self.root / "pdf",
+            output_root=self.root / "output",
+            control_dir=self.control,
+            stage="pilot5",
+            explicit_ids=("arxiv:a",),
+            max_articles=None,
+            project_max_cost_rmb=1000.0,
+            stage_max_cost_rmb=10.0,
+            usd_cny_rate=7.2,
+            chunk_concurrency=1,
+            article_concurrency=1,
+            through_stage="packaged",
+            translation_version="test",
+            packaged_on="2026-08-14",
+            stage_max_api_calls=16,
+            historical_roots=(),
+        )
+
+        with (
+            mock.patch.object(
+                module,
+                "_production_environment_lock",
+                return_value={"lock_sha256": "env-current"},
+            ),
+            mock.patch.object(
+                module,
+                "_prepare_all",
+                side_effect=AssertionError("preparation must remain unreachable"),
+            ),
+            self.assertRaisesRegex(
+                module.ProjectionGateRefusedError,
+                "prior-stage promotion evidence",
+            ),
+        ):
+            module.run_batch(config, client=object())
+
+
+class TranslationProvenanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.article = Path(self.temporary.name)
+        (self.article / "chunk_status").mkdir()
+
+    def _write_statuses(self, *, paper_run_id: str | None, chunk_run_id: str | None) -> None:
+        (self.article / "paper_status.json").write_text(
+            json.dumps(
+                {
+                    "phases": {
+                        "analysis": {
+                            "status": "complete",
+                            "run_id": paper_run_id,
+                            "max_output_tokens": 100,
+                        },
+                        "prompt": {"status": "complete"},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (self.article / "chunk_status" / "chunk0001.json").write_text(
+            json.dumps(
+                {
+                    "stages": {
+                        "translate": {
+                            "status": "complete",
+                            "run_id": chunk_run_id,
+                            "decision": {
+                                "action": "call_model",
+                                "reason": "stage_requires_model",
+                            },
+                        },
+                        "terminology": {
+                            "status": "complete",
+                            "decision": {
+                                "action": "copy_prior_text",
+                                "reason": "terminology_noop",
+                            },
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_reused_model_checkpoint_is_not_fresh_production_evidence(self) -> None:
+        module = load_module()
+        self._write_statuses(paper_run_id="old-run", chunk_run_id="current-run")
+
+        report = module.translation_provenance_report(self.article, "current-run")
+
+        self.assertFalse(report["fresh"])
+        self.assertEqual(report["model_checkpoint_count"], 2)
+        self.assertEqual(report["current_run_model_checkpoint_count"], 1)
+        self.assertEqual(report["reused_model_checkpoint_ids"], ["paper:analysis"])
+
+    def test_all_model_checkpoints_bound_to_current_run_are_fresh(self) -> None:
+        module = load_module()
+        self._write_statuses(
+            paper_run_id="current-run",
+            chunk_run_id="current-run",
+        )
+
+        report = module.translation_provenance_report(self.article, "current-run")
+
+        self.assertTrue(report["fresh"])
+        self.assertEqual(report["reused_model_checkpoint_count"], 0)
+
+    def test_missing_model_checkpoint_evidence_is_not_fresh(self) -> None:
+        module = load_module()
+        (self.article / "paper_status.json").write_text(
+            json.dumps({"phases": {"prompt": {"status": "complete"}}}),
+            encoding="utf-8",
+        )
+
+        report = module.translation_provenance_report(self.article, "current-run")
+
+        self.assertFalse(report["fresh"])
+        self.assertIn("no_model_checkpoint_evidence", report["reasons"])
+
+
 class ArticleQCTests(unittest.TestCase):
     def test_cover_title_restores_visible_symbols_and_drops_footnote_markers(self) -> None:
         module = load_module()
@@ -1323,6 +1605,100 @@ class BatchResumeTests(unittest.TestCase):
 
 
 class PromotionGateTests(unittest.TestCase):
+    def test_result_ids_must_match_selected_cohort_for_promotion(self) -> None:
+        module = load_module()
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 0.0,
+            "project_reserved_rmb": 0.0,
+            "stage_spent_rmb": 0.0,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {"api_calls": 0, "uncertain_calls": 0},
+        }
+
+        _metrics, gate = module.production_metrics_and_gate(
+            stage="shadow",
+            through_stage="packaged",
+            eligible_record_count=273,
+            selected_count=1,
+            selected_record_ids=("arxiv:canonical",),
+            expected_record_ids=("arxiv:canonical",),
+            results=[
+                {
+                    "record_id": "arxiv:other",
+                    "status": "packaged",
+                    "source_characters": 10000,
+                }
+            ],
+            failures=[],
+            budget=budget,
+        )
+
+        self.assertFalse(gate["allowed"])
+        self.assertIn("result_ids_do_not_match_selected_cohort", gate["reasons"])
+
+    def test_noncanonical_stage_cohort_cannot_claim_promotion(self) -> None:
+        module = load_module()
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 0.0,
+            "project_reserved_rmb": 0.0,
+            "stage_spent_rmb": 0.0,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {"api_calls": 0, "uncertain_calls": 0},
+        }
+
+        _metrics, gate = module.production_metrics_and_gate(
+            stage="shadow",
+            through_stage="packaged",
+            eligible_record_count=273,
+            selected_count=1,
+            selected_record_ids=("arxiv:wrong",),
+            expected_record_ids=("arxiv:canonical",),
+            results=[
+                {
+                    "record_id": "arxiv:wrong",
+                    "status": "packaged",
+                    "source_characters": 10000,
+                }
+            ],
+            failures=[],
+            budget=budget,
+        )
+
+        self.assertFalse(gate["allowed"])
+        self.assertIn("stage_canonical_cohort_mismatch", gate["reasons"])
+
+    def test_shadow_requires_zero_paid_api_calls(self) -> None:
+        module = load_module()
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 0.01,
+            "project_reserved_rmb": 0.0,
+            "stage_spent_rmb": 0.01,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {"api_calls": 1, "uncertain_calls": 0},
+        }
+
+        _metrics, gate = module.production_metrics_and_gate(
+            stage="shadow",
+            through_stage="packaged",
+            eligible_record_count=273,
+            selected_count=1,
+            results=[
+                {
+                    "record_id": "arxiv:a",
+                    "status": "packaged",
+                    "source_characters": 10000,
+                }
+            ],
+            failures=[],
+            budget=budget,
+        )
+
+        self.assertFalse(gate["allowed"])
+        self.assertIn("shadow_paid_calls_not_zero", gate["reasons"])
+
     def test_unresolved_manual_review_chunks_block_stage_promotion(self) -> None:
         module = load_module()
         budget = {
@@ -2227,6 +2603,19 @@ class RevisionReadyRunArticleTests(unittest.TestCase):
                 ) as run_refined_article,
                 mock.patch.object(
                     module,
+                    "translation_provenance_report",
+                    return_value={
+                        "fresh": True,
+                        "run_id": "run-1",
+                        "model_checkpoint_count": 2,
+                        "current_run_model_checkpoint_count": 2,
+                        "reused_model_checkpoint_count": 0,
+                        "reused_model_checkpoint_ids": [],
+                        "reasons": [],
+                    },
+                ),
+                mock.patch.object(
+                    module,
                     "_refill_article",
                     side_effect=AssertionError("revision_ready must not refill or render"),
                 ),
@@ -2249,6 +2638,15 @@ class RevisionReadyRunArticleTests(unittest.TestCase):
                 "record_id": "arxiv:a",
                 "status": "revision_ready",
                 "source_characters": 7,
+                "translation_provenance": {
+                    "fresh": True,
+                    "run_id": "run-1",
+                    "model_checkpoint_count": 2,
+                    "current_run_model_checkpoint_count": 2,
+                    "reused_model_checkpoint_count": 0,
+                    "reused_model_checkpoint_ids": [],
+                    "reasons": [],
+                },
                 "manual_review_chunk_ids": [],
             },
         )
