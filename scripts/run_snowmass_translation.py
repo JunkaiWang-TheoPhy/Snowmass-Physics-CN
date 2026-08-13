@@ -1104,9 +1104,17 @@ def recover_rejected_candidate(
     if contract_changed:
         prior_qc = stage_status.get("qc")
         failures = prior_qc.get("failures") if isinstance(prior_qc, dict) else None
-        if failures != ["locked_terms_mismatch"] and failures != (
+        deterministic_failures = {
+            "numbers_mismatch",
+            "units_mismatch",
+            "parentheses_mismatch",
+            "urls_mismatch",
+            "citations_mismatch",
+            "protected_literals_mismatch",
             "locked_terms_mismatch",
-        ):
+        }
+        failure_set = set(failures) if isinstance(failures, (list, tuple)) else set()
+        if not failure_set or not failure_set <= deterministic_failures:
             return None
     if stage_status.get("rejected_candidate_protected") is not False:
         return None
@@ -1142,7 +1150,9 @@ def recover_rejected_candidate(
     if contract_changed:
         if isinstance(prior_key, str) and prior_key:
             stage_status["previous_request_key"] = prior_key
-        stage_status["recovered_after_locked_term_contract_change"] = True
+        stage_status["recovered_after_qc_contract_change"] = True
+        if failure_set == {"locked_terms_mismatch"}:
+            stage_status["recovered_after_locked_term_contract_change"] = True
     if prior_error:
         stage_status["recovery_previous_error"] = prior_error
     return candidate

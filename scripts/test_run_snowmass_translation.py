@@ -421,6 +421,18 @@ class GlossaryMergeTests(unittest.TestCase):
         self.assertEqual(compiled[0]["canonical_target"], "可观测量")
         self.assertNotIn("contextual_targets", compiled[0])
 
+    def test_tracked_glossary_treats_observable_scales_as_adjectival(self) -> None:
+        terms = RUNNER.load_glossary(RUNNER.TRACKED_GLOBAL_GLOSSARY)
+
+        compiled = RUNNER.compile_glossary_terms(
+            "The interaction washes out structure on observable scales.",
+            terms,
+        )
+
+        observable = next(term for term in compiled if term["source"] == "observable")
+        self.assertEqual(observable["target"], "可观测")
+        self.assertEqual(observable["canonical_target"], "可观测量")
+
 
 class BudgetGuardTests(unittest.TestCase):
     def test_zero_budget_is_rejected_instead_of_meaning_unlimited(self) -> None:
@@ -2046,6 +2058,40 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(output.read_text(encoding="utf-8"), recovered)
         self.assertTrue(status["recovered_from_rejected_candidate"])
         self.assertTrue(status["qc"]["ok"])
+
+    def test_numeric_qc_candidate_recovers_after_request_contract_change(self) -> None:
+        source = "The Phase-1 detector is ready.\n"
+        candidate = "该Phase-1探测器已就绪。\n"
+        output = self.article_dir / "stage1_chunk0001.md"
+        metadata = RUNNER.persist_rejected_candidate(
+            self.article_dir,
+            "chunk0001",
+            "translate",
+            "old-request-key",
+            candidate,
+            protected=False,
+        )
+        status = {
+            "status": "failed",
+            "request_key": "old-request-key",
+            "error": "QC failed: numbers_mismatch",
+            "qc": {"ok": False, "failures": ["numbers_mismatch"]},
+            **metadata,
+        }
+
+        recovered = RUNNER.recover_rejected_candidate(
+            self.article_dir,
+            source,
+            output,
+            status,
+            "new-request-key",
+            [],
+        )
+
+        self.assertEqual(recovered, candidate)
+        self.assertEqual(output.read_text(encoding="utf-8"), candidate)
+        self.assertEqual(status["previous_request_key"], "old-request-key")
+        self.assertTrue(status["recovered_after_qc_contract_change"])
 
     def test_process_chunk_marks_ambiguous_transport_failure_uncertain_without_output(self) -> None:
         class FakeClient:

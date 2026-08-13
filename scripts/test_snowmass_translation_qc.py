@@ -169,6 +169,50 @@ class ValidateChunkTests(unittest.TestCase):
 
         self.assertTrue(report.ok)
 
+    def test_validate_chunk_preserves_percent_before_confidence_level_acronym(self) -> None:
+        report = QC.validate_chunk(
+            source="The limit is quoted at 90%CL.\n",
+            translated="该限制在90%置信水平下给出。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("units_mismatch", report.failures)
+
+    def test_validate_chunk_recovers_percent_glued_to_pdf_text(self) -> None:
+        report = QC.validate_chunk(
+            source="The limit is quoted at90%CL.\n",
+            translated="该限制在90%置信水平下给出。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("units_mismatch", report.failures)
+
+    def test_validate_chunk_treats_unit_thousands_separator_as_format_drift(self) -> None:
+        report = QC.validate_chunk(
+            source="The energy is 1,000 GeV.\n",
+            translated="能量为1000 GeV。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("units_mismatch", report.failures)
+
+    def test_validate_chunk_does_not_read_prose_after_modifier_as_a_unit(self) -> None:
+        report = QC.validate_chunk(
+            source="Spin-0 simplified models are shown in Figure 3.\n",
+            translated="Spin-0简化模型如图3所示。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("units_mismatch", report.failures)
+
     def test_validate_chunk_recovers_unit_before_pdf_glued_capitalized_word(self) -> None:
         report = QC.validate_chunk(
             source="Production at a 250GeVHiggs factory.\n",

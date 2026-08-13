@@ -33,7 +33,7 @@
     {"source": "21 cm", "target": "21 cm", "note": "Retain the conventional radio-astronomy notation and spacing."},
     {"source": "Dark Ages", "target": "黑暗时期", "first_use": true},
     {"source": "baryon", "target": "重子", "first_use": true},
-    {"source": "observable", "target": "可观测量", "first_use": true, "contextual_targets": [{"source_regex": "\\bobservable\\s+(?:cluster\\s+)?(?:property|properties|quantity|quantities|effect|effects)\\b", "target": "可观测"}], "note": "Use 可观测量 as a noun; use 可观测 only as the modifier in explicitly matched property, quantity, or effect phrases."},
+    {"source": "observable", "target": "可观测量", "first_use": true, "contextual_targets": [{"source_regex": "\\bobservable\\s+(?:cluster\\s+)?(?:property|properties|quantity|quantities|effect|effects|scale|scales)\\b", "target": "可观测"}], "note": "Use 可观测量 as a noun; use 可观测 only as the modifier in explicitly matched property, quantity, effect, or scale phrases."},
     {"source": "cross section", "target": "截面", "first_use": true},
     {"source": "luminosity", "target": "光度", "first_use": true},
     {"source": "redshift", "target": "红移", "first_use": true},

@@ -51,9 +51,9 @@ _NUMBER_RE = re.compile(
 )
 _UNIT_VALUE_RE = re.compile(
     r"(?<![0-9_])"
-    r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
-    r"(?:\s*[×x]\s*[-+]?\d+(?:\.\d+)?)?"
-    r"\s*(?:%|eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|km|m|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?![A-Za-z0-9_])",
+    r"(?P<number>[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"
+    r"(?:\s*(?P<multiplier>[×x])\s*(?P<factor>[-+]?\d+(?:\.\d+)?))?"
+    r"\s*(?P<unit>%(?![0-9_])|(?:eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|km|m|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?=$|[^A-Za-z0-9_]|(?-i:[A-Z][a-z])))",
     re.IGNORECASE,
 )
 _COMPARE_NUMBER_RE = re.compile(
@@ -66,11 +66,11 @@ _BARE_URL_RE = re.compile(
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _SCIENTIFIC_IDENTIFIER_RE = re.compile(
     r"[A-Z][A-Z0-9]{1,}"
-    r"(?:-(?:[A-Z]\d+|\d+(?:[A-Z](?![a-z]))?))+"
+    r"(?:-\s*(?:[A-Z]\d+|\d+(?:[A-Z](?![a-z]))?))+"
 )
 _HYPHENATED_SCIENTIFIC_MODIFIER_RE = re.compile(
-    r"(?:\b(?:spin|dimension|dimensional|rank|order|level|stage|phase)|"
-    r"(?:自旋|维数|秩|阶|级|阶段|相位))-\d+(?!\d)",
+    r"(?:(?<![A-Za-z])(?:spin|twist|dimension|dimensional|rank|order|level|stage|phase)|"
+    r"(?:自旋|扭转|扭曲|维数|秩|阶|级|阶段|相位))-\d+(?!\d)",
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"\[\[SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10}\]\]")
@@ -260,6 +260,23 @@ def _canonical_number(value: str) -> str:
     else:
         canonical = format(number.normalize(), "f")
     return canonical + ("%" if percent else "")
+
+
+def extract_unit_values(text: str) -> tuple[str, ...]:
+    """Extract unit-bearing values with numeric formatting canonicalized."""
+
+    values: list[str] = []
+    for match in _UNIT_VALUE_RE.finditer(text):
+        value = _canonical_number(match.group("number"))
+        factor = match.group("factor")
+        if factor is not None:
+            value += "×" + _canonical_number(factor)
+        values.append(value + match.group("unit"))
+    return tuple(values)
+
+
+def is_unit_value_literal(text: str) -> bool:
+    return _UNIT_VALUE_RE.fullmatch(text) is not None
 
 
 def _numeric_literals(text: str) -> tuple[tuple[str, str], ...]:

@@ -8,7 +8,11 @@ from collections import Counter
 import re
 from typing import Any
 
-from snowmass_document_units import compare_numeric_literals
+from snowmass_document_units import (
+    compare_numeric_literals,
+    extract_unit_values,
+    is_unit_value_literal,
+)
 from snowmass_pipeline import protected_literals
 
 
@@ -16,12 +20,6 @@ _SENTINEL_RE = re.compile(r"\[\[SM_[0-9]{4}_[0-9a-f]{5,10}\]\]")
 _URL_RE = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
 _CITATION_RE = re.compile(r"\[(?:\d+(?:\s*[-,]\s*\d+)*)\]|arXiv:\d{4}\.\d{4,5}(?:v\d+)?")
 _NUMBER_RE = re.compile(r"(?<![A-Za-z0-9_])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?%?")
-_UNIT_VALUE_RE = re.compile(
-    r"(?<![A-Za-z0-9_])"
-    r"[-+]?\d+(?:\.\d+)?"
-    r"(?:\s*[×x]\s*[-+]?\d+(?:\.\d+)?)?"
-    r"\s*(?:%|eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|m|km|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?![A-Za-z0-9_])"
-)
 _ACRONYM_RE = re.compile(r"[A-Z][A-Z0-9/+.\-]{1,}")
 _ANTI_AI_MARKERS = (
     "总而言之",
@@ -152,22 +150,9 @@ def _extract_urls(text: str) -> tuple[str, ...]:
 
 
 def _extract_unit_values(text: str) -> tuple[str, ...]:
-    values: list[str] = []
-    normalized = re.sub(
-        r"(?<=\d)(eV|keV|MeV|GeV|TeV|PeV|kHz|MHz|GHz)(?=[A-Z][a-z])",
-        r"\1 ",
-        text,
+    return tuple(
+        value for value in extract_unit_values(text) if not re.fullmatch(r"[12]\d{3}s", value)
     )
-    normalized = re.sub(
-        r"(?<=[A-Za-z])(?=[-+]?\d+(?:\.\d+)?\s*(?:eV|keV|MeV|GeV|TeV|PeV|Hz|kHz|MHz|GHz)\b)",
-        " ",
-        normalized,
-    )
-    for match in _UNIT_VALUE_RE.findall(normalized):
-        if re.fullmatch(r"[12]\d{3}s", match):
-            continue
-        values.append(re.sub(r"\s+", "", match))
-    return tuple(values)
 
 
 def _parenthesis_residue(text: str) -> tuple[int, int]:
@@ -196,7 +181,7 @@ def _semantic_protected_literals(text: str) -> tuple[str, ...]:
         for literal in protected_literals(text)
         if literal not in {"(", ")", "（", "）"}
         if not _PLAIN_NUMERIC_PROTECTED_RE.fullmatch(literal)
-        and not _UNIT_VALUE_RE.fullmatch(literal)
+        and not is_unit_value_literal(literal)
         and not re.fullmatch(r"\d+D", literal)
     )
 

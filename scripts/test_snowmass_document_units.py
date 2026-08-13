@@ -114,6 +114,16 @@ class TypedProtectionTests(unittest.TestCase):
             "DESI-2, PUMA-32K, and CMB-S4 span the first 1-2 years.",
         )
 
+    def test_pdf_spaced_scientific_identifier_remains_one_immutable_node(self) -> None:
+        units = load_units()
+
+        protected = units.protect_translation_unit("PAMELA and AMS- 02 measurements")
+
+        self.assertEqual(
+            [(node.kind, node.value) for node in protected.nodes],
+            [("identifier", "AMS- 02")],
+        )
+
     def test_pdf_glued_words_do_not_hide_or_extend_scientific_identifiers(self) -> None:
         units = load_units()
         source = "9 Rubin Observatory ImagingtoEnableaDESI-2Survey"
@@ -195,6 +205,30 @@ class NumericComparisonTests(unittest.TestCase):
         result = units.compare_numeric_literals(
             "Massive Spin-1 Particles",
             "大质量自旋-1粒子",
+        )
+
+        self.assertTrue(result.values_equal)
+        self.assertEqual(result.missing_values, ())
+        self.assertEqual(result.added_values, ())
+
+    def test_twist_modifier_keeps_same_semantics_across_scripts(self) -> None:
+        units = load_units()
+
+        result = units.compare_numeric_literals(
+            "a beyond-twist-2 phenomenon",
+            "一种超越扭转-2的现象",
+        )
+
+        self.assertTrue(result.values_equal)
+        self.assertEqual(result.missing_values, ())
+        self.assertEqual(result.added_values, ())
+
+    def test_lowercase_phase_modifier_adjacent_to_chinese_is_not_negative(self) -> None:
+        units = load_units()
+
+        result = units.compare_numeric_literals(
+            "The Phase-1 detector is ready.",
+            "该Phase-1探测器已就绪。",
         )
 
         self.assertTrue(result.values_equal)
