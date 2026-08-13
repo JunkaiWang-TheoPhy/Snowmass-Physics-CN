@@ -695,6 +695,43 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             self.assertIn("CHINESE FIGURE CAPTION", translated_text)
             self.assertIn("CHINESE TABLE CAPTION", translated_text)
 
+    def test_restore_verbatim_regions_coalesces_duplicate_table_bounds(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "duplicate-table-source.pdf"
+        mono = self.root / "duplicate-table-mono.pdf"
+        dual = self.root / "duplicate-table-dual.pdf"
+
+        document = pymupdf.open()
+        page = document.new_page(width=300, height=400)
+        page.insert_text((30, 100), "Technical Maturity", fontsize=12)
+        document.save(source)
+        document.close()
+        for path, width in ((mono, 300), (dual, 600)):
+            document = pymupdf.open()
+            page = document.new_page(width=width, height=400)
+            page.insert_text((30, 100), "Maturity", fontsize=12)
+            if width == 600:
+                page.insert_text((330, 100), "Maturity", fontsize=12)
+            document.save(path)
+            document.close()
+
+        report = bridge.restore_verbatim_regions(
+            source_pdf=source,
+            mono_pdf=mono,
+            dual_pdf=dual,
+            figure_regions=[],
+            table_regions=[
+                bridge.TableRegion(1, 7, (20, 280, 240, 330)),
+                bridge.TableRegion(1, 8, (19, 280, 240, 330)),
+            ],
+        )
+
+        self.assertEqual(report["table_region_count"], 2)
+        with pymupdf.open(mono) as document:
+            self.assertEqual(document[0].get_text().count("Technical Maturity"), 1)
+
     def test_figure_region_self_check_rejects_rendered_text_drift(self) -> None:
         bridge = load_bridge()
         import pymupdf

@@ -396,6 +396,23 @@ def restore_verbatim_regions(
     for region in [*figures, *tables]:
         boxes_by_page.setdefault(region.page_number, []).append(region.box)
 
+    def coalesce_clips(clips: Iterable[Any]) -> list[Any]:
+        """Merge near-identical IR regions so source text is inserted only once."""
+
+        merged: list[Any] = []
+        for clip in clips:
+            matched = False
+            for index, existing in enumerate(merged):
+                intersection = clip & existing
+                smaller_area = min(float(clip.get_area()), float(existing.get_area()))
+                if smaller_area and float(intersection.get_area()) / smaller_area >= 0.98:
+                    merged[index] = clip | existing
+                    matched = True
+                    break
+            if not matched:
+                merged.append(clip)
+        return merged
+
     try:
         with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono, pymupdf.open(
             dual_pdf
@@ -436,7 +453,7 @@ def restore_verbatim_regions(
                         )
                     key = tuple(round(float(value), 4) for value in clip)
                     unique[key] = clip
-                clips_by_page[page_number] = list(unique.values())
+                clips_by_page[page_number] = coalesce_clips(unique.values())
 
             # Apply all redactions before inserting source clips.  Otherwise an
             # overlapping later redaction could erase a source clip already added.
@@ -502,13 +519,17 @@ def restore_verbatim_regions(
             mono_page = mono[page_number - 1]
             dual_page = dual[page_number - 1]
             midpoint = dual_page.rect.width / 2
-            for x, y, x2, y2 in boxes:
-                source_clip = pymupdf.Rect(
+            source_clips = coalesce_clips(
+                pymupdf.Rect(
                     x,
                     source_page.rect.height - y2,
                     x2,
                     source_page.rect.height - y,
-                ) & source_page.rect
+                )
+                & source_page.rect
+                for x, y, x2, y2 in boxes
+            )
+            for source_clip in source_clips:
                 dual_clip = pymupdf.Rect(
                     source_clip.x0 + midpoint,
                     source_clip.y0,
