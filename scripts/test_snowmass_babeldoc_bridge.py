@@ -96,6 +96,10 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         @dataclass
         class Page:
             pdf_paragraph: list[Paragraph]
+            mediabox: object
+
+        @dataclass
+        class Mediabox:
             box: Box
 
         @dataclass
@@ -110,11 +114,11 @@ class BabelDocWorkspaceTests(unittest.TestCase):
                         Paragraph("II estimates ... 50 ab−1", Box(90, 120, 500, 180)),
                         orphan,
                     ],
-                    Box(0, 0, 595, 842),
+                    Mediabox(Box(0, 0, 595, 842)),
                 ),
                 Page(
                     [Paragraph("require about 14 PB", Box(90, 600, 522, 700))],
-                    Box(0, 0, 595, 842),
+                    Mediabox(Box(0, 0, 595, 842)),
                 ),
             ]
         )

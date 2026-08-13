@@ -113,7 +113,7 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(status["status"], "complete")
         self.assertEqual(status["refilled_unit_count"], 1)
         self.assertEqual(status["refill_schema_version"], module.REFILL_SCHEMA_VERSION)
-        self.assertEqual(module.REFILL_SCHEMA_VERSION, 12)
+        self.assertEqual(module.REFILL_SCHEMA_VERSION, 13)
         self.assertEqual(status["babeldoc_version"], "0.6.4")
         self.assertTrue((self.article / "rendered" / "translated_mono.pdf").is_file())
         self.assertTrue((self.article / "rendered" / "translated_dual.pdf").is_file())

@@ -259,6 +259,8 @@ def suppress_cross_page_auxiliary_orphans(
         paragraphs = list(getattr(page, "pdf_paragraph", ()) or ())
         next_paragraphs = list(getattr(pages[page_index + 1], "pdf_paragraph", ()) or ())
         page_box = _object_box(page)
+        if page_box is None:
+            page_box = _object_box(getattr(page, "mediabox", None))
         if page_box is None or not next_paragraphs:
             continue
         page_width = page_box[2] - page_box[0]
