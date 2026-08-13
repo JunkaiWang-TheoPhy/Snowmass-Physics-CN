@@ -299,6 +299,18 @@
     "arxiv:2203.08973": {
       "exact_translations": [
         {
+          "source": "Submittedto the Proceedings of the US Community Study on the Future of Particle Physics (Snowmass 2021)",
+          "target": "提交至美国粒子物理未来研究社区会议（Snowmass 2021）论文集",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores front-matter spacing and uses the project-wide Chinese name for the Snowmass community study without changing the parenthetical event name."
+        },
+        {
+          "source": "3 Status of CurrentInitiatives 4",
+          "target": "3 当前举措的现状 4",
+          "scope": "all_occurrences",
+          "reason": "Manual review restores spaces around the section and page numbers; the trailing 4 is retained because its role cannot be inferred away from extracted text."
+        },
+        {
           "source": "Transcendental Preprint March 18, 2022",
           "target": "Transcendental预印本 2022年三月18日",
           "scope": "all_occurrences",

@@ -827,6 +827,26 @@ class RefinedOrchestratorTests(unittest.TestCase):
             "图10。Mu3e 实验第一阶段对 {v1} 过程中瞬发暗光子衰变的预期灵敏度。",
         )
 
+    def test_tracked_microelectronics_front_matter_preserves_page_numbers(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            mapping = module._hard_exact_translations(
+                Path(temporary),
+                "arxiv:2203.08973",
+            )
+
+        self.assertEqual(
+            mapping[
+                "submittedto the proceedings of the us community study on the "
+                "future of particle physics (snowmass 2021)"
+            ],
+            "提交至美国粒子物理未来研究社区会议（Snowmass 2021）论文集",
+        )
+        self.assertEqual(
+            mapping["3 status of currentinitiatives 4"],
+            "3 当前举措的现状 4",
+        )
+
     def test_hard_exact_translations_merge_local_overrides_with_tracked_baseline(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

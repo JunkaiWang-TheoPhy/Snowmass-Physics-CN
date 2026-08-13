@@ -78,6 +78,7 @@ def _production_environment_lock() -> dict[str, Any]:
         Path(production_contract.__file__),
         Path(pdf_audit.__file__),
         Path(publication_qc.__file__),
+        refined.TRACKED_HARD_CONSTRAINTS,
     )
     return production_contract.build_environment_lock(
         root=ROOT,

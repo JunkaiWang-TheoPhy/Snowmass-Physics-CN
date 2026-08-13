@@ -577,6 +577,10 @@ class RunLockTests(unittest.TestCase):
             "snowmass_babeldoc_bridge.py",
             environment["contracts"]["versions"]["source_sha256"],
         )
+        self.assertIn(
+            "snowmass-hard-constraints.json",
+            environment["contracts"]["versions"]["source_sha256"],
+        )
         self.assertEqual(module.production_contract._environment_lock_errors(environment), [])
 
     def test_environment_drift_archives_and_rebinds_verified_artifact_manifest(self) -> None:
