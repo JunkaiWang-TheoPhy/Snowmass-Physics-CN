@@ -142,6 +142,27 @@ class PublicManifestTests(unittest.TestCase):
             "snowmass-2203.07506.zh-CN.pdf",
         )
 
+    def test_belle_ii_layout_fix_has_versioned_verified_pdf(self) -> None:
+        record = next(
+            item for item in _load_manifest()
+            if item["record_id"] == "arxiv:2203.07564"
+        )
+        self.assertTrue(record["publication_allowed"])
+        self.assertEqual(record["translation_status"], "machine-draft")
+        self.assertEqual(record["machine_model"], "deepseek-v4-flash")
+        self.assertEqual(record["translation_version"], "v24-layout-fix")
+        self.assertEqual(
+            record["publication_translation_sha256"],
+            "a898f247f28137e1db547f7cbee13eb41d6d57040adf8909b4f062fda971b786",
+        )
+        self.assertEqual(record["publication_translation_size_bytes"], 29331179)
+        self.assertEqual(record["translation_published_at"], "2026-08-14")
+        self.assertEqual(
+            record["publication_translation_url"],
+            "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.07564/"
+            "v24-layout-fix/snowmass-2203.07564.zh-CN.pdf",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
