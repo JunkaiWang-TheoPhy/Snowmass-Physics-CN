@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from typing import Iterable
 
 from scripts.run_snowmass_translation import text_hash
@@ -37,6 +38,15 @@ class StyleBatchProtocolError(ValueError):
     """Raised when a style-batch response violates the exact-ID protocol."""
 
 
+_CHUNK_ID_RE = re.compile(r"^chunk\d{4}$")
+
+
+def _validate_chunk_id(chunk_id: object) -> str:
+    if not isinstance(chunk_id, str) or _CHUNK_ID_RE.fullmatch(chunk_id) is None:
+        raise StyleBatchProtocolError(f"invalid chunk_id: {chunk_id!r}")
+    return chunk_id
+
+
 def plan_style_batches(
     items: Iterable[StyleBatchItem],
     *,
@@ -45,7 +55,7 @@ def plan_style_batches(
     """Partition items in order, closing before either normal limit is exceeded."""
 
     item_list = tuple(items)
-    ids = [item.chunk_id for item in item_list]
+    ids = [_validate_chunk_id(item.chunk_id) for item in item_list]
     if len(ids) != len(set(ids)):
         raise ValueError("style batch items must have unique chunk IDs")
 
@@ -92,7 +102,7 @@ def build_style_batch_payload(
         "stage": stage,
         "chunks": [
             {
-                "id": item.chunk_id,
+                "id": _validate_chunk_id(item.chunk_id),
                 "text": item.protected_text,
                 "locked_terminology": item.glossary_text,
                 "read_only_context": item.context,
@@ -117,7 +127,7 @@ def parse_style_batch_response(
 ) -> dict[str, str]:
     """Parse a response whose translations map must match expected IDs exactly."""
 
-    expected = tuple(expected_ids)
+    expected = tuple(_validate_chunk_id(chunk_id) for chunk_id in expected_ids)
     if len(expected) != len(set(expected)):
         raise StyleBatchProtocolError("expected IDs must be unique")
     try:
@@ -134,7 +144,10 @@ def parse_style_batch_response(
         raise StyleBatchProtocolError("response must contain a translations object")
 
     translations = response["translations"]
-    if set(translations) != set(expected):
+    translation_ids = tuple(_validate_chunk_id(chunk_id) for chunk_id in translations)
+    if len(translation_ids) != len(set(translation_ids)):
+        raise StyleBatchProtocolError("translations must have unique IDs")
+    if set(translation_ids) != set(expected):
         raise StyleBatchProtocolError("translations must contain exactly the expected IDs")
     if any(not isinstance(value, str) or not value.strip() for value in translations.values()):
         raise StyleBatchProtocolError("translations must contain nonblank strings")

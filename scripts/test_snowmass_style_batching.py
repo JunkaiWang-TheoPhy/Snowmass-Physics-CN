@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -47,6 +48,40 @@ class StyleBatchPlanningTests(unittest.TestCase):
         batching = load_batching()
         items = (item("chunk0001", "a" * 10_000), item("chunk0002", "b" * 9_000))
         self.assertEqual([len(x.items) for x in batching.plan_style_batches(items)], [1, 1])
+
+    def test_blank_or_malformed_chunk_id_is_rejected_at_all_batch_boundaries(self) -> None:
+        batching = load_batching()
+        for chunk_id in ("", " ", "chunk1", "chunk00001", "Chunk0001", "chunk000a"):
+            with self.subTest(chunk_id=chunk_id):
+                batch = batching.StyleBatch((item(chunk_id, "text"),))
+                calls = {
+                    "planner": lambda: batching.plan_style_batches(batch.items),
+                    "payload": lambda: batching.build_style_batch_payload(batch),
+                    "request_key": lambda: batching.style_batch_request_key(
+                        batch=batch,
+                        stage="anti_ai",
+                        model="model-a",
+                        instructions="clean",
+                        max_output_tokens=128,
+                    ),
+                }
+                for boundary, call in calls.items():
+                    with self.subTest(boundary=boundary), self.assertRaises(ValueError):
+                        call()
+
+    def test_recovery_batches_have_at_most_eight_items(self) -> None:
+        batching = load_batching()
+        items = tuple(item(f"chunk{i:04d}", "text") for i in range(9))
+        batches = batching.plan_style_batches(items, recovery=True)
+        self.assertEqual([len(batch.items) for batch in batches], [8, 1])
+        self.assertTrue(all(batch.recovery for batch in batches))
+
+    def test_oversized_item_is_always_alone(self) -> None:
+        batching = load_batching()
+        items = (item("chunk0001", "a"), item("chunk0002", "b" * 18_001), item("chunk0003", "c"))
+        batches = batching.plan_style_batches(items)
+        self.assertEqual([len(batch.items) for batch in batches], [1, 1, 1])
+        self.assertEqual(batches[1].items[0].chunk_id, "chunk0002")
 
 
 class StyleBatchProtocolTests(unittest.TestCase):
@@ -112,3 +147,21 @@ class StyleBatchProtocolTests(unittest.TestCase):
         self.assertNotEqual(
             request_key(first_batch), request_key(first_batch, max_output_tokens=4097)
         )
+
+    def test_malformed_expected_ids_are_rejected_even_when_the_mapping_matches(self) -> None:
+        batching = load_batching()
+        for chunk_id in ("", "chunk1", "chunk00001", "chunk000a"):
+            with self.subTest(chunk_id=chunk_id), self.assertRaises(ValueError):
+                batching.parse_style_batch_response(
+                    json.dumps({"translations": {chunk_id: "甲"}}, ensure_ascii=False),
+                    (chunk_id,),
+                )
+
+    def test_malformed_response_translation_keys_are_rejected(self) -> None:
+        batching = load_batching()
+        for chunk_id in ("", "chunk1", "chunk00001", "chunk000a"):
+            with self.subTest(chunk_id=chunk_id), self.assertRaises(ValueError):
+                batching.parse_style_batch_response(
+                    json.dumps({"translations": {chunk_id: "甲"}}, ensure_ascii=False),
+                    ("chunk0001",),
+                )
