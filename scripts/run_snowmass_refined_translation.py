@@ -19,6 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import run_snowmass_translation as runner
 from snowmass_document_units import compare_numeric_literals
+from snowmass_reference_boundaries import reference_boundary
 from snowmass_translation_qc import _extract_unit_values, _parenthesis_residue
 
 
@@ -721,53 +722,16 @@ def _valid_legacy_critique(
 def _reference_chunk_ids(article_dir: Path, chunks: list[dict[str, Any]]) -> set[str]:
     """Return the real bibliography tail, excluding a table-of-contents label."""
 
-    texts = [
-        runner.article_artifact_path(article_dir, str(chunk["source_file"])).read_text(
-            encoding="utf-8"
-        )
+    resolved = [
+        {
+            **chunk,
+            "source_file": str(
+                runner.article_artifact_path(article_dir, str(chunk["source_file"]))
+            ),
+        }
         for chunk in chunks
     ]
-
-    def bibliography_like(text: str) -> bool:
-        compact = " ".join(text.split())
-        signals = (
-            r"\barxiv\s*:",
-            r"\bdoi\s*:",
-            r"\b(?:19|20)\d{2}\b",
-            r"\b(?:journal|proceedings|phys\.\s*rev\.|jhep|nature|science)\b",
-        )
-        return sum(bool(re.search(pattern, compact, flags=re.I)) for pattern in signals) >= 2
-
-    heading_indexes = [
-        index
-        for index, text in enumerate(texts)
-        if " ".join(text.split()).rstrip(":").casefold()
-        in {"references", "bibliography"}
-    ]
-    for index in reversed(heading_indexes):
-        sample = texts[index + 1 : index + 9]
-        if sample and sum(bibliography_like(text) for text in sample) >= min(2, len(sample)):
-            end = len(chunks)
-            for next_index in range(index + 1, len(chunks)):
-                if (
-                    str(chunks[next_index].get("layout_label") or "") == "title"
-                    and not bibliography_like(texts[next_index])
-                ):
-                    end = next_index
-                    break
-            return {str(item["id"]) for item in chunks[index + 1 : end]}
-
-    acknowledgement_indexes = [
-        index
-        for index, text in enumerate(texts)
-        if " ".join(text.split()).rstrip(":").casefold()
-        in {"acknowledgments", "acknowledgements"}
-    ]
-    if acknowledgement_indexes:
-        for index in range(acknowledgement_indexes[-1] + 1, len(chunks)):
-            if bibliography_like(texts[index]):
-                return {str(item["id"]) for item in chunks[index:]}
-    return set()
+    return set(reference_boundary(Path("/"), resolved)["chunk_ids"])
 
 
 def _chunk_passthrough_reason(

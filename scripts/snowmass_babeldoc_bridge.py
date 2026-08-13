@@ -310,10 +310,10 @@ def _normalized_figure_text(value: str) -> str:
 
 
 def reference_entry_numbers(text: str) -> list[int]:
-    """Return bibliography entry numbers after the first section heading."""
+    """Return bibliography entry numbers after the last section heading."""
 
-    heading = re.search(r"(?im)^\s*(?:references|bibliography)\s*$", text)
-    body = text[heading.end() :] if heading is not None else text
+    headings = list(re.finditer(r"(?im)^\s*(?:references|bibliography)\s*$", text))
+    body = text[headings[-1].end() :] if headings else text
     return [int(value) for value in re.findall(r"(?m)^\s*\[(\d+)\]", body)]
 
 
@@ -630,6 +630,7 @@ def restore_verbatim_pages(
     mono_pdf: Path,
     dual_pdf: Path,
     page_numbers: set[int],
+    reference_check_page_numbers: set[int] | None = None,
     canonical_header: dict[str, str] | None = None,
     section_heading_translations: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
@@ -638,9 +639,11 @@ def restore_verbatim_pages(
     import pymupdf
 
     selected = sorted(set(page_numbers))
-    if not selected:
+    check_pages = sorted(set(reference_check_page_numbers or page_numbers))
+    if not selected and not check_pages:
         return {
             "page_numbers": [],
+            "reference_check_page_numbers": [],
             "verified": True,
             "reference_numbers": {
                 "count": 0,
@@ -657,8 +660,10 @@ def restore_verbatim_pages(
     ) as dual:
         if mono.page_count != source.page_count or dual.page_count != source.page_count:
             raise RuntimeError("Cannot restore verbatim pages across unequal page counts")
-        if selected[0] < 1 or selected[-1] > source.page_count:
+        if selected and (selected[0] < 1 or selected[-1] > source.page_count):
             raise RuntimeError("Verbatim page number is outside the source PDF")
+        if check_pages and (check_pages[0] < 1 or check_pages[-1] > source.page_count):
+            raise RuntimeError("Reference-check page number is outside the source PDF")
 
         canonical_header_occurrences = 0
         section_heading_occurrences = 0
@@ -833,6 +838,9 @@ def restore_verbatim_pages(
     selected_source_text: list[str] = []
     selected_source_reference_text: list[str] = []
     with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono:
+        for page_number in check_pages:
+            source_page = source[page_number - 1]
+            selected_source_reference_text.append(source_page.get_text())
         for page_number in selected:
             source_page = source[page_number - 1]
             output_page = mono[page_number - 1]
@@ -859,16 +867,13 @@ def restore_verbatim_pages(
                     f"source={source_text!r}, output={output_text!r}"
                 )
             selected_source_text.append(source_text)
-            # Reference entries can begin inside the top 10% on continuation
-            # pages.  The body clip above intentionally excludes running headers
-            # for layout equality, but numbering must inspect the full raw page.
-            selected_source_reference_text.append(source_page.get_text())
     numbers = reference_entry_numbers("\n".join(selected_source_reference_text))
     sequential = not numbers or numbers == list(range(1, numbers[-1] + 1))
     if not sequential:
         raise RuntimeError("Reference numbering self-check failed")
     return {
         "page_numbers": selected,
+        "reference_check_page_numbers": check_pages,
         "verified": True,
         "canonical_header_occurrences": canonical_header_occurrences,
         "section_heading_occurrences": section_heading_occurrences,
@@ -1270,6 +1275,7 @@ def render_translated_document(
     working_dir: Path,
     output_dir: Path,
     verbatim_page_numbers: set[int] | None = None,
+    reference_check_page_numbers: set[int] | None = None,
     verbatim_header_translation: dict[str, str] | None = None,
     verbatim_section_heading_translations: list[dict[str, str]] | None = None,
 ) -> RenderedPdfResult:
@@ -1361,6 +1367,7 @@ def render_translated_document(
             mono_pdf=mono_pdf,
             dual_pdf=dual_pdf,
             page_numbers=set(verbatim_page_numbers or ()),
+            reference_check_page_numbers=set(reference_check_page_numbers or ()),
             canonical_header=verbatim_header_translation,
             section_heading_translations=verbatim_section_heading_translations,
         )

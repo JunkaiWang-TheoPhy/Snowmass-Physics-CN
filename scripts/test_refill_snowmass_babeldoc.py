@@ -177,6 +177,55 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(refill_status["reference_qc"]["page_numbers"], [1])
         self.assertTrue(refill_status["reference_qc"]["verified"])
 
+    def test_reference_pages_ignore_toc_and_keep_mixed_first_page_translatable(self) -> None:
+        module = load_module()
+        rows = [
+            ("chunk0001", "References\n", "fallback_line", 2),
+            ("chunk0002", "I. INTRODUCTION\n", "title", 2),
+            ("chunk0003", "ACKNOWLEDGMENTS\n", "title", 18),
+            ("chunk0004", "Supported by the collaboration.\n", "plain text", 18),
+            (
+                "chunk0005",
+                "[1] A. Author. Paper title. arXiv:2201.00000 (2022).\n",
+                "plain text",
+                18,
+            ),
+            (
+                "chunk0006",
+                "[2] B. Author. Another title. arXiv:2201.00001 (2022).\n",
+                "plain text",
+                19,
+            ),
+            (
+                "chunk0007",
+                "[3] C. Author. Last title. Journal 1 (2023).\n",
+                "plain text",
+                20,
+            ),
+        ]
+        chunks = []
+        for order, (chunk_id, text, label, page) in enumerate(rows, 1):
+            source_file = f"{chunk_id}.md"
+            (self.article / source_file).write_text(text, encoding="utf-8")
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "order": order,
+                    "source_file": source_file,
+                    "layout_label": label,
+                    "page_number": page,
+                }
+            )
+
+        self.assertEqual(
+            module._reference_page_numbers(self.article, {"chunks": chunks}),
+            {18, 19, 20},
+        )
+        self.assertEqual(
+            module._verbatim_reference_page_numbers(self.article, {"chunks": chunks}),
+            {19, 20},
+        )
+
     def test_rights_gate_rejects_article_before_refill(self) -> None:
         module = load_module()
         self.rights.write_text(

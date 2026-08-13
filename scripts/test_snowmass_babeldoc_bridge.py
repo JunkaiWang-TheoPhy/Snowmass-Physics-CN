@@ -576,6 +576,49 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             {"count": 2, "first": 1, "last": 2, "sequential": True},
         )
 
+    def test_reference_check_can_cover_mixed_page_without_restoring_it(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "mixed-reference-source.pdf"
+        mono = self.root / "mixed-reference-mono.pdf"
+        dual = self.root / "mixed-reference-dual.pdf"
+
+        document = pymupdf.open()
+        first = document.new_page(width=300, height=400)
+        first.insert_text((30, 60), "Translated acknowledgments stay translated")
+        first.insert_text((30, 100), "[1] FIRST")
+        second = document.new_page(width=300, height=400)
+        second.insert_text((30, 28), "[2] SECOND")
+        document.save(source)
+        document.close()
+
+        for path, width in ((mono, 300), (dual, 600)):
+            document = pymupdf.open()
+            for value in ("CHINESE ACKNOWLEDGMENTS", "BROKEN REFERENCE"):
+                page = document.new_page(width=width, height=400)
+                page.insert_text((30, 80), value)
+            document.save(path)
+            document.close()
+
+        report = bridge.restore_verbatim_pages(
+            source_pdf=source,
+            mono_pdf=mono,
+            dual_pdf=dual,
+            page_numbers={2},
+            reference_check_page_numbers={1, 2},
+        )
+
+        self.assertEqual(report["page_numbers"], [2])
+        self.assertEqual(report["reference_check_page_numbers"], [1, 2])
+        self.assertEqual(
+            report["reference_numbers"],
+            {"count": 2, "first": 1, "last": 2, "sequential": True},
+        )
+        with pymupdf.open(mono) as document:
+            self.assertIn("CHINESE ACKNOWLEDGMENTS", document[0].get_text())
+            self.assertIn("[2] SECOND", document[1].get_text())
+
     def test_restore_verbatim_regions_replaces_rendered_figure_and_table_content(self) -> None:
         bridge = load_bridge()
         import pymupdf

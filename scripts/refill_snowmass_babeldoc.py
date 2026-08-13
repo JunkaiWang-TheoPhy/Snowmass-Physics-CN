@@ -14,8 +14,14 @@ import sys
 from typing import Any
 import unicodedata
 
-
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from snowmass_reference_boundaries import reference_boundary
+
+
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
 DEFAULT_GLOSSARY = ROOT / "translations/snowmass-global-glossary.json"
 DEFAULT_HARD_CONSTRAINTS = ROOT / "translations/snowmass-hard-constraints.json"
@@ -491,19 +497,21 @@ def _load_glossary(path: Path) -> list[dict[str, Any]]:
 
 
 def _reference_page_numbers(article_dir: Path, manifest: dict[str, Any]) -> set[int]:
-    chunks = sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0))
-    reference_page: int | None = None
-    last_page = 0
-    for chunk in chunks:
-        page_number = int(chunk["page_number"])
-        last_page = max(last_page, page_number)
-        source_path = article_dir / str(chunk["source_file"])
-        heading = _normalized_phrase(source_path.read_text(encoding="utf-8")).rstrip(":")
-        if reference_page is None and heading in {"references", "bibliography"}:
-            reference_page = page_number
-    if reference_page is None:
-        return set()
-    return set(range(reference_page, last_page + 1))
+    return set(
+        reference_boundary(article_dir, list(manifest.get("chunks", [])))[
+            "check_page_numbers"
+        ]
+    )
+
+
+def _verbatim_reference_page_numbers(
+    article_dir: Path, manifest: dict[str, Any]
+) -> set[int]:
+    return set(
+        reference_boundary(article_dir, list(manifest.get("chunks", [])))[
+            "verbatim_page_numbers"
+        ]
+    )
 
 
 def _verbatim_header_translation(
@@ -624,6 +632,7 @@ def main(argv: list[str] | None = None) -> int:
         table_text_chunk_ids=table_text_chunk_ids,
     )
     reference_pages = _reference_page_numbers(args.article_dir, manifest)
+    verbatim_reference_pages = _verbatim_reference_page_numbers(args.article_dir, manifest)
     verbatim_header = _verbatim_header_translation(
         args.article_dir,
         manifest,
@@ -631,7 +640,7 @@ def main(argv: list[str] | None = None) -> int:
         constraints,
     )
     verbatim_section_headings = _verbatim_section_heading_translations(
-        constraints, reference_pages
+        constraints, verbatim_reference_pages
     )
     signature_payload = {
         "refill_schema_version": REFILL_SCHEMA_VERSION,
@@ -644,7 +653,8 @@ def main(argv: list[str] | None = None) -> int:
         "publication_chunks": publication_qc["publication_chunk_sha256"],
         "hard_constraints": constraints,
         "first_use_glossary": [term for term in glossary if term.get("first_use") is True],
-        "verbatim_page_numbers": sorted(reference_pages),
+        "reference_check_page_numbers": sorted(reference_pages),
+        "verbatim_page_numbers": sorted(verbatim_reference_pages),
         "verbatim_header_translation": verbatim_header,
         "verbatim_section_heading_translations": verbatim_section_headings,
         "figure_text_chunk_ids": sorted(figure_text_chunk_ids),
@@ -687,7 +697,8 @@ def main(argv: list[str] | None = None) -> int:
         source_pdf=source_pdf,
         working_dir=args.article_dir / ".babeldoc-render-work",
         output_dir=render_dir,
-        verbatim_page_numbers=reference_pages,
+        verbatim_page_numbers=verbatim_reference_pages,
+        reference_check_page_numbers=reference_pages,
         verbatim_header_translation=verbatim_header,
         verbatim_section_heading_translations=verbatim_section_headings,
     )
