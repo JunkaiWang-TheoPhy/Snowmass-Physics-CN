@@ -76,6 +76,95 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             bridge.placeholder_sequence_matches("A {v1} B {v2}", "甲 {v2} 乙 {v2}")
         )
 
+    def test_suppresses_proven_cross_page_auxiliary_orphan(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Box:
+            x: float
+            y: float
+            x2: float
+            y2: float
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            box: Box
+            xobj_id: int = 0
+            pdf_paragraph_composition: list[object] | None = None
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+            box: Box
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        orphan = Paragraph("will", Box(505, 99, 522, 107), pdf_paragraph_composition=[object()])
+        document = Document(
+            [
+                Page(
+                    [
+                        Paragraph("II estimates ... 50 ab−1", Box(90, 120, 500, 180)),
+                        orphan,
+                    ],
+                    Box(0, 0, 595, 842),
+                ),
+                Page(
+                    [Paragraph("require about 14 PB", Box(90, 600, 522, 700))],
+                    Box(0, 0, 595, 842),
+                ),
+            ]
+        )
+        requested = [
+            bridge.RefillTranslation(1, 0, "II estimates ... 50 ab−1\n", "估计为 50 ab−1\n"),
+            bridge.RefillTranslation(2, 0, "require about 14 PB\n", "约需 14 PB\n"),
+        ]
+
+        suppressed = bridge.suppress_cross_page_auxiliary_orphans(document, requested)
+
+        self.assertEqual(suppressed, [(1, 1, "will")])
+        self.assertEqual(orphan.unicode, "")
+        self.assertEqual(orphan.pdf_paragraph_composition, [])
+
+    def test_does_not_suppress_standalone_or_non_edge_latin_words(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Box:
+            x: float
+            y: float
+            x2: float
+            y2: float
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            box: Box
+            xobj_id: int = 0
+            pdf_paragraph_composition: list[object] | None = None
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+            box: Box
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        word = Paragraph("will", Box(300, 99, 320, 107), pdf_paragraph_composition=[object()])
+        document = Document(
+            [Page([Paragraph("Complete sentence.", Box(90, 120, 500, 180)), word], Box(0, 0, 595, 842))]
+        )
+
+        suppressed = bridge.suppress_cross_page_auxiliary_orphans(document, [])
+
+        self.assertEqual(suppressed, [])
+        self.assertEqual(word.unicode, "will")
+
     def test_materializes_lazy_passthrough_values_before_xml_serialization(self) -> None:
         bridge = load_bridge()
 

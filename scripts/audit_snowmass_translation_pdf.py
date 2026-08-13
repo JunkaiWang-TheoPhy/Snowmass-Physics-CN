@@ -24,6 +24,7 @@ RESIDUE_PATTERNS = (
     ("cid", re.compile(r"cid:", re.IGNORECASE)),
     ("replacement_character", re.compile("�")),
 )
+_LATIN_WORD_RE = re.compile(r"^[A-Za-z]{2,12}$")
 
 
 def _sha256(path: Path) -> str:
@@ -66,6 +67,7 @@ def audit_pdf(
     out_of_bounds: list[dict[str, Any]] = []
     residue: list[dict[str, Any]] = []
     low_text_pages: list[int] = []
+    isolated_latin_edge_words: list[dict[str, Any]] = []
     try:
         document = fitz.open(pdf_path)
     except (OSError, RuntimeError, ValueError) as error:
@@ -99,7 +101,28 @@ def audit_pdf(
                     residue.append({"page": page_number, "kind": label})
                     failures.append(f"residue:{label}:page_{page_number}")
             bounds = page.rect
-            for block in page.get_text("blocks"):
+            blocks = page.get_text("blocks")
+            for block in page.get_text("dict").get("blocks", []):
+                for line in block.get("lines", []):
+                    line_text = "".join(
+                        str(span.get("text") or "") for span in line.get("spans", [])
+                    ).strip()
+                    x0, y0, x1, y1 = line.get("bbox", (0, 0, 0, 0))
+                    if (
+                        _LATIN_WORD_RE.fullmatch(line_text)
+                        and x0 >= bounds.x1 * 0.80
+                        and y0 >= bounds.y1 * 0.65
+                    ):
+                        detail = {
+                            "page": page_number,
+                            "word": line_text,
+                            "bbox": [x0, y0, x1, y1],
+                        }
+                        isolated_latin_edge_words.append(detail)
+                        failures.append(
+                            f"isolated_latin_edge_word:{line_text.casefold()}:page_{page_number}"
+                        )
+            for block in blocks:
                 x0, y0, x1, y1 = block[:4]
                 if (
                     x0 < bounds.x0 - 1
@@ -125,6 +148,7 @@ def audit_pdf(
         "expected_pages": expected_pages,
         "low_text_pages": low_text_pages,
         "out_of_bounds": out_of_bounds,
+        "isolated_latin_edge_words": isolated_latin_edge_words,
         "residue": residue,
         "contact_sheet_path": (
             Path(contact_sheet_path).name if contact_sheet_path is not None else None

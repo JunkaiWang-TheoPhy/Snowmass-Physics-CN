@@ -77,6 +77,27 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertIn("page_count_mismatch:2!=3", report["failures"])
             self.assertIn("low_text_page:1", report["failures"])
 
+    def test_rejects_isolated_latin_word_at_right_page_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            document = fitz.open()
+            page = document.new_page(width=595, height=842)
+            page.insert_textbox(
+                (72, 72, 500, 300),
+                "这是完整的中文学术正文，用于确保页面具有足够的可提取文本。",
+                fontfile="/System/Library/Fonts/STHeiti Medium.ttc",
+                fontname="testcjk",
+                fontsize=12,
+            )
+            page.insert_text((505, 700), "will", fontsize=10)
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("isolated_latin_edge_word:will:page_1", report["failures"])
+
     def test_malformed_pdf_returns_a_failed_report(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "broken.pdf"

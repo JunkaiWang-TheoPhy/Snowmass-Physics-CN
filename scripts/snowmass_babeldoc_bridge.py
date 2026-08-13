@@ -26,6 +26,9 @@ VERBATIM_TABLE_TEXT_POLICY = "verbatim_table_text"
 TRANSLATION_POLICIES = frozenset(
     {TRANSLATE_POLICY, VERBATIM_FIGURE_TEXT_POLICY, VERBATIM_TABLE_TEXT_POLICY}
 )
+_CROSS_PAGE_AUXILIARY_WORDS = frozenset(
+    {"am", "are", "be", "been", "being", "can", "could", "did", "do", "does", "had", "has", "have", "is", "may", "might", "must", "shall", "should", "was", "were", "will", "would"}
+)
 
 
 @dataclass(frozen=True)
@@ -239,6 +242,49 @@ def _box_center_is_inside(
     cx, cy = (x + x2) / 2, (y + y2) / 2
     ox, oy, ox2, oy2 = outer
     return ox <= cx <= ox2 and oy <= cy <= oy2
+
+
+def suppress_cross_page_auxiliary_orphans(
+    document: Any,
+    translations: Iterable[RefillTranslation],
+) -> list[tuple[int, int, str]]:
+    """Suppress a source-only auxiliary stranded at a right-edge page break."""
+
+    translated = {
+        (item.page_number, item.paragraph_index): item for item in translations
+    }
+    suppressed: list[tuple[int, int, str]] = []
+    pages = list(getattr(document, "page", ()) or ())
+    for page_index, page in enumerate(pages[:-1]):
+        paragraphs = list(getattr(page, "pdf_paragraph", ()) or ())
+        next_paragraphs = list(getattr(pages[page_index + 1], "pdf_paragraph", ()) or ())
+        page_box = _object_box(page)
+        if page_box is None or not next_paragraphs:
+            continue
+        page_width = page_box[2] - page_box[0]
+        for paragraph_index, paragraph in enumerate(paragraphs):
+            word = str(getattr(paragraph, "unicode", "") or "").strip()
+            box = _object_box(paragraph)
+            if (
+                word.casefold() not in _CROSS_PAGE_AUXILIARY_WORDS
+                or box is None
+                or int(getattr(paragraph, "xobj_id", 0) or 0) != 0
+                or box[0] < page_box[0] + page_width * 0.80
+                or (page_index + 1, paragraph_index) in translated
+            ):
+                continue
+            previous_translated = any(
+                (page_index + 1, prior_index) in translated
+                for prior_index in range(paragraph_index)
+            )
+            next_source = str(getattr(next_paragraphs[0], "unicode", "") or "").lstrip()
+            next_translated = (page_index + 2, 0) in translated
+            if not previous_translated or not next_translated or not re.match(r"[a-z]", next_source):
+                continue
+            paragraph.unicode = ""
+            paragraph.pdf_paragraph_composition = []
+            suppressed.append((page_index + 1, paragraph_index, word))
+    return suppressed
 
 
 def _json_table_regions(page: dict[str, Any]) -> list[tuple[int, tuple[float, float, float, float]]]:
@@ -1216,6 +1262,7 @@ def refill_document_units(
         converter = XMLConverter()
         docs = converter.read_xml(str(ir_xml_path))
         normalize_document_ir_numeric_tokens(docs)
+        suppress_cross_page_auxiliary_orphans(docs, requested)
         il_translator = ILTranslator(_babeldoc_placeholder_translator(), config)
         figure_text_verbatim_count = 0
         table_text_verbatim_count = 0
