@@ -162,13 +162,23 @@ class TypedProtectionTests(unittest.TestCase):
         self.assertEqual(
             [(node.kind, node.value) for node in protected.nodes],
             [
-                ("number", "0.2"),
+                ("unit", "0.2 GHz"),
                 ("number", "11973"),
                 ("identifier", "PUMA-32K"),
             ],
         )
         self.assertIn(sentinel, protected.text)
         self.assertEqual(units.restore_translation_unit(protected.text, protected.nodes), f"with0.2 GHz, NY11973, PUMA-32K and {sentinel}")
+
+    def test_unit_glued_after_pdf_word_is_one_typed_node(self) -> None:
+        units = load_units()
+
+        protected = units.protect_translation_unit("extends down to10GeV")
+
+        self.assertEqual(
+            [(node.kind, node.value) for node in protected.nodes],
+            [("unit", "10GeV")],
+        )
 
     def test_structure_dense_unit_is_rejected_before_model_submission(self) -> None:
         units = load_units()
@@ -179,6 +189,18 @@ class TypedProtectionTests(unittest.TestCase):
 
 
 class NumericComparisonTests(unittest.TestCase):
+    def test_spin_hyphen_number_is_identifier_not_negative_numeric_literal(self) -> None:
+        units = load_units()
+
+        result = units.compare_numeric_literals(
+            "Massive Spin-1 Particles",
+            "大质量自旋-1粒子",
+        )
+
+        self.assertTrue(result.values_equal)
+        self.assertEqual(result.missing_values, ())
+        self.assertEqual(result.added_values, ())
+
     def test_domain_word_unity_may_be_rendered_as_arabic_one(self) -> None:
         units = load_units()
 

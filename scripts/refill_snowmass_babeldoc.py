@@ -20,6 +20,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from snowmass_reference_boundaries import reference_boundary
+import snowmass_constraint_compiler as constraint_compiler
 
 
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
@@ -451,39 +452,7 @@ def _load_constraints(
     *,
     policy_path: Path = DEFAULT_HARD_CONSTRAINTS,
 ) -> dict[str, Any]:
-    path = article_dir / "hard_constraints.json"
-    policy: dict[str, Any] = {"schema_version": 1, "records": {}}
-    if policy_path.is_file():
-        policy = json.loads(policy_path.read_text(encoding="utf-8"))
-        if not isinstance(policy, dict) or policy.get("schema_version") != 1:
-            raise RuntimeError(f"Invalid tracked hard constraint policy: {policy_path}")
-        if not isinstance(policy.get("records"), dict):
-            raise RuntimeError(f"Tracked hard constraint policy has no records: {policy_path}")
-    record_rules = policy["records"].get(record_id, {})
-    if not isinstance(record_rules, dict):
-        raise RuntimeError(f"Tracked hard constraints are invalid for {record_id}")
-    value = record_rules
-    if path.is_file():
-        value = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict):
-            raise RuntimeError(f"Hard constraints must be a JSON object: {path}")
-    forbidden = []
-    for source in (policy, record_rules, value):
-        rules = source.get("forbidden_translations", [])
-        if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
-            raise RuntimeError("forbidden_translations must be a list of objects")
-        for rule in rules:
-            if rule not in forbidden:
-                forbidden.append(rule)
-    return {
-        "schema_version": 1,
-        "record_id": value.get("record_id", record_id),
-        "exact_translations": _merge_exact_translation_rules(
-            list(record_rules.get("exact_translations", [])),
-            list(value.get("exact_translations", [])) if path.is_file() else [],
-        ),
-        "forbidden_translations": forbidden,
-    }
+    return constraint_compiler.load_constraints(article_dir, record_id, policy_path)
 
 
 def _load_glossary(path: Path) -> list[dict[str, Any]]:

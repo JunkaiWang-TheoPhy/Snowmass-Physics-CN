@@ -228,34 +228,222 @@ class RunLockTests(unittest.TestCase):
 
 
 class BatchResumeTests(unittest.TestCase):
+    def _two_record_config(self, module, root: Path):
+        manifest = root / "papers.json"
+        records = [
+            {"record_id": f"arxiv:{name}", "publication_allowed": True, "page_count": 1}
+            for name in ("a", "b")
+        ]
+        manifest.write_text(json.dumps(records), encoding="utf-8")
+        return module.BatchConfig(
+            rights_manifest=manifest,
+            pdf_root=root / "pdf",
+            output_root=root / "output",
+            control_dir=root / "control",
+            stage="baseline",
+            explicit_ids=("arxiv:a", "arxiv:b"),
+            max_articles=None,
+            project_max_cost_rmb=1000.0,
+            stage_max_cost_rmb=10.0,
+            usd_cny_rate=7.2,
+            chunk_concurrency=1,
+            article_concurrency=1,
+            through_stage="packaged",
+            translation_version="test",
+            packaged_on="2026-08-13",
+            historical_roots=(),
+        )
+
+    def test_content_failure_quarantines_paper_and_continues_next_record(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            attempted = []
+
+            def process(_config, record, _run_id, _client, _budget):
+                attempted.append(record["record_id"])
+                if record["record_id"] == "arxiv:a":
+                    raise RuntimeError("publication QC failed")
+                return {"record_id": "arxiv:b", "status": "packaged", "source_characters": 1}
+
+            with (
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_run_article", side_effect=process),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(attempted, ["arxiv:a", "arxiv:b"])
+            self.assertEqual(result["status"], "complete_with_quarantine")
+            self.assertEqual(result["quarantined"], 1)
+            self.assertEqual(result["not_started"], 0)
+
+    def test_preflight_separates_package_only_work_from_paid_translation(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = module.BatchConfig(
+                **{**self._two_record_config(module, root).__dict__, "preflight_only": True}
+            )
+
+            def qc(article_dir):
+                return {"ok": article_dir.name == "arxiv_a", "failures": []}
+
+            with (
+                mock.patch.object(module, "_resume_article_result", return_value=None),
+                mock.patch.object(module, "evaluate_article_qc", side_effect=qc),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(result["verified_resume_count"], 0)
+            self.assertEqual(result["verified_package_only_count"], 1)
+            self.assertEqual(result["verified_package_only_record_ids"], ["arxiv:a"])
+            self.assertEqual(result["paid_translation_pending_count"], 1)
+            self.assertEqual(result["pending_record_count"], 2)
+
+    def test_budget_failure_stops_before_next_record(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            attempted = []
+
+            def process(_config, record, _run_id, _client, _budget):
+                attempted.append(record["record_id"])
+                raise module.runner.BudgetExceededError("budget exhausted")
+
+            with (
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_run_article", side_effect=process),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(attempted, ["arxiv:a"])
+            self.assertEqual(result["status"], "stopped")
+            self.assertEqual(result["not_started"], 1)
+
+    def test_three_consecutive_content_failures_trip_systemic_circuit_breaker(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            manifest = root / "papers.json"
+            records = [
+                {"record_id": f"arxiv:{name}", "publication_allowed": True, "page_count": 1}
+                for name in ("a", "b", "c", "d")
+            ]
+            manifest.write_text(json.dumps(records), encoding="utf-8")
+            config = module.BatchConfig(**{**config.__dict__, "explicit_ids": tuple(row["record_id"] for row in records)})
+            attempted = []
+
+            def fail(_config, record, _run_id, _client, _budget):
+                attempted.append(record["record_id"])
+                raise RuntimeError("same pipeline defect")
+
+            with (
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_run_article", side_effect=fail),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(attempted, ["arxiv:a", "arxiv:b", "arxiv:c"])
+            self.assertEqual(result["status"], "stopped")
+            self.assertEqual(result["not_started"], 1)
+            self.assertEqual(result["stop_reason"], "systemic_content_failure_circuit_breaker")
+
+    def test_success_resets_consecutive_content_failure_counter(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            manifest = root / "papers.json"
+            records = [
+                {"record_id": f"arxiv:{name}", "publication_allowed": True, "page_count": 1}
+                for name in ("a", "b", "c", "d")
+            ]
+            manifest.write_text(json.dumps(records), encoding="utf-8")
+            config = module.BatchConfig(**{**config.__dict__, "explicit_ids": tuple(row["record_id"] for row in records)})
+
+            def process(_config, record, _run_id, _client, _budget):
+                if record["record_id"] != "arxiv:b":
+                    raise RuntimeError("isolated content defect")
+                return {"record_id": "arxiv:b", "status": "packaged", "source_characters": 1}
+
+            with (
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_run_article", side_effect=process),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(result["status"], "complete_with_quarantine")
+            self.assertEqual(result["not_started"], 0)
+
+    def test_batch_rebuilds_completed_results_from_verified_article_artifacts(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            attempted = []
+
+            def resume(_config, record):
+                if record["record_id"] == "arxiv:a":
+                    return {"record_id": "arxiv:a", "status": "packaged", "source_characters": 7}
+                return None
+
+            def process(_config, record, _run_id, _client, _budget):
+                attempted.append(record["record_id"])
+                return {"record_id": record["record_id"], "status": "packaged", "source_characters": 9}
+
+            with (
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_resume_article_result", side_effect=resume),
+                mock.patch.object(module, "_run_article", side_effect=process),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(attempted, ["arxiv:b"])
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual(result["completed"], 2)
+
+    def test_verified_qc_with_stale_package_repackages_without_translation(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = config.output_root / "papers" / "arxiv_a"
+            article.mkdir(parents=True)
+            expected = {
+                "record_id": "arxiv:a",
+                "status": "packaged",
+                "source_characters": 7,
+                "qc": {"ok": True},
+                "package": {"packaged_pdf_sha256": "new"},
+                "resumed_from_verified_translation": True,
+            }
+
+            with (
+                mock.patch.object(module, "evaluate_article_qc", return_value={"ok": True}),
+                mock.patch.object(module, "_source_character_count", return_value=7),
+                mock.patch.object(module, "_package_article", return_value=expected["package"]),
+                mock.patch.object(module.refined, "run_refined_article") as translate,
+            ):
+                result = module._run_article(config, record, "run", object(), object())
+
+            self.assertEqual(result, expected)
+            translate.assert_not_called()
+
     def test_rolling_executor_passes_exact_run_article_arguments(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            manifest = root / "papers.json"
-            records = [
-                {"record_id": f"arxiv:{name}", "publication_allowed": True, "page_count": 1}
-                for name in ("a", "b")
-            ]
-            manifest.write_text(json.dumps(records), encoding="utf-8")
-            config = module.BatchConfig(
-                rights_manifest=manifest,
-                pdf_root=root / "pdf",
-                output_root=root / "output",
-                control_dir=root / "control",
-                stage="baseline",
-                explicit_ids=("arxiv:a", "arxiv:b"),
-                max_articles=None,
-                project_max_cost_rmb=1000.0,
-                stage_max_cost_rmb=10.0,
-                usd_cny_rate=7.2,
-                chunk_concurrency=1,
-                article_concurrency=1,
-                through_stage="packaged",
-                translation_version="test",
-                packaged_on="2026-08-13",
-                historical_roots=(),
-            )
+            config = self._two_record_config(module, root)
             calls = []
 
             def complete_article(*args):

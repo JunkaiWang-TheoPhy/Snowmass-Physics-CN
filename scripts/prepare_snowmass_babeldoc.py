@@ -13,11 +13,18 @@ import re
 import sys
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import snowmass_constraint_compiler as constraint_compiler
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
 DEFAULT_PDF_ROOT = ROOT / "tmp/pdfs/snowmass2021"
 DEFAULT_OUTPUT_ROOT = ROOT / "output/snowmass2021/babeldoc_translation"
+DEFAULT_HARD_CONSTRAINTS = ROOT / "translations/snowmass-hard-constraints.json"
 
 
 def _load_bridge():
@@ -168,7 +175,21 @@ def main(argv: list[str] | None = None) -> int:
             _write_report(args.output_root, args.rights_manifest, len(allowed), results)
             continue
         if workspace_is_current(article_dir, source_pdf, record_id):
-            results.append({"record_id": record_id, "status": "reused"})
+            try:
+                manifest = json.loads((article_dir / "manifest.json").read_text(encoding="utf-8"))
+                constraints = constraint_compiler.load_constraints(
+                    article_dir, record_id, DEFAULT_HARD_CONSTRAINTS
+                )
+                constraint_compiler.write_constraint_plan(
+                    article_dir,
+                    constraint_compiler.compile_constraint_plan(article_dir, manifest, constraints),
+                )
+                results.append({"record_id": record_id, "status": "reused"})
+            except Exception as error:
+                results.append(
+                    {"record_id": record_id, "status": "failed", "error": f"{type(error).__name__}: {error}"}
+                )
+                exit_code = 1
             _write_report(args.output_root, args.rights_manifest, len(allowed), results)
             continue
         try:
@@ -184,6 +205,14 @@ def main(argv: list[str] | None = None) -> int:
                 allowed_record_ids=allowed,
                 ir_json_path=extraction.ir_json_path,
                 ir_xml_path=extraction.ir_xml_path,
+            )
+            manifest = json.loads((article_dir / "manifest.json").read_text(encoding="utf-8"))
+            constraints = constraint_compiler.load_constraints(
+                article_dir, record_id, DEFAULT_HARD_CONSTRAINTS
+            )
+            constraint_compiler.write_constraint_plan(
+                article_dir,
+                constraint_compiler.compile_constraint_plan(article_dir, manifest, constraints),
             )
             results.append(
                 {"record_id": record_id, "status": "completed", "unit_count": len(extraction.units)}

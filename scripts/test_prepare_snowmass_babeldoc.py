@@ -27,6 +27,42 @@ def load_module():
 
 
 class PrepareSnowmassBabelDocTests(unittest.TestCase):
+    def test_reused_workspace_constraint_failure_is_isolated_in_report(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            rights = root / "papers.json"
+            rights.write_text(
+                json.dumps([{"record_id": "arxiv:allowed", "publication_allowed": True}]),
+                encoding="utf-8",
+            )
+            pdf_root = root / "pdfs"
+            output_root = root / "output"
+            pdf_root.mkdir()
+            (pdf_root / "arxiv_allowed.pdf").write_bytes(b"pdf")
+            article = output_root / "papers" / "arxiv_allowed"
+            article.mkdir(parents=True)
+            (article / "manifest.json").write_text(
+                json.dumps({"record_id": "arxiv:allowed", "chunks": []}),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.object(module, "workspace_is_current", return_value=True),
+                mock.patch.object(module.constraint_compiler, "load_constraints", side_effect=RuntimeError("bad constraints")),
+            ):
+                exit_code = module.main([
+                    "--rights-manifest", str(rights),
+                    "--pdf-root", str(pdf_root),
+                    "--output-root", str(output_root),
+                    "--record-id", "arxiv:allowed",
+                ])
+
+            report = json.loads((output_root / "preparation_report.json").read_text())
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(report["records"][0]["status"], "failed")
+            self.assertIn("bad constraints", report["records"][0]["error"])
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

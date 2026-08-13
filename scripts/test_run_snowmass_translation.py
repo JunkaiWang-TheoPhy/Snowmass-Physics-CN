@@ -82,6 +82,7 @@ class RightsGateTests(unittest.TestCase):
                 (article / "manifest.json").write_text(
                     json.dumps(
                         {
+                            "record_id": record_id,
                             "babeldoc_ir_json_file": "babeldoc_ir.json",
                             "chunks": [
                                 {
@@ -114,6 +115,18 @@ class RightsGateTests(unittest.TestCase):
                 (article / "chunking_status.json").write_text(
                     json.dumps({"record_id": record_id}),
                     encoding="utf-8",
+                )
+                (article / "chunk0001.md").write_text("Figure text\n", encoding="utf-8")
+                constraints = RUNNER.constraint_compiler.load_constraints(
+                    article, record_id, RUNNER.TRACKED_HARD_CONSTRAINTS
+                )
+                RUNNER.constraint_compiler.write_constraint_plan(
+                    article,
+                    RUNNER.constraint_compiler.compile_constraint_plan(
+                        article,
+                        json.loads((article / "manifest.json").read_text(encoding="utf-8")),
+                        constraints,
+                    ),
                 )
 
             tasks = RUNNER.collect_tasks(
@@ -161,6 +174,7 @@ class RightsGateTests(unittest.TestCase):
             (article / "manifest.json").write_text(
                 json.dumps(
                     {
+                        "record_id": "arxiv:allowed",
                         "chunks": [
                             {
                                 "id": "chunk0001",
@@ -175,6 +189,16 @@ class RightsGateTests(unittest.TestCase):
             )
             (article / "chunking_status.json").write_text(
                 json.dumps({"record_id": "arxiv:allowed"}), encoding="utf-8"
+            )
+            manifest = json.loads((article / "manifest.json").read_text(encoding="utf-8"))
+            constraints = RUNNER.constraint_compiler.load_constraints(
+                article, "arxiv:allowed", RUNNER.TRACKED_HARD_CONSTRAINTS
+            )
+            RUNNER.constraint_compiler.write_constraint_plan(
+                article,
+                RUNNER.constraint_compiler.compile_constraint_plan(
+                    article, manifest, constraints
+                ),
             )
             rights = base / "papers.json"
             rights.write_text(
@@ -375,6 +399,27 @@ class GlossaryMergeTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, [])
+
+    def test_compile_glossary_terms_uses_contextual_target_for_current_source(self) -> None:
+        compiled = RUNNER.compile_glossary_terms(
+            "Many parameters have no observable effect.",
+            [
+                {
+                    "source": "observable",
+                    "target": "可观测量",
+                    "contextual_targets": [
+                        {
+                            "source_regex": r"\bobservable\s+(?:effect|effects)\b",
+                            "target": "可观测",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        self.assertEqual(compiled[0]["target"], "可观测")
+        self.assertEqual(compiled[0]["canonical_target"], "可观测量")
+        self.assertNotIn("contextual_targets", compiled[0])
 
 
 class BudgetGuardTests(unittest.TestCase):

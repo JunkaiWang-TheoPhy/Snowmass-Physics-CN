@@ -32,6 +32,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from snowmass_translation_qc import StageDecision, stage_decision, validate_chunk
 import snowmass_babeldoc_bridge as babeldoc_bridge
+import snowmass_constraint_compiler as constraint_compiler
 from snowmass_document_units import (
     StructureMismatchError as TypedStructureMismatchError,
     protect_translation_unit,
@@ -47,6 +48,7 @@ from snowmass_pipeline import (
 
 TRANSLATION_ROOT = Path("output/snowmass2021_translation")
 RIGHTS_MANIFEST = Path("site/data/papers.json")
+TRACKED_HARD_CONSTRAINTS = SCRIPT_DIR.parent / "translations/snowmass-hard-constraints.json"
 API_URL = "https://api.deepseek.com/responses"
 MODEL = "deepseek-v4-flash"
 STAGES = ("translate", "terminology", "anti_ai", "academic")
@@ -285,6 +287,40 @@ def select_glossary_terms(source_text: str, terms: list[dict[str, Any]]) -> list
         if any(surface_is_present(surface) for surface in surfaces):
             selected.append(term)
     return selected
+
+
+def compile_glossary_terms(
+    source_text: str,
+    terms: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Resolve context-dependent glossary targets once for the current source unit."""
+
+    compiled: list[dict[str, Any]] = []
+    for selected in select_glossary_terms(source_text, terms):
+        rule = dict(selected)
+        canonical_target = str(rule.get("target", "")).strip()
+        contextual = rule.pop("contextual_targets", None)
+        if isinstance(contextual, list):
+            matches = [
+                str(item["target"]).strip()
+                for item in contextual
+                if isinstance(item, dict)
+                and isinstance(item.get("source_regex"), str)
+                and isinstance(item.get("target"), str)
+                and item["target"].strip()
+                and re.search(item["source_regex"], source_text, flags=re.IGNORECASE)
+            ]
+            distinct = list(dict.fromkeys(matches))
+            if len(distinct) > 1:
+                raise RuntimeError(
+                    f"Ambiguous contextual glossary targets for {rule.get('source')}: "
+                    + ", ".join(distinct)
+                )
+            if distinct:
+                rule["canonical_target"] = canonical_target
+                rule["target"] = distinct[0]
+        compiled.append(rule)
+    return compiled
 
 
 def resolve_glossary_path(root: Path, explicit: Path | None) -> Path:
@@ -1375,7 +1411,7 @@ def process_chunk(
     source_path = article_artifact_path(article_dir, str(chunk["source_file"]))
     source = source_path.read_text(encoding="utf-8")
     neighbor_context = load_neighbor_context(article_dir, chunk["source_file"])
-    selected_terms = select_glossary_terms(source, terms)
+    selected_terms = compile_glossary_terms(source, terms)
     glossary = glossary_text(selected_terms)
     status_path = article_dir / "chunk_status" / f"{chunk_id}.json"
     try:
@@ -1574,7 +1610,14 @@ def process_chunk(
         expected_policy = (
             f"passthrough:{task.get('passthrough_reason')}"
             if bool(task.get("passthrough"))
-            else "model_pipeline"
+            else (
+                "fixed_translation:"
+                + text_hash(str(fixed_translation))
+                + ":"
+                + str(task.get("constraint_plan_sha256") or "legacy")
+                if fixed_translation is not None
+                else "model_pipeline"
+            )
         )
         if checkpoint_policy_matches(stage_status, expected_policy) and checkpoint_is_valid(
             stage_status, output_path, expected_key
@@ -2395,11 +2438,15 @@ def collect_tasks(
         selected_articles += 1
         figure_ids = figure_text_chunk_ids(article_dir, manifest)
         table_ids = table_text_chunk_ids(article_dir, manifest)
+        constraints = constraint_compiler.load_constraints(
+            article_dir, record_id, TRACKED_HARD_CONSTRAINTS
+        )
+        plan = constraint_compiler.load_constraint_plan(article_dir, manifest, constraints)
+        directives = plan["chunk_directives"]
         for chunk in sorted(manifest.get("chunks", []), key=lambda item: item.get("order", 0)):
             figure_passthrough = str(chunk["id"]) in figure_ids
             table_passthrough = str(chunk["id"]) in table_ids
-            tasks.append(
-                {
+            task = {
                     "article_dir": article_dir,
                     "record_id": record_id,
                     "chunk": chunk,
@@ -2414,7 +2461,16 @@ def collect_tasks(
                         )
                     ),
                 }
-            )
+            directive = directives.get(str(chunk["id"]), {})
+            if directive.get("policy") == "verbatim_source":
+                task.update({"passthrough": True, "passthrough_reason": directive.get("reason")})
+            elif directive.get("policy") == "fixed_translation":
+                task.update({
+                    "fixed_translation": directive["fixed_translation"],
+                    "fixed_translation_reason": directive.get("reason"),
+                    "constraint_plan_sha256": plan.get("plan_sha256"),
+                })
+            tasks.append(task)
     return tasks[:max_chunks] if max_chunks else tasks
 
 

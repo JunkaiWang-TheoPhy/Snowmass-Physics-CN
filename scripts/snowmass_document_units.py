@@ -50,7 +50,7 @@ _NUMBER_RE = re.compile(
     r"(?:\.\d+)?(?:[eE][-+]?\d+)?%?"
 )
 _UNIT_VALUE_RE = re.compile(
-    r"(?<![A-Za-z0-9_])"
+    r"(?<![0-9_])"
     r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     r"(?:\s*[×x]\s*[-+]?\d+(?:\.\d+)?)?"
     r"\s*(?:%|eV|keV|MeV|GeV|TeV|PeV|fb(?:-1)?|pb(?:-1)?|nb(?:-1)?|ab(?:-1)?|mm|cm|km|m|ns|ps|ms|s|Hz|kHz|MHz|GHz|K)(?![A-Za-z0-9_])",
@@ -67,6 +67,11 @@ _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _SCIENTIFIC_IDENTIFIER_RE = re.compile(
     r"[A-Z][A-Z0-9]{1,}"
     r"(?:-(?:[A-Z]\d+|\d+(?:[A-Z](?![a-z]))?))+"
+)
+_HYPHENATED_SCIENTIFIC_MODIFIER_RE = re.compile(
+    r"(?:\b(?:spin|dimension|dimensional|rank|order|level|stage|phase)|"
+    r"(?:自旋|维数|秩|阶|级|阶段|相位))-\d+(?!\d)",
+    re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"\[\[SMU_[0-9]{4}_[A-Z_]+_[0-9a-f]{10}\]\]")
 _EXISTING_PROTECTED_TOKEN_RE = re.compile(
@@ -166,6 +171,8 @@ def _candidate_spans(text: str) -> list[tuple[int, int, str]]:
     for match in _EMAIL_RE.finditer(text):
         candidates.append((match.start(), match.end(), "email", 3))
     for match in _SCIENTIFIC_IDENTIFIER_RE.finditer(text):
+        candidates.append((match.start(), match.end(), "identifier", 4))
+    for match in _HYPHENATED_SCIENTIFIC_MODIFIER_RE.finditer(text):
         candidates.append((match.start(), match.end(), "identifier", 4))
     for match in _UNIT_VALUE_RE.finditer(text):
         candidates.append((match.start(), match.end(), "unit", 5))

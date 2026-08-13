@@ -466,6 +466,45 @@ def _package_article(config: BatchConfig, record: dict[str, Any], article_dir: P
     )
 
 
+def _resume_article_result(
+    config: BatchConfig,
+    record: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Reconstruct a completed result only from current, hash-verified artifacts."""
+
+    article_dir = _article_dir(config, str(record["record_id"]))
+    qc = evaluate_article_qc(article_dir)
+    if not qc["ok"]:
+        return None
+    result: dict[str, Any] = {
+        "record_id": str(record["record_id"]),
+        "status": "qc_passed",
+        "source_characters": _source_character_count(article_dir),
+        "qc": qc,
+        "resumed_from_verified_artifacts": True,
+    }
+    if config.through_stage in {"rendered", "qc_passed"}:
+        return result
+    if config.through_stage in {"prepared", "translated"}:
+        return None
+    safe_id = prepare.safe_record_name(str(record["record_id"])).replace("arxiv_", "")
+    receipt_path = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.json"
+    output_path = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.pdf"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        receipt.get("record_id") != record["record_id"]
+        or receipt.get("version") != config.translation_version
+        or receipt.get("packaged_on") != config.packaged_on
+        or not _valid_hash(output_path, receipt.get("packaged_pdf_sha256"))
+    ):
+        return None
+    result.update({"status": "packaged", "package": receipt})
+    return result
+
+
 def resolve_babeldoc_python(console_script: Path | None = None) -> Path:
     if console_script is None:
         resolved = shutil.which("babeldoc")
@@ -550,6 +589,17 @@ def _run_article(
         "status": "prepared",
         "source_characters": _source_character_count(article_dir),
     }
+    if config.through_stage == "packaged":
+        existing_qc = evaluate_article_qc(article_dir)
+        if existing_qc["ok"]:
+            receipt = _package_article(config, record, article_dir)
+            return {
+                **result,
+                "status": "packaged",
+                "qc": existing_qc,
+                "package": receipt,
+                "resumed_from_verified_translation": True,
+            }
     if config.through_stage == "prepared":
         return result
     glossary_path = runner.resolve_glossary_path(config.output_root, None)
@@ -629,7 +679,36 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
     }
     historical_roots = tuple(dict.fromkeys((*config.historical_roots, config.output_root)))
     if config.preflight_only:
-        return {**snapshot, "status": "preflight", "historical_spent_rmb": discover_historical_spend(historical_roots, config.usd_cny_rate)}
+        recoverable = [
+            result
+            for record in selected
+            if (result := _resume_article_result(config, record)) is not None
+        ]
+        recoverable_ids = {str(result["record_id"]) for result in recoverable}
+        package_only_ids = [
+            str(record["record_id"])
+            for record in selected
+            if str(record["record_id"]) not in recoverable_ids
+            and config.through_stage == "packaged"
+            and evaluate_article_qc(
+                _article_dir(config, str(record["record_id"]))
+            )["ok"]
+        ]
+        return {
+            **snapshot,
+            "status": "preflight",
+            "historical_spent_rmb": discover_historical_spend(
+                historical_roots, config.usd_cny_rate
+            ),
+            "verified_resume_count": len(recoverable),
+            "verified_resume_record_ids": [result["record_id"] for result in recoverable],
+            "verified_package_only_count": len(package_only_ids),
+            "verified_package_only_record_ids": package_only_ids,
+            "paid_translation_pending_count": (
+                len(selected) - len(recoverable) - len(package_only_ids)
+            ),
+            "pending_record_count": len(selected) - len(recoverable),
+        }
     run_dir = config.control_dir / "runs" / run_id
     with exclusive_run_lock(config.control_dir / "campaign"):
         with exclusive_run_lock(run_dir):
@@ -676,6 +755,11 @@ def _run_batch_locked(
     state_lock = threading.Lock()
     results: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    hard_failures: list[dict[str, Any]] = []
+    stop_reason: str | None = None
+    consecutive_content_failures = 0
+    resolved_content_outcomes: dict[int, bool] = {}
+    next_outcome_ordinal = 0
 
     def persist() -> None:
         with state_lock:
@@ -693,9 +777,20 @@ def _run_batch_locked(
                 run_dir / "run.json",
                 {
                     **snapshot,
-                    "status": "failed" if failures else ("complete" if len(results) == len(selected) else "running"),
+                    "status": (
+                        "stopped"
+                        if hard_failures or stop_reason
+                        else (
+                            "complete_with_quarantine"
+                            if failures and len(results) + len(failures) == len(selected)
+                            else ("complete" if len(results) == len(selected) else "running")
+                        )
+                    ),
                     "completed": len(results),
                     "failed": len(failures),
+                    "quarantined": len(failures),
+                    "hard_failures": sorted(hard_failures, key=lambda item: item["record_id"]),
+                    **({"stop_reason": stop_reason} if stop_reason else {}),
                     "results": sorted(results, key=lambda item: item["record_id"]),
                     "failures": sorted(failures, key=lambda item: item["record_id"]),
                     "budget": budget_snapshot,
@@ -704,38 +799,63 @@ def _run_batch_locked(
                 },
             )
 
+    pending_records: list[dict[str, Any]] = []
+    for record in selected:
+        resumed = _resume_article_result(config, record)
+        if resumed is None:
+            pending_records.append(record)
+        else:
+            results.append(resumed)
     persist()
-    # A rolling executor limits already-started work; after a failure no new paper is submitted.
-    iterator = iter(selected)
-    futures: dict[concurrent.futures.Future[dict[str, Any]], dict[str, Any]] = {}
+    # A rolling executor limits already-started work. Content failures quarantine one
+    # paper; budget/uncertainty gates and the systemic-failure circuit breaker stop intake.
+    iterator = iter(enumerate(pending_records))
+    futures: dict[
+        concurrent.futures.Future[dict[str, Any]], tuple[int, dict[str, Any]]
+    ] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=config.article_concurrency) as executor:
         for _ in range(config.article_concurrency):
             try:
-                record = next(iterator)
+                ordinal, record = next(iterator)
             except StopIteration:
                 break
-            futures[executor.submit(_run_article, config, record, run_id, actual_client, budget)] = record
+            futures[executor.submit(_run_article, config, record, run_id, actual_client, budget)] = (ordinal, record)
         while futures:
             done, _pending = concurrent.futures.wait(
                 futures, return_when=concurrent.futures.FIRST_COMPLETED
             )
             for future in done:
-                record = futures.pop(future)
+                ordinal, record = futures.pop(future)
                 try:
                     results.append(future.result())
+                    resolved_content_outcomes[ordinal] = True
                 except Exception as error:
-                    stop_event.set()
-                    failures.append(
+                    failure = (
                         {
                             "record_id": str(record["record_id"]),
                             "error": f"{type(error).__name__}: {error}",
                         }
                     )
+                    if isinstance(error, runner.BudgetExceededError):
+                        stop_event.set()
+                        hard_failures.append(failure)
+                    else:
+                        failures.append(failure)
+                        resolved_content_outcomes[ordinal] = False
+                while next_outcome_ordinal in resolved_content_outcomes:
+                    if resolved_content_outcomes.pop(next_outcome_ordinal):
+                        consecutive_content_failures = 0
+                    else:
+                        consecutive_content_failures += 1
+                    next_outcome_ordinal += 1
+                    if consecutive_content_failures >= 3:
+                        stop_event.set()
+                        stop_reason = "systemic_content_failure_circuit_breaker"
                 persist()
-                if failures:
+                if hard_failures or stop_reason:
                     continue
                 try:
-                    next_record = next(iterator)
+                    next_ordinal, next_record = next(iterator)
                 except StopIteration:
                     continue
                 futures[
@@ -747,11 +867,12 @@ def _run_batch_locked(
                         actual_client,
                         budget,
                     )
-                ] = next_record
+                ] = (next_ordinal, next_record)
     persist()
     summary = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
-    if failures:
-        summary["not_started"] = len(selected) - len(results) - len(failures)
+    summary["not_started"] = (
+        len(selected) - len(results) - len(failures) - len(hard_failures)
+    )
     return summary
 
 
@@ -811,7 +932,7 @@ def main(argv: list[str] | None = None) -> int:
     config = _parse_args(argv)
     summary = run_batch(config)
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
-    return 0 if summary["status"] in {"preflight", "complete"} else 2
+    return 0 if summary["status"] in {"preflight", "complete", "complete_with_quarantine"} else 2
 
 
 if __name__ == "__main__":

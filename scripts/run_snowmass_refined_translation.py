@@ -1074,8 +1074,6 @@ def _run_chunk_barrier(
                             stop_event.set()
                         terminal_failures[chunk_id] = f"{type(exc).__name__}:{exc}"
                     except Exception as exc:
-                        if attempt == max_qc_retries and stop_event is not None:
-                            stop_event.set()
                         failures[chunk_id] = f"{type(exc).__name__}:{exc}"
                         retryable.append(chunk)
                     completed_this_attempt += 1
@@ -1114,8 +1112,6 @@ def _run_chunk_barrier(
         pending = retryable
     failures.update(terminal_failures)
     if failures:
-        if stop_event is not None:
-            stop_event.set()
         raise RuntimeError(
             f"{phase} barrier failed for {record_id}: "
             + "; ".join(f"{key}:{value}" for key, value in sorted(failures.items())[:20])
