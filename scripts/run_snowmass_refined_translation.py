@@ -1999,7 +1999,7 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
         TRACKED_HARD_CONSTRAINTS,
     )
     try:
-        runner.constraint_compiler.load_constraint_plan(
+        constraint_plan = runner.constraint_compiler.load_constraint_plan(
             article_dir,
             manifest,
             constraints,
@@ -2123,9 +2123,25 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
             table_text_ids=table_text_ids,
         )
         passthrough = passthrough_reason is not None
+        expected_base_policy = (
+            f"passthrough:{passthrough_reason}"
+            if passthrough
+            else (
+                "fixed_translation:"
+                + runner.text_hash(str(fixed_translation))
+                + ":"
+                + str(constraint_plan.get("plan_sha256") or "legacy")
+                if fixed_translation is not None
+                else "model_pipeline"
+            )
+        )
         translate_stage = stages.get("translate", {}) if isinstance(stages, dict) else {}
-        translate_valid = isinstance(translate_stage, dict) and _valid_chunk_stage_checkpoint(
-            article_dir, chunk, translate_stage, "translate"
+        translate_valid = (
+            isinstance(translate_stage, dict)
+            and runner.checkpoint_policy_matches(translate_stage, expected_base_policy)
+            and _valid_chunk_stage_checkpoint(
+                article_dir, chunk, translate_stage, "translate"
+            )
         )
         if (
             isinstance(translate_stage, dict)
@@ -2162,8 +2178,12 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
         )
 
         terminology_stage = stages.get("terminology", {}) if isinstance(stages, dict) else {}
-        terminology_valid = isinstance(terminology_stage, dict) and _valid_chunk_stage_checkpoint(
-            article_dir, chunk, terminology_stage, "terminology"
+        terminology_valid = (
+            isinstance(terminology_stage, dict)
+            and runner.checkpoint_policy_matches(terminology_stage, expected_base_policy)
+            and _valid_chunk_stage_checkpoint(
+                article_dir, chunk, terminology_stage, "terminology"
+            )
         )
         if (
             isinstance(terminology_stage, dict)

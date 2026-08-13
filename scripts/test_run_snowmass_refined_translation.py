@@ -1457,6 +1457,20 @@ class RefinedOrchestratorTests(unittest.TestCase):
             report["identity_diagnostics"]["invalid_checkpoint_hashes"],
         )
 
+        self._compile_current_constraint_plan()
+        for stage in ("translate", "terminology", "revision"):
+            self._write_chunk_stage(
+                module,
+                stage=stage,
+                text="旧模型译文。\n",
+                extra_stage={"execution_policy": "model_pipeline"},
+            )
+        recompiled = module.revision_ready_projection(self.article)
+
+        self.assertTrue(recompiled["projection_ready"])
+        self.assertGreater(recompiled["missing_stage_api_calls"]["critique"], 0)
+        self.assertGreater(recompiled["projected_worst_case_api_calls"], 0)
+
     def test_revision_ready_projection_fails_closed_on_record_identity_mismatch(self) -> None:
         module = load_module()
         (self.article / "paper_status.json").write_text(
