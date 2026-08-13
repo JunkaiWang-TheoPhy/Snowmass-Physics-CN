@@ -17,6 +17,24 @@ STYLE_BATCH_PROTOCOL = "snowmass-style-batch-v1"
 NORMAL_BATCH_CHUNKS = 24
 NORMAL_BATCH_CHARACTERS = 18_000
 RECOVERY_BATCH_CHUNKS = 8
+_LOCAL_STAGE_STALE_FIELDS = (
+    "request_key",
+    "error",
+    "subrequests",
+    "rejected_candidate_file",
+    "rejected_candidate_hash",
+    "rejected_candidate_protected",
+    "response_id",
+    "raw_response",
+    "usage",
+    "conservative_cost_rmb",
+    "uncertainty_key",
+    "uncertainty_reservation_id",
+    "uncertain_replays",
+    "finished_at",
+    "output_hash",
+    "qc",
+)
 
 
 @dataclass(frozen=True)
@@ -191,6 +209,8 @@ def _complete_local_stage(
     )
     runner.atomic_text(output_path, output_text)
     stage_status = status.setdefault("stages", {}).setdefault(stage, {})
+    for field_name in _LOCAL_STAGE_STALE_FIELDS:
+        stage_status.pop(field_name, None)
     stage_status.update(
         {
             "status": "complete",
@@ -448,9 +468,8 @@ def prepare_style_items(
 
     planned_items = tuple(model_items)
     normal_batches = plan_style_batches(planned_items)
-    worst_case_requests = len(normal_batches) + len(
-        plan_style_batches(planned_items, recovery=True)
-    )
+    recovery_batches = (len(planned_items) + RECOVERY_BATCH_CHUNKS - 1) // RECOVERY_BATCH_CHUNKS
+    worst_case_requests = len(normal_batches) + recovery_batches
     return StyleStagePlan(
         reused=tuple(reused),
         local=tuple(local),

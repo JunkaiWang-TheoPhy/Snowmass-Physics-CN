@@ -202,6 +202,13 @@ class StylePreparationTests(unittest.TestCase):
     def _status_path(self) -> Path:
         return self.article_dir / "chunk_status" / "chunk0001.json"
 
+    def _chunk(self, chunk_id: str) -> dict[str, str]:
+        return {
+            "id": chunk_id,
+            "source_file": f"{chunk_id}.md",
+            "output_file": f"output_{chunk_id}.md",
+        }
+
     def _write_stage_text(self, stage: str, text: str) -> Path:
         path = self.runner.stage_output_path(
             self.article_dir,
@@ -265,6 +272,22 @@ class StylePreparationTests(unittest.TestCase):
                     "output_hash": hashlib.sha256(output_text.encode("utf-8")).hexdigest(),
                     "qc": {"ok": True, "failures": []},
                 }
+            },
+        }
+        self._status_path().parent.mkdir(parents=True, exist_ok=True)
+        self._status_path().write_text(
+            json.dumps(status, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_stage_status(self, stage_status: dict[str, object]) -> None:
+        status = {
+            "schema_version": 1,
+            "record_id": "arxiv:test",
+            "chunk_id": self.chunk["id"],
+            "source_file": self.chunk["source_file"],
+            "stages": {
+                "anti_ai": stage_status,
             },
         }
         self._status_path().parent.mkdir(parents=True, exist_ok=True)
@@ -414,3 +437,142 @@ class StylePreparationTests(unittest.TestCase):
             stage["output_hash"],
             self.runner.text_hash("Original source paragraph.\n"),
         )
+
+    def test_worst_case_requests_uses_eight_item_recovery_chunks_not_character_limited_recovery(self) -> None:
+        chunks = tuple(self._chunk(f"chunk{i:04d}") for i in range(1, 10))
+        for chunk in chunks:
+            (self.article_dir / chunk["source_file"]).write_text(
+                f"Source for {chunk['id']}.\n",
+                encoding="utf-8",
+            )
+            self.runner.stage_output_path(
+                self.article_dir,
+                chunk["id"],
+                chunk["output_file"],
+                "revision",
+            ).write_text("甲" * 10_000, encoding="utf-8")
+
+        plan = self.batching.prepare_style_items(
+            article_dir=self.article_dir,
+            chunks=chunks,
+            task_factory=lambda _chunk: {"record_id": "arxiv:test"},
+            terms=[],
+            stage="anti_ai",
+            input_stage="revision",
+            context_factory=lambda _chunk: "",
+        )
+
+        self.assertEqual(len(plan.model_items), 9)
+        self.assertEqual(len(plan.normal_batches), 9)
+        self.assertEqual(plan.worst_case_requests, 11)
+
+    def test_passthrough_local_completion_clears_old_failed_stage_metadata(self) -> None:
+        stale_fields = {
+            "status": "failed",
+            "request_key": "old-request",
+            "error": "old error",
+            "subrequests": [{"id": "sub-1"}],
+            "rejected_candidate_file": "rejected.md",
+            "rejected_candidate_hash": "hash-a",
+            "rejected_candidate_protected": True,
+            "response_id": "resp_old",
+            "raw_response": {"id": "raw"},
+            "usage": {"total_tokens": 100},
+            "conservative_cost_rmb": "1.23",
+            "uncertainty_key": "uncertain-key",
+            "uncertainty_reservation_id": "reservation-id",
+            "uncertain_replays": 2,
+            "finished_at": "2026-08-13T00:00:00+00:00",
+            "output_hash": "old-output-hash",
+            "qc": {"ok": False, "failures": ["numbers_mismatch"]},
+        }
+        self._write_stage_status(stale_fields)
+
+        plan = self._prepare(
+            task_factory=lambda _chunk: {
+                "record_id": "arxiv:test",
+                "passthrough": True,
+                "passthrough_reason": "reference_section_passthrough",
+            }
+        )
+
+        self.assertEqual(plan.local, ("chunk0001",))
+        stage = self._stage_status()
+        self.assertEqual(stage["status"], "complete")
+        for key in (
+            "request_key",
+            "error",
+            "subrequests",
+            "rejected_candidate_file",
+            "rejected_candidate_hash",
+            "rejected_candidate_protected",
+            "response_id",
+            "raw_response",
+            "usage",
+            "conservative_cost_rmb",
+            "uncertainty_key",
+            "uncertainty_reservation_id",
+            "uncertain_replays",
+            "finished_at",
+        ):
+            self.assertNotIn(key, stage)
+        self.assertEqual(
+            stage["output_hash"],
+            self.runner.text_hash("Original source paragraph.\n"),
+        )
+        self.assertEqual(stage["qc"], {"ok": True, "failures": []})
+
+    def test_fixed_translation_local_completion_clears_old_running_stage_metadata(self) -> None:
+        stale_fields = {
+            "status": "running",
+            "request_key": "old-request",
+            "error": "old error",
+            "subrequests": [{"id": "sub-1"}],
+            "rejected_candidate_file": "rejected.md",
+            "rejected_candidate_hash": "hash-a",
+            "rejected_candidate_protected": False,
+            "response_id": "resp_old",
+            "raw_response": {"id": "raw"},
+            "usage": {"total_tokens": 100},
+            "conservative_cost_rmb": "1.23",
+            "uncertainty_key": "uncertain-key",
+            "uncertainty_reservation_id": "reservation-id",
+            "uncertain_replays": 2,
+            "finished_at": "2026-08-13T00:00:00+00:00",
+            "output_hash": "old-output-hash",
+            "qc": {"ok": False, "failures": ["numbers_mismatch"]},
+        }
+        self._write_stage_status(stale_fields)
+        fixed_translation = "统一运行页眉\n"
+
+        plan = self._prepare(
+            task_factory=lambda _chunk: {
+                "record_id": "arxiv:test",
+                "fixed_translation": fixed_translation,
+                "fixed_translation_reason": "hard_exact_translation",
+                "constraint_plan_sha256": "constraint-plan",
+            }
+        )
+
+        self.assertEqual(plan.local, ("chunk0001",))
+        stage = self._stage_status()
+        self.assertEqual(stage["status"], "complete")
+        for key in (
+            "request_key",
+            "error",
+            "subrequests",
+            "rejected_candidate_file",
+            "rejected_candidate_hash",
+            "rejected_candidate_protected",
+            "response_id",
+            "raw_response",
+            "usage",
+            "conservative_cost_rmb",
+            "uncertainty_key",
+            "uncertainty_reservation_id",
+            "uncertain_replays",
+            "finished_at",
+        ):
+            self.assertNotIn(key, stage)
+        self.assertEqual(stage["output_hash"], self.runner.text_hash(fixed_translation))
+        self.assertEqual(stage["qc"], {"ok": True, "failures": []})
