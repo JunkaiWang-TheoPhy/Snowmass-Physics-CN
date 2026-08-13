@@ -158,6 +158,11 @@ def _extract_unit_values(text: str) -> tuple[str, ...]:
         r"\1 ",
         text,
     )
+    normalized = re.sub(
+        r"(?<=[A-Za-z])(?=[-+]?\d+(?:\.\d+)?\s*(?:eV|keV|MeV|GeV|TeV|PeV|Hz|kHz|MHz|GHz)\b)",
+        " ",
+        normalized,
+    )
     for match in _UNIT_VALUE_RE.findall(normalized):
         if re.fullmatch(r"[12]\d{3}s", match):
             continue

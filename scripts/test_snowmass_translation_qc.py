@@ -180,6 +180,17 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertTrue(report.ok)
         self.assertNotIn("units_mismatch", report.failures)
 
+    def test_validate_chunk_recovers_unit_after_pdf_glued_lowercase_word(self) -> None:
+        report = QC.validate_chunk(
+            source="The limit extends down to10GeV.\n",
+            translated="该限制向下延伸至 10GeV。\n",
+            mapping={},
+            glossary=[],
+        )
+
+        self.assertTrue(report.ok)
+        self.assertNotIn("units_mismatch", report.failures)
+
     def test_validate_chunk_does_not_treat_decade_suffix_as_seconds(self) -> None:
         report = QC.validate_chunk(
             source="The metric was retired in the 2020s.\n",
@@ -310,6 +321,27 @@ class ValidateChunkTests(unittest.TestCase):
         self.assertTrue(accepted.ok)
         self.assertFalse(rejected.ok)
         self.assertIn("locked_terms_mismatch", rejected.failures)
+
+    def test_locked_observable_modifier_accepts_adjectival_target(self) -> None:
+        report = QC.validate_chunk(
+            source="Many parameters have no observable effect.\n",
+            translated="许多参数没有可观测效应。\n",
+            mapping={},
+            glossary=[
+                {
+                    "source": "observable",
+                    "target": "可观测量",
+                    "contextual_targets": [
+                        {
+                            "source_regex": r"\bobservable\s+(?:effect|effects)\b",
+                            "target": "可观测",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        self.assertTrue(report.ok)
 
     def test_locked_term_phrase_exception_preserves_foreign_proper_name(self) -> None:
         report = QC.validate_chunk(

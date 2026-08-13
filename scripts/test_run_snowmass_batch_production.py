@@ -228,6 +228,51 @@ class RunLockTests(unittest.TestCase):
 
 
 class BatchResumeTests(unittest.TestCase):
+    def test_rolling_executor_passes_exact_run_article_arguments(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            records = [
+                {"record_id": f"arxiv:{name}", "publication_allowed": True, "page_count": 1}
+                for name in ("a", "b")
+            ]
+            manifest.write_text(json.dumps(records), encoding="utf-8")
+            config = module.BatchConfig(
+                rights_manifest=manifest,
+                pdf_root=root / "pdf",
+                output_root=root / "output",
+                control_dir=root / "control",
+                stage="baseline",
+                explicit_ids=("arxiv:a", "arxiv:b"),
+                max_articles=None,
+                project_max_cost_rmb=1000.0,
+                stage_max_cost_rmb=10.0,
+                usd_cny_rate=7.2,
+                chunk_concurrency=1,
+                article_concurrency=1,
+                through_stage="packaged",
+                translation_version="test",
+                packaged_on="2026-08-13",
+                historical_roots=(),
+            )
+            calls = []
+
+            def complete_article(*args):
+                calls.append(args)
+                record = args[1]
+                return {"record_id": record["record_id"], "status": "packaged", "source_characters": 1}
+
+            with (
+                mock.patch.object(module, "_prepare_all"),
+                mock.patch.object(module, "_run_article", side_effect=complete_article),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=object())
+
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual([len(call) for call in calls], [5, 5])
+
     def test_completed_batch_resume_does_not_append_paid_ledger_events(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
