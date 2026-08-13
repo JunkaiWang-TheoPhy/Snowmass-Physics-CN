@@ -28,7 +28,7 @@
     {"source": "accelerator", "target": "加速器", "first_use": true},
     {"source": "cyclotron", "target": "回旋加速器", "exclude_phrases": ["Chemin du Cyclotron"], "note": "Do not mistranslate as 旋风加速器; preserve foreign-language proper names listed in exclude_phrases."},
     {"source": "detector", "target": "探测器", "first_use": true},
-    {"source": "collaboration", "target": "合作组", "contextual_targets": [{"source_regex": "\\b(?:model|mode|spirit)\\s+of\\s+collaboration\\b|\\bcollaboration\\s+between\\b", "target": "合作"}], "note": "Use 合作组 for a named scientific collaboration; use 合作 only in the explicitly matched ordinary-cooperation contexts."},
+    {"source": "collaboration", "target": "合作组", "contextual_targets": [{"source_regex": "\\b(?:model|mode|spirit)\\s+of\\s+collaboration\\b|\\bcollaboration\\s+(?:between|model|models)\\b", "target": "合作"}], "note": "Use 合作组 for a named scientific collaboration; use 合作 only in the explicitly matched ordinary-cooperation contexts."},
     {"source": "observatory", "target": "观测台", "first_use": true},
     {"source": "21 cm", "target": "21 cm", "note": "Retain the conventional radio-astronomy notation and spacing."},
     {"source": "Dark Ages", "target": "黑暗时期", "first_use": true},

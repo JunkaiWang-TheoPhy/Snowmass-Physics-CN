@@ -478,6 +478,21 @@ class GlossaryMergeTests(unittest.TestCase):
 
         self.assertEqual(compiled[0]["target"], "可观测")
         self.assertEqual(compiled[0]["canonical_target"], "可观测量")
+
+    def test_compile_glossary_terms_treats_collaboration_models_as_ordinary_cooperation(self) -> None:
+        terms = json.loads(
+            (Path(__file__).parents[1] / "translations" / "snowmass-global-glossary.json").read_text(
+                encoding="utf-8"
+            )
+        )["terms"]
+
+        compiled = RUNNER.compile_glossary_terms(
+            "Business collaboration models and recommendations are discussed.",
+            terms,
+        )
+
+        collaboration = next(term for term in compiled if term["source"] == "collaboration")
+        self.assertEqual(collaboration["target"], "合作")
         self.assertNotIn("contextual_targets", compiled[0])
 
     def test_tracked_glossary_treats_observable_scales_as_adjectival(self) -> None:
