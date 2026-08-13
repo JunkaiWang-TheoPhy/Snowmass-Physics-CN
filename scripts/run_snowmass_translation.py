@@ -865,12 +865,18 @@ def sanitize_refinement_context(context: str) -> str:
     """Remove copyable factual literals from read-only model guidance."""
 
     chunk_ids: list[str] = []
+    placeholders: list[str] = []
 
     def mask_chunk_id(match: re.Match[str]) -> str:
         chunk_ids.append(match.group(0))
         return chr(0xE000 + len(chunk_ids) - 1)
 
     masked = re.sub(r"\bchunk\d{4}\b", mask_chunk_id, context, flags=re.I)
+    def mask_placeholder(match: re.Match[str]) -> str:
+        placeholders.append(match.group(0))
+        return chr(0xE100 + len(placeholders) - 1)
+
+    masked = re.sub(r"\{v\d+\}", mask_placeholder, masked)
     protected = protect_translation_unit(masked, max_nodes=512)
     sanitized = protected.text
     for node in protected.nodes:
@@ -878,6 +884,8 @@ def sanitize_refinement_context(context: str) -> str:
         sanitized = sanitized.replace(node.token, f"<PROTECTED_{label}>")
     for index, chunk_id in enumerate(chunk_ids):
         sanitized = sanitized.replace(chr(0xE000 + index), chunk_id)
+    for index, placeholder in enumerate(placeholders):
+        sanitized = sanitized.replace(chr(0xE100 + index), placeholder)
     return sanitized
 
 

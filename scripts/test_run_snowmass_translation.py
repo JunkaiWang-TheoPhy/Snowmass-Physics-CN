@@ -832,6 +832,12 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertGreaterEqual(sanitized.count("<PROTECTED_NUMBER>"), 1)
         self.assertEqual(sanitized.count("<PROTECTED_UNIT>"), 1)
 
+    def test_placeholder_indices_are_not_treated_as_factual_critique_literals(self) -> None:
+        context = "chunk0136: replace the punctuation after {v15}."
+
+        self.assertFalse(RUNNER.refinement_context_contains_factual_literals(context))
+        self.assertIn("{v15}", RUNNER.sanitize_refinement_context(context))
+
     def test_revision_with_literal_bearing_critique_preserves_prior_text_without_model(self) -> None:
         source = "The repository has 24 nodes and 2.5PB of storage.\n"
         prior = "该仓库有24个节点，存储容量为2.5PB。\n"
