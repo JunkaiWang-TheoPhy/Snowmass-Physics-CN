@@ -861,6 +861,26 @@ def normalize_source_evidenced_candidate(source: str, translated: str) -> str:
     return normalize_hyphenated_numeric_ranges(source, normalized)
 
 
+def sanitize_refinement_context(context: str) -> str:
+    """Remove copyable factual literals from read-only model guidance."""
+
+    chunk_ids: list[str] = []
+
+    def mask_chunk_id(match: re.Match[str]) -> str:
+        chunk_ids.append(match.group(0))
+        return chr(0xE000 + len(chunk_ids) - 1)
+
+    masked = re.sub(r"\bchunk\d{4}\b", mask_chunk_id, context, flags=re.I)
+    protected = protect_translation_unit(masked, max_nodes=512)
+    sanitized = protected.text
+    for node in protected.nodes:
+        label = "UNIT" if node.kind == "unit" else "NUMBER"
+        sanitized = sanitized.replace(node.token, f"<PROTECTED_{label}>")
+    for index, chunk_id in enumerate(chunk_ids):
+        sanitized = sanitized.replace(chr(0xE000 + index), chunk_id)
+    return sanitized
+
+
 def localize_source_month_years(text: str) -> str:
     """Replace unambiguous English month-year pairs before model submission."""
 
@@ -1365,7 +1385,7 @@ def stage_input(
         "anti_ai": "TERMINOLOGY-CORRECTED TRANSLATION",
         "academic": "AI-MANNERISM-CLEANED TRANSLATION",
     }[stage]
-    if not include_source or STRUCTURE_ANCHOR_PROTOCOL in current:
+    if stage == "revision" or not include_source or STRUCTURE_ANCHOR_PROTOCOL in current:
         # Anchor fallback is a narrowly scoped repair request. Re-supplying the
         # whole raw source can expose protected literals and invite the model to
         # translate text outside the current structure segment.
@@ -1602,6 +1622,8 @@ def process_chunk(
             )
             if compact_source and not is_retry_request:
                 context_for_request = ""
+            if stage == "revision":
+                context_for_request = sanitize_refinement_context(context_for_request)
             if context_for_request:
                 if is_retry_request:
                     input_text += "\n\nRETRY INSTRUCTIONS:\n" + context_for_request
@@ -2401,7 +2423,9 @@ def process_chunk(
             status["status"] = "failed"
             status["updated_at"] = now()
             atomic_json(status_path, status)
-            if stage in OPTIONAL_STYLE_STAGES and complete_style_fallback(
+            revision_retry_exhausted = stage == "revision" and is_retry_request
+            fallback_allowed = stage in OPTIONAL_STYLE_STAGES or revision_retry_exhausted
+            if fallback_allowed and complete_style_fallback(
                 source=source,
                 prior_text=current,
                 output_path=output_path,
@@ -2411,6 +2435,8 @@ def process_chunk(
                 budget_guard=budget_guard,
                 uncertainty_prefix=uncertainty_prefix,
             ):
+                if revision_retry_exhausted:
+                    stage_status["fallback_policy"] = "revision_qc_retry_exhausted"
                 atomic_json(status_path, status)
                 current = output_path.read_text(encoding="utf-8")
                 continue

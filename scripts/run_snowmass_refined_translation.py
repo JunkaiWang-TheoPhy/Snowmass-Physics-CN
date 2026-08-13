@@ -1809,6 +1809,8 @@ def _planned_stage_model_subrequests(
         if is_retry_request
         else paper_context
     )
+    if stage == "revision":
+        context_for_request = runner.sanitize_refinement_context(context_for_request)
     if compact_source and not is_retry_request:
         context_for_request = ""
 

@@ -803,15 +803,34 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertNotIn("A later sentence", request)
         self.assertIn(current, request)
 
-    def test_plain_refinement_input_retains_original_source_context(self) -> None:
+    def test_plain_refinement_input_does_not_reexpose_original_source_literals(self) -> None:
         request = RUNNER.stage_input(
             "revision",
-            "Original source needed for fidelity.",
-            "当前译文。",
+            "Original source contains 2021 and 1.4PB.",
+            "当前译文 [[SMU_0001_NUMBER_1bea20e1df]] 与 "
+            "[[SMU_0002_UNIT_2cf342a8e5]]。",
             "",
         )
 
-        self.assertIn("Original source needed for fidelity.", request)
+        self.assertNotIn("ORIGINAL SOURCE:", request)
+        self.assertNotIn("2021", request)
+        self.assertNotIn("1.4PB", request)
+        self.assertIn("[[SMU_0001_NUMBER_1bea20e1df]]", request)
+
+    def test_refinement_context_redacts_literals_but_preserves_critique_wording(self) -> None:
+        context = (
+            "chunk0022: move 2021 after the phrase; "
+            "chunk0140: place 1.4PB after SoCal Repo."
+        )
+
+        sanitized = RUNNER.sanitize_refinement_context(context)
+
+        self.assertNotIn("2021", sanitized)
+        self.assertNotIn("1.4PB", sanitized)
+        self.assertIn("move", sanitized)
+        self.assertIn("SoCal Repo", sanitized)
+        self.assertGreaterEqual(sanitized.count("<PROTECTED_NUMBER>"), 1)
+        self.assertEqual(sanitized.count("<PROTECTED_UNIT>"), 1)
 
     def test_structure_slot_requests_enable_official_json_output_mode(self) -> None:
         structured = RUNNER.build_request_payload(
@@ -1349,6 +1368,47 @@ class ProcessChunkTests(unittest.TestCase):
             (self.article_dir / "output_chunk0001.md").read_text(encoding="utf-8"),
             prior,
         )
+
+    def test_revision_retry_qc_failure_falls_back_to_valid_terminology_text(self) -> None:
+        source = "The observed traffic saving was 1.4PB.\n"
+        prior = "观测到的流量节省量为1.4PB。\n"
+        (self.article_dir / "chunk0001.md").write_text(source, encoding="utf-8")
+        initial = self.article_dir / "stage2_chunk0001.md"
+        initial.write_text(prior, encoding="utf-8")
+
+        class DuplicatingClient:
+            def complete(
+                self, instructions: str, input_text: str, max_output_tokens: int
+            ) -> tuple[dict[str, object], float]:
+                slot_ids = list(dict.fromkeys(re.findall(r'"(T\d{4})"', input_text)))
+                translations = {
+                    slot_id: ("1.4PB观测到的流量节省量为" if index == 0 else "。\n")
+                    for index, slot_id in enumerate(slot_ids)
+                }
+                return completed_response(
+                    json.dumps({"translations": translations}, ensure_ascii=False)
+                ), 0.1
+
+        result = RUNNER.process_chunk(
+            self.task,
+            DuplicatingClient(),
+            [],
+            stages=("revision",),
+            initial_text_path=initial,
+            paper_context="# QC-CORRECTION RETRY 1\n修正语序。",
+            paper_context_identity="chunk0001: 修正语序。",
+        )
+
+        self.assertEqual(result["status"], "complete")
+        output = self.article_dir / "stage_revision_chunk0001.md"
+        self.assertEqual(output.read_text(encoding="utf-8"), prior)
+        status = json.loads(
+            (self.article_dir / "chunk_status" / "chunk0001.json").read_text(
+                encoding="utf-8"
+            )
+        )["stages"]["revision"]
+        self.assertTrue(status["fallback_to_prior_stage"])
+        self.assertEqual(status["fallback_policy"], "revision_qc_retry_exhausted")
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
