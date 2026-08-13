@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 import hashlib
 from importlib import metadata
 import json
@@ -63,6 +63,9 @@ class RefillResult:
     refilled_unit_count: int
     figure_text_verbatim_count: int = 0
     table_text_verbatim_count: int = 0
+    cross_page_sentence_rebalance_count: int = 0
+    same_line_fragment_merge_count: int = 0
+    cross_page_line_fragment_carry_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,8 @@ class RenderedPdfResult:
     figure_region_count: int = 0
     table_regions_verified: bool = True
     table_region_count: int = 0
+    reference_regions_verified: bool = True
+    reference_region_count: int = 0
 
 
 _BABELDOC_PLACEHOLDER = re.compile(
@@ -289,6 +294,374 @@ def suppress_cross_page_auxiliary_orphans(
     return suppressed
 
 
+def _page_box(page: Any) -> tuple[float, float, float, float] | None:
+    return _object_box(page) or _object_box(getattr(page, "mediabox", None))
+
+
+def rebalance_cross_page_sentence_fragments(
+    document: Any,
+    translations: Iterable[RefillTranslation],
+) -> tuple[list[RefillTranslation], list[tuple[int, int, int, int]]]:
+    """Move an unstructured Chinese sentence tail to its continuation page.
+
+    PDF parsers split logical paragraphs at physical page boundaries.  Keeping
+    that English split in Chinese can strand a clause at the bottom of a page.
+    This transformation is deliberately limited to adjacent plain-text blocks
+    with no BabelDOC placeholders, and preserves the concatenated translation
+    byte-for-byte while moving only the final incomplete Chinese sentence.
+    """
+
+    adjusted = list(translations)
+    by_identity = {
+        (item.page_number, item.paragraph_index): index
+        for index, item in enumerate(adjusted)
+    }
+    moved: list[tuple[int, int, int, int]] = []
+    pages = list(getattr(document, "page", ()) or ())
+    for page_index, page in enumerate(pages[:-1]):
+        paragraphs = list(getattr(page, "pdf_paragraph", ()) or ())
+        next_paragraphs = list(getattr(pages[page_index + 1], "pdf_paragraph", ()) or ())
+        page_box = _page_box(page)
+        next_page_box = _page_box(pages[page_index + 1])
+        if not paragraphs or not next_paragraphs or page_box is None or next_page_box is None:
+            continue
+        previous_index = len(paragraphs) - 1
+        while previous_index >= 0:
+            paragraph = paragraphs[previous_index]
+            if (
+                str(getattr(paragraph, "layout_label", "") or "").casefold()
+                not in {"abandon"}
+                and str(getattr(paragraph, "unicode", "") or "").strip()
+                and (page_index + 1, previous_index) in by_identity
+            ):
+                break
+            previous_index -= 1
+        if previous_index < 0:
+            continue
+        next_index = 0
+        while next_index < len(next_paragraphs):
+            paragraph = next_paragraphs[next_index]
+            if (
+                str(getattr(paragraph, "layout_label", "") or "").casefold()
+                not in {"abandon"}
+                and str(getattr(paragraph, "unicode", "") or "").strip()
+                and (page_index + 2, next_index) in by_identity
+            ):
+                break
+            next_index += 1
+        if next_index >= len(next_paragraphs):
+            continue
+        previous = paragraphs[previous_index]
+        following = next_paragraphs[next_index]
+        previous_box = _object_box(previous)
+        following_box = _object_box(following)
+        if previous_box is None or following_box is None:
+            continue
+        page_height = page_box[3] - page_box[1]
+        next_page_height = next_page_box[3] - next_page_box[1]
+        if (
+            previous_box[1] > page_box[1] + page_height * 0.25
+            or following_box[3] < next_page_box[1] + next_page_height * 0.70
+            or int(getattr(previous, "xobj_id", 0) or 0) != 0
+            or int(getattr(following, "xobj_id", 0) or 0) != 0
+            or str(getattr(previous, "layout_label", "") or "").casefold()
+            != "plain text"
+            or str(getattr(following, "layout_label", "") or "").casefold()
+            != "plain text"
+        ):
+            continue
+        previous_source = str(getattr(previous, "unicode", "") or "").strip()
+        following_source = str(getattr(following, "unicode", "") or "").lstrip()
+        if (
+            not previous_source
+            or not following_source
+            or re.search(r"[.!?][\"')\]]*$", previous_source)
+            or not re.match(r"[a-z]", following_source)
+        ):
+            continue
+        previous_identity = (page_index + 1, previous_index)
+        following_identity = (page_index + 2, next_index)
+        if previous_identity not in by_identity or following_identity not in by_identity:
+            continue
+        previous_item = adjusted[by_identity[previous_identity]]
+        following_item = adjusted[by_identity[following_identity]]
+        combined_contract = "".join(
+            (
+                previous_item.source_text,
+                following_item.source_text,
+                previous_item.translated_text,
+                following_item.translated_text,
+            )
+        )
+        if _BABELDOC_PLACEHOLDER.search(combined_contract):
+            continue
+        boundaries = list(re.finditer(r"[。！？]", previous_item.translated_text))
+        if not boundaries:
+            continue
+        split_at = boundaries[-1].end()
+        prefix = previous_item.translated_text[:split_at]
+        tail = previous_item.translated_text[split_at:]
+        if not prefix or not tail.strip():
+            continue
+        adjusted[by_identity[previous_identity]] = replace(
+            previous_item, translated_text=prefix
+        )
+        adjusted[by_identity[following_identity]] = replace(
+            following_item,
+            translated_text=tail + following_item.translated_text,
+        )
+        moved.append((*previous_identity, *following_identity))
+    return adjusted, moved
+
+
+def coalesce_same_baseline_line_fragments(
+    document: Any,
+) -> list[tuple[int, int, int]]:
+    """Join parser-split fallback-line prefixes to the following line body."""
+
+    merged: list[tuple[int, int, int]] = []
+    for page_number, page in enumerate(getattr(document, "page", ()) or (), 1):
+        paragraphs = list(getattr(page, "pdf_paragraph", ()) or ())
+        for left_index, left in enumerate(paragraphs[:-1]):
+            right_index = left_index + 1
+            right = paragraphs[right_index]
+            left_box = _object_box(left)
+            right_box = _object_box(right)
+            left_compositions = list(
+                getattr(left, "pdf_paragraph_composition", ()) or ()
+            )
+            right_compositions = list(
+                getattr(right, "pdf_paragraph_composition", ()) or ()
+            )
+            if (
+                str(getattr(left, "layout_label", "") or "").casefold()
+                != "fallback_line"
+                or int(getattr(left, "xobj_id", 0) or 0) != 0
+                or int(getattr(right, "xobj_id", 0) or 0) != 0
+                or left_box is None
+                or right_box is None
+                or not left_compositions
+                or not right_compositions
+            ):
+                continue
+            left_height = left_box[3] - left_box[1]
+            right_height = right_box[3] - right_box[1]
+            vertical_overlap = min(left_box[3], right_box[3]) - max(
+                left_box[1], right_box[1]
+            )
+            gap = right_box[0] - left_box[2]
+            if (
+                max(left_height, right_height) > 24
+                or vertical_overlap < min(left_height, right_height) * 0.55
+                or gap < -1
+                or gap > 16
+            ):
+                continue
+            left_text = str(getattr(left, "unicode", "") or "").rstrip()
+            right_text = str(getattr(right, "unicode", "") or "").lstrip()
+            separator = " " if left_text and right_text else ""
+            if separator:
+                for composition in reversed(left_compositions):
+                    unicode_run = getattr(
+                        composition, "pdf_same_style_unicode_characters", None
+                    )
+                    if unicode_run is None:
+                        continue
+                    run_text = str(getattr(unicode_run, "unicode", "") or "")
+                    if run_text:
+                        unicode_run.unicode = run_text.rstrip() + " "
+                        break
+            left.unicode = left_text + separator + right_text
+            left.box.x = min(left_box[0], right_box[0])
+            left.box.y = min(left_box[1], right_box[1])
+            left.box.x2 = max(left_box[2], right_box[2])
+            left.box.y2 = max(left_box[3], right_box[3])
+            left.pdf_paragraph_composition = left_compositions + right_compositions
+            right.unicode = ""
+            right.pdf_paragraph_composition = []
+            merged.append((page_number, left_index, right_index))
+    return merged
+
+
+def _is_table_owned_paragraph(page: Any, paragraph: Any) -> bool:
+    return any(
+        _box_center_is_inside(_object_box(paragraph), region_box)
+        for _layout_id, region_box in _object_table_regions(page)
+    )
+
+
+def identify_cross_page_line_fragment_carries(
+    document: Any,
+) -> list[tuple[int, int, int, int]]:
+    """Find short source-line chains that continue on the following page."""
+
+    carries: list[tuple[int, int, int, int]] = []
+    pages = list(getattr(document, "page", ()) or ())
+    for page_index, page in enumerate(pages[:-1]):
+        next_page = pages[page_index + 1]
+        page_box = _page_box(page)
+        next_page_box = _page_box(next_page)
+        paragraphs = list(getattr(page, "pdf_paragraph", ()) or ())
+        next_paragraphs = list(getattr(next_page, "pdf_paragraph", ()) or ())
+        if page_box is None or next_page_box is None or not paragraphs or not next_paragraphs:
+            continue
+
+        eligible = [
+            index
+            for index, paragraph in enumerate(paragraphs)
+            if str(getattr(paragraph, "layout_label", "") or "").casefold()
+            in {"plain text", "fallback_line"}
+            and int(getattr(paragraph, "xobj_id", 0) or 0) == 0
+            and _object_box(paragraph) is not None
+            and str(getattr(paragraph, "unicode", "") or "").strip()
+            and not _is_table_owned_paragraph(page, paragraph)
+        ]
+        next_eligible = [
+            index
+            for index, paragraph in enumerate(next_paragraphs)
+            if str(getattr(paragraph, "layout_label", "") or "").casefold()
+            in {"plain text", "fallback_line"}
+            and int(getattr(paragraph, "xobj_id", 0) or 0) == 0
+            and _object_box(paragraph) is not None
+            and str(getattr(paragraph, "unicode", "") or "").strip()
+            and not _is_table_owned_paragraph(next_page, paragraph)
+        ]
+        if not eligible or not next_eligible:
+            continue
+        last_index = eligible[-1]
+        last_box = _object_box(paragraphs[last_index])
+        assert last_box is not None
+        if last_box[3] - last_box[1] > 24:
+            continue
+        chain = [last_index]
+        for candidate_index in reversed(eligible[:-1]):
+            candidate_box = _object_box(paragraphs[candidate_index])
+            if candidate_box is None or candidate_box[3] - candidate_box[1] > 24:
+                break
+            overlap = min(candidate_box[3], last_box[3]) - max(
+                candidate_box[1], last_box[1]
+            )
+            if overlap < min(
+                candidate_box[3] - candidate_box[1], last_box[3] - last_box[1]
+            ) * 0.45:
+                break
+            chain.append(candidate_index)
+        chain.sort()
+        anchor_index = chain[0]
+        anchor_box = _object_box(paragraphs[anchor_index])
+        next_index = next_eligible[0]
+        following_box = _object_box(next_paragraphs[next_index])
+        assert anchor_box is not None and following_box is not None
+        page_height = page_box[3] - page_box[1]
+        next_height = next_page_box[3] - next_page_box[1]
+        source = " ".join(
+            str(getattr(paragraphs[index], "unicode", "") or "").strip()
+            for index in chain
+        ).strip()
+        following_source = str(
+            getattr(next_paragraphs[next_index], "unicode", "") or ""
+        ).lstrip()
+        if (
+            anchor_box[1] > page_box[1] + page_height * 0.20
+            or following_box[3] < next_page_box[1] + next_height * 0.70
+            or not source
+            or re.search(r"[.!?][\"')\]]*$", source)
+            or not re.match(r"[a-z]", following_source)
+        ):
+            continue
+        carries.append((page_index + 1, anchor_index, page_index + 2, next_index))
+    return carries
+
+
+def apply_cross_page_line_fragment_carries(
+    document: Any,
+    carries: Iterable[tuple[int, int, int, int]],
+) -> list[tuple[int, int, int, int]]:
+    """Move translated compositions for a short trailing line to the next page."""
+
+    applied: list[tuple[int, int, int, int]] = []
+    pages = list(getattr(document, "page", ()) or ())
+    superscripts = str.maketrans("−-+0123456789", "⁻⁻⁺⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+    for page_number, paragraph_index, next_page_number, next_paragraph_index in carries:
+        source_page = pages[page_number - 1]
+        destination_page = pages[next_page_number - 1]
+        trailing = source_page.pdf_paragraph[paragraph_index]
+        following = destination_page.pdf_paragraph[next_paragraph_index]
+        trailing_compositions = list(
+            getattr(trailing, "pdf_paragraph_composition", ()) or ()
+        )
+        following_compositions = list(
+            getattr(following, "pdf_paragraph_composition", ()) or ()
+        )
+        if not trailing_compositions or not following_compositions:
+            continue
+        portable_trailing: list[Any] = []
+        trailing_text = str(getattr(trailing, "unicode", "") or "").rstrip()
+        for composition in trailing_compositions:
+            formula = getattr(composition, "pdf_formula", None)
+            if formula is None:
+                portable_trailing.append(composition)
+                continue
+            formula_characters = list(getattr(formula, "pdf_character", ()) or ())
+            formula_text = "".join(
+                str(getattr(character, "char_unicode", "") or "")
+                for character in formula_characters
+            )
+            if (
+                not formula_text
+                or any(character not in "−-+0123456789" for character in formula_text)
+                or (getattr(formula, "pdf_curve", None) or getattr(formula, "pdf_form", None))
+            ):
+                raise RuntimeError(
+                    "Cross-page formula is not a portable numeric superscript"
+                )
+            superscript = formula_text.translate(superscripts)
+            for prior in reversed(portable_trailing):
+                unicode_run = getattr(
+                    prior, "pdf_same_style_unicode_characters", None
+                )
+                if unicode_run is None:
+                    continue
+                run_text = str(getattr(unicode_run, "unicode", "") or "")
+                if run_text:
+                    unicode_run.unicode = run_text.rstrip() + superscript
+                    break
+            else:
+                raise RuntimeError(
+                    "Cross-page superscript has no adjacent Unicode text run"
+                )
+            trailing_text, replacement_count = _BABELDOC_PLACEHOLDER.subn(
+                superscript, trailing_text, count=1
+            )
+            if replacement_count != 1:
+                raise RuntimeError(
+                    "Cross-page superscript has no matching BabelDOC placeholder"
+                )
+        trailing_compositions = portable_trailing
+        for composition in following_compositions:
+            unicode_run = getattr(
+                composition, "pdf_same_style_unicode_characters", None
+            )
+            if unicode_run is None:
+                continue
+            run_text = str(getattr(unicode_run, "unicode", "") or "")
+            if run_text:
+                unicode_run.unicode = " " + run_text.lstrip()
+                break
+        following_text = str(getattr(following, "unicode", "") or "").lstrip()
+        following.unicode = trailing_text + " " + following_text
+        following.pdf_paragraph_composition = (
+            trailing_compositions + following_compositions
+        )
+        trailing.unicode = ""
+        trailing.pdf_paragraph_composition = []
+        applied.append(
+            (page_number, paragraph_index, next_page_number, next_paragraph_index)
+        )
+    return applied
+
+
 def _json_table_regions(page: dict[str, Any]) -> list[tuple[int, tuple[float, float, float, float]]]:
     regions: list[tuple[int, tuple[float, float, float, float]]] = []
     for layout in page.get("page_layout") or []:
@@ -347,6 +720,53 @@ def resolve_table_text_chunk_ids(
         ):
             selected.add(str(chunk["id"]))
     return selected
+
+
+def resolve_reference_regions(
+    article_dir: Path,
+    manifest: dict[str, Any],
+    reference_chunk_ids: set[str],
+) -> list[TableRegion]:
+    """Resolve bibliography paragraph boxes for exact source-region restoration."""
+
+    if not reference_chunk_ids:
+        return []
+    ir_name = manifest.get("babeldoc_ir_json_file")
+    if not isinstance(ir_name, str) or not ir_name:
+        raise RuntimeError("BabelDOC JSON IR is required for reference restoration")
+    ir_path = Path(article_dir) / ir_name
+    document = json.loads(ir_path.read_text(encoding="utf-8"))
+    pages = document.get("page")
+    if not isinstance(pages, list):
+        raise RuntimeError(f"BabelDOC JSON IR has no page list: {ir_path}")
+    regions: list[TableRegion] = []
+    for chunk in manifest.get("chunks", []):
+        if str(chunk.get("id")) not in reference_chunk_ids:
+            continue
+        page_number = int(chunk["page_number"])
+        paragraph_index = int(chunk["paragraph_index"])
+        try:
+            paragraph = pages[page_number - 1]["pdf_paragraph"][paragraph_index]
+        except (IndexError, KeyError, TypeError) as exc:
+            raise RuntimeError(
+                f"BabelDOC reference identity is invalid for {chunk.get('id')}"
+            ) from exc
+        box = _json_box(paragraph)
+        if box is None:
+            raise RuntimeError(
+                f"BabelDOC reference paragraph has no box: {chunk.get('id')}"
+            )
+        x, y, x2, y2 = box
+        regions.append(
+            TableRegion(
+                page_number,
+                paragraph_index,
+                (x - 12.0, y - 3.0, x2 + 12.0, y2 + 3.0),
+            )
+        )
+    if len(regions) != len(reference_chunk_ids):
+        raise RuntimeError("Not every reference chunk resolved to a BabelDOC region")
+    return regions
 
 
 def _normalized_page_text(value: str) -> str:
@@ -597,6 +1017,171 @@ def restore_verbatim_regions(
         "figure_region_count": len(figures),
         "table_region_count": len(tables),
     }
+
+
+def restore_verbatim_reference_regions(
+    *,
+    source_pdf: Path,
+    mono_pdf: Path,
+    dual_pdf: Path,
+    regions: Iterable[TableRegion],
+) -> dict[str, Any]:
+    """Restore bibliography clips with exact pixels and a source-faithful text layer."""
+
+    import pymupdf
+
+    checked = list(regions)
+    if not checked:
+        return {"verified": True, "region_count": 0}
+    mono_temporary = Path(mono_pdf).with_name(Path(mono_pdf).stem + ".refs.tmp.pdf")
+    dual_temporary = Path(dual_pdf).with_name(Path(dual_pdf).stem + ".refs.tmp.pdf")
+    try:
+        with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono, pymupdf.open(
+            dual_pdf
+        ) as dual:
+            if mono.page_count != source.page_count or dual.page_count != source.page_count:
+                raise RuntimeError("Cannot restore reference regions across unequal page counts")
+            prepared_regions: list[tuple[int, Any, Any, bytes, str]] = []
+            for region in checked:
+                if region.page_number < 1 or region.page_number > source.page_count:
+                    raise RuntimeError(
+                        f"Reference region page is outside the source PDF: {region.page_number}"
+                    )
+                page_index = region.page_number - 1
+                source_page = source[page_index]
+                mono_page = mono[page_index]
+                dual_page = dual[page_index]
+                if (
+                    abs(source_page.rect.width - mono_page.rect.width) > 0.5
+                    or abs(source_page.rect.height - mono_page.rect.height) > 0.5
+                    or abs(dual_page.rect.width - 2 * source_page.rect.width) > 1.0
+                    or abs(dual_page.rect.height - source_page.rect.height) > 0.5
+                ):
+                    raise RuntimeError(
+                        f"Cannot map reference regions onto page {region.page_number} dimensions"
+                    )
+                x, y, x2, y2 = region.box
+                clip = pymupdf.Rect(
+                    x, source_page.rect.height - y2, x2, source_page.rect.height - y
+                ) & source_page.rect
+                if clip.is_empty or clip.is_infinite:
+                    raise RuntimeError(
+                        f"Reference region is empty on page {region.page_number}"
+                    )
+                pixmap = source_page.get_pixmap(
+                    matrix=pymupdf.Matrix(3, 3), clip=clip, alpha=False
+                )
+                image_bytes = pixmap.tobytes("png")
+                midpoint = dual_page.rect.width / 2
+                dual_clip = pymupdf.Rect(
+                    clip.x0 + midpoint,
+                    clip.y0,
+                    clip.x1 + midpoint,
+                    clip.y1,
+                )
+                source_text = source_page.get_text(clip=clip, sort=True).strip()
+                if not source_text:
+                    raise RuntimeError(
+                        f"Reference region has no source text on page {region.page_number}"
+                    )
+                prepared_regions.append(
+                    (page_index, clip, dual_clip, image_bytes, source_text)
+                )
+
+            affected_pages = {page_index for page_index, *_rest in prepared_regions}
+            for page_index, clip, dual_clip, _image_bytes, _source_text in prepared_regions:
+                mono[page_index].add_redact_annot(clip, fill=(1, 1, 1))
+                dual[page_index].add_redact_annot(dual_clip, fill=(1, 1, 1))
+            for page_index in affected_pages:
+                mono[page_index].apply_redactions()
+                dual[page_index].apply_redactions()
+
+            for page_index, clip, dual_clip, image_bytes, source_text in prepared_regions:
+                mono_page = mono[page_index]
+                dual_page = dual[page_index]
+                mono_page.insert_image(clip, stream=image_bytes, overlay=True)
+                dual_page.insert_image(dual_clip, stream=image_bytes, overlay=True)
+                for target_page, target_clip in (
+                    (mono_page, clip),
+                    (dual_page, dual_clip),
+                ):
+                    spare_height = target_page.insert_textbox(
+                        target_clip,
+                        source_text,
+                        fontname="china-s",
+                        fontsize=3,
+                        render_mode=3,
+                        overlay=True,
+                    )
+                    if spare_height < 0:
+                        raise RuntimeError(
+                            f"Reference text layer does not fit on page {page_index + 1}"
+                        )
+            mono.save(mono_temporary, garbage=4, deflate=True)
+            dual.save(dual_temporary, garbage=4, deflate=True)
+        os.replace(mono_temporary, mono_pdf)
+        os.replace(dual_temporary, dual_pdf)
+    finally:
+        mono_temporary.unlink(missing_ok=True)
+        dual_temporary.unlink(missing_ok=True)
+
+    def has_expected_image(page: Any, clip: Any, digest: bytes) -> bool:
+        for image_info in page.get_image_info(hashes=True, xrefs=True):
+            image_box = pymupdf.Rect(image_info["bbox"])
+            if (
+                image_info.get("digest") == digest
+                and max(
+                    abs(image_box.x0 - clip.x0),
+                    abs(image_box.y0 - clip.y0),
+                    abs(image_box.x1 - clip.x1),
+                    abs(image_box.y1 - clip.y1),
+                )
+                <= 1.5
+            ):
+                return True
+        return False
+
+    with pymupdf.open(source_pdf) as source, pymupdf.open(mono_pdf) as mono, pymupdf.open(
+        dual_pdf
+    ) as dual:
+        for region in checked:
+            page_index = region.page_number - 1
+            source_page = source[page_index]
+            mono_page = mono[page_index]
+            dual_page = dual[page_index]
+            x, y, x2, y2 = region.box
+            source_clip = pymupdf.Rect(
+                x, source_page.rect.height - y2, x2, source_page.rect.height - y
+            ) & source_page.rect
+            dual_clip = pymupdf.Rect(
+                source_clip.x0 + source_page.rect.width,
+                source_clip.y0,
+                source_clip.x1 + source_page.rect.width,
+                source_clip.y1,
+            )
+            expected_digest = source_page.get_pixmap(
+                matrix=pymupdf.Matrix(3, 3), clip=source_clip, alpha=False
+            ).digest
+            expected_text = _normalized_page_text(
+                source_page.get_text(clip=source_clip, sort=True)
+            )
+            mono_text = _normalized_page_text(
+                mono_page.get_text(clip=source_clip, sort=True)
+            )
+            dual_text = _normalized_page_text(
+                dual_page.get_text(clip=dual_clip, sort=True)
+            )
+            if (
+                not has_expected_image(mono_page, source_clip, expected_digest)
+                or not has_expected_image(dual_page, dual_clip, expected_digest)
+                or not expected_text
+                or mono_text != expected_text
+                or dual_text != expected_text
+            ):
+                raise RuntimeError(
+                    f"Reference region restoration self-check failed: page={region.page_number}"
+                )
+    return {"verified": True, "region_count": len(checked)}
 
 
 def verify_verbatim_figure_regions(
@@ -1265,6 +1850,10 @@ def refill_document_units(
         docs = converter.read_xml(str(ir_xml_path))
         normalize_document_ir_numeric_tokens(docs)
         suppress_cross_page_auxiliary_orphans(docs, requested)
+        cross_page_line_carries = identify_cross_page_line_fragment_carries(docs)
+        requested, cross_page_rebalances = rebalance_cross_page_sentence_fragments(
+            docs, requested
+        )
         il_translator = ILTranslator(_babeldoc_placeholder_translator(), config)
         figure_text_verbatim_count = 0
         table_text_verbatim_count = 0
@@ -1324,6 +1913,10 @@ def refill_document_units(
                 translate_input,
                 item.translated_text,
             )
+        same_line_merges = coalesce_same_baseline_line_fragments(docs)
+        applied_cross_page_line_carries = apply_cross_page_line_fragment_carries(
+            docs, cross_page_line_carries
+        )
         output_xml.parent.mkdir(parents=True, exist_ok=True)
         temporary = output_xml.with_name(output_xml.name + ".tmp")
         converter.write_xml(docs, str(temporary))
@@ -1333,6 +1926,11 @@ def refill_document_units(
             len(requested),
             figure_text_verbatim_count=figure_text_verbatim_count,
             table_text_verbatim_count=table_text_verbatim_count,
+            cross_page_sentence_rebalance_count=len(cross_page_rebalances),
+            same_line_fragment_merge_count=len(same_line_merges),
+            cross_page_line_fragment_carry_count=len(
+                applied_cross_page_line_carries
+            ),
         )
     finally:
         config.cleanup_temp_files()
@@ -1348,6 +1946,7 @@ def render_translated_document(
     reference_check_page_numbers: set[int] | None = None,
     verbatim_header_translation: dict[str, str] | None = None,
     verbatim_section_heading_translations: list[dict[str, str]] | None = None,
+    reference_regions: Iterable[TableRegion] | None = None,
 ) -> RenderedPdfResult:
     """Typeset translated BabelDOC XML IR into stable mono and dual PDFs."""
 
@@ -1405,6 +2004,7 @@ def render_translated_document(
         normalize_document_ir_numeric_tokens(docs)
         figure_regions = figure_regions_from_document(docs)
         table_regions = table_regions_from_document(docs)
+        bibliography_regions = list(reference_regions or ())
         class SnowmassTypesetting(Typesetting):
             """Correct BabelDOC 0.6.4's current-unit double count in word lookahead."""
 
@@ -1448,6 +2048,12 @@ def render_translated_document(
             figure_regions=figure_regions,
             table_regions=table_regions,
         )
+        reference_region_report = restore_verbatim_reference_regions(
+            source_pdf=source_pdf,
+            mono_pdf=mono_pdf,
+            dual_pdf=dual_pdf,
+            regions=bibliography_regions,
+        )
         figure_report = verify_verbatim_figure_regions(
             source_pdf=source_pdf,
             mono_pdf=mono_pdf,
@@ -1474,6 +2080,8 @@ def render_translated_document(
             figure_region_count=int(figure_report["region_count"]),
             table_regions_verified=bool(table_report["verified"]),
             table_region_count=int(table_report["region_count"]),
+            reference_regions_verified=bool(reference_region_report["verified"]),
+            reference_region_count=int(reference_region_report["region_count"]),
         )
     finally:
         if doc_pdf is not None:

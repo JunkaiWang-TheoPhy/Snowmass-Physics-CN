@@ -113,7 +113,7 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(status["status"], "complete")
         self.assertEqual(status["refilled_unit_count"], 1)
         self.assertEqual(status["refill_schema_version"], module.REFILL_SCHEMA_VERSION)
-        self.assertEqual(module.REFILL_SCHEMA_VERSION, 13)
+        self.assertEqual(module.REFILL_SCHEMA_VERSION, 24)
         self.assertEqual(status["babeldoc_version"], "0.6.4")
         self.assertTrue((self.article / "rendered" / "translated_mono.pdf").is_file())
         self.assertTrue((self.article / "rendered" / "translated_dual.pdf").is_file())
@@ -620,6 +620,54 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
         self.assertEqual(prepared[0].translated_text, "Technical Maturity\n")
         self.assertEqual(prepared[1].translated_text, "表1：预测。\n")
         self.assertEqual(report["table_text_passthrough_units"], 1)
+
+    def test_publication_preflight_keeps_combined_bibliography_chunk_verbatim(self) -> None:
+        module = load_module()
+        chunks = [
+            {
+                "id": "chunk0001",
+                "order": 1,
+                "page_number": 4,
+                "paragraph_index": 0,
+                "layout_label": "title",
+                "source_file": "chunk0001.md",
+            },
+            {
+                "id": "chunk0002",
+                "order": 2,
+                "page_number": 4,
+                "paragraph_index": 1,
+                "layout_label": "plain text",
+                "source_file": "chunk0002.md",
+            },
+        ]
+        source = (
+            "{v1}A. Author. Paper One (2019). https://doi.org/10.1/one"
+            "{v2}B. Author. Paper Two (2020). https://doi.org/10.1/two\n"
+        )
+        (self.article / "chunk0001.md").write_text("References\n", encoding="utf-8")
+        (self.article / "chunk0002.md").write_text(source, encoding="utf-8")
+        translations = [
+            module.BRIDGE.RefillTranslation(4, 0, "References\n", "参考文献\n"),
+            module.BRIDGE.RefillTranslation(4, 1, source, "被错误改写的参考文献\n"),
+        ]
+
+        prepared, report = module.prepare_publication_translations(
+            self.article,
+            {"chunks": chunks},
+            translations,
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[],
+        )
+
+        self.assertEqual(prepared[0].translated_text, "参考文献\n")
+        self.assertEqual(
+            prepared[1].translated_text,
+            "{v1}A. Author. Paper One (2019). https://doi.org/10.1/one\n"
+            "{v2}B. Author. Paper Two (2020). https://doi.org/10.1/two\n",
+        )
+        self.assertEqual(report["reference_passthrough_units"], 1)
+        self.assertEqual(report["reference_entry_separator_insertions"], 1)
 
     def test_publication_preflight_fails_when_exact_source_is_missing(self) -> None:
         module = load_module()

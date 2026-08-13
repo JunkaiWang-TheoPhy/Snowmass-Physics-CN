@@ -20,7 +20,7 @@ def _bibliography_like(text: str) -> bool:
     compact = " ".join(text.split())
     signals = (
         r"\barxiv\s*:",
-        r"\bdoi\s*:",
+        r"(?:\bdoi\s*:|https?://(?:dx\.)?doi\.org/)",
         r"\b(?:19|20)\d{2}\b",
         r"\b(?:journal|proceedings|phys\.\s*rev\.|jhep|nature|science|"
         r"astroph(?:ys)?\.\s*j\.|astron\.\s*j\.|apj|mnras|jcap)\b",

@@ -26,7 +26,7 @@ import snowmass_constraint_compiler as constraint_compiler
 DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
 DEFAULT_GLOSSARY = ROOT / "translations/snowmass-global-glossary.json"
 DEFAULT_HARD_CONSTRAINTS = ROOT / "translations/snowmass-hard-constraints.json"
-REFILL_SCHEMA_VERSION = 13
+REFILL_SCHEMA_VERSION = 24
 
 
 def _load_bridge():
@@ -314,10 +314,35 @@ def prepare_publication_translations(
         raise RuntimeError("Publication chunks do not match refill translations")
     figure_text_chunk_ids = set(figure_text_chunk_ids or ())
     table_text_chunk_ids = set(table_text_chunk_ids or ())
-    passthrough_chunk_ids = figure_text_chunk_ids | table_text_chunk_ids
+    if all(
+        isinstance(chunk.get("source_file"), str)
+        and (article_dir / str(chunk["source_file"])).is_file()
+        for chunk in chunks
+    ):
+        reference_chunk_ids = set(reference_boundary(article_dir, chunks)["chunk_ids"])
+    else:
+        reference_chunk_ids: set[str] = set()
+        references_seen = False
+        for chunk, translation in zip(chunks, translations, strict=True):
+            normalized_source = _normalized_phrase(translation.source_text).rstrip(":")
+            if normalized_source in {"references", "bibliography"}:
+                references_seen = True
+                continue
+            if references_seen:
+                reference_chunk_ids.add(str(chunk["id"]))
+    passthrough_chunk_ids = (
+        figure_text_chunk_ids | table_text_chunk_ids | reference_chunk_ids
+    )
     prepared_texts = [translation.translated_text for translation in translations]
+    reference_entry_separator_insertions = 0
     for index, (chunk, translation) in enumerate(zip(chunks, translations, strict=True)):
-        if str(chunk["id"]) in passthrough_chunk_ids:
+        chunk_id = str(chunk["id"])
+        if chunk_id in reference_chunk_ids:
+            prepared_texts[index], inserted = re.subn(
+                r"(?<=\S)(?=\{v\d+\})", "\n", translation.source_text
+            )
+            reference_entry_separator_insertions += inserted
+        elif chunk_id in passthrough_chunk_ids:
             prepared_texts[index] = translation.source_text
     exact_occurrences = 0
     for rule in constraints.get("exact_translations", []):
@@ -425,6 +450,8 @@ def prepare_publication_translations(
         "first_use_terms": len(first_use),
         "figure_text_passthrough_units": len(figure_text_chunk_ids),
         "table_text_passthrough_units": len(table_text_chunk_ids),
+        "reference_passthrough_units": len(reference_chunk_ids),
+        "reference_entry_separator_insertions": reference_entry_separator_insertions,
         "normalized_title_count": normalized_title_count,
         "publication_chunk_sha256": chunk_hashes,
     }
@@ -602,6 +629,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     reference_pages = _reference_page_numbers(args.article_dir, manifest)
     verbatim_reference_pages = _verbatim_reference_page_numbers(args.article_dir, manifest)
+    reference_chunk_ids = set(
+        reference_boundary(args.article_dir, list(manifest.get("chunks", [])))[
+            "chunk_ids"
+        ]
+    )
+    reference_regions = BRIDGE.resolve_reference_regions(
+        args.article_dir, manifest, reference_chunk_ids
+    )
     verbatim_header = _verbatim_header_translation(
         args.article_dir,
         manifest,
@@ -626,6 +661,10 @@ def main(argv: list[str] | None = None) -> int:
         "verbatim_page_numbers": sorted(verbatim_reference_pages),
         "verbatim_header_translation": verbatim_header,
         "verbatim_section_heading_translations": verbatim_section_headings,
+        "reference_regions": [
+            {"page_number": region.page_number, "box": list(region.box)}
+            for region in reference_regions
+        ],
         "figure_text_chunk_ids": sorted(figure_text_chunk_ids),
         "table_text_chunk_ids": sorted(table_text_chunk_ids),
     }
@@ -670,6 +709,7 @@ def main(argv: list[str] | None = None) -> int:
         reference_check_page_numbers=reference_pages,
         verbatim_header_translation=verbatim_header,
         verbatim_section_heading_translations=verbatim_section_headings,
+        reference_regions=reference_regions,
     )
     _atomic_json(
         status_path,
@@ -684,12 +724,18 @@ def main(argv: list[str] | None = None) -> int:
             "refilled_unit_count": result.refilled_unit_count,
             "figure_text_verbatim_count": result.figure_text_verbatim_count,
             "table_text_verbatim_count": result.table_text_verbatim_count,
+            "cross_page_sentence_rebalance_count": result.cross_page_sentence_rebalance_count,
+            "same_line_fragment_merge_count": result.same_line_fragment_merge_count,
+            "cross_page_line_fragment_carry_count": result.cross_page_line_fragment_carry_count,
             "figure_region_count": rendered.figure_region_count,
             "figure_regions_verified": rendered.figure_regions_verified,
             "figure_regions_not_applicable": rendered.figure_region_count == 0,
             "table_region_count": rendered.table_region_count,
             "table_regions_verified": rendered.table_regions_verified,
             "table_regions_not_applicable": rendered.table_region_count == 0,
+            "reference_region_count": rendered.reference_region_count,
+            "reference_regions_verified": rendered.reference_regions_verified,
+            "reference_regions_not_applicable": rendered.reference_region_count == 0,
             "output_xml_file": output_xml.name,
             "output_xml_sha256": _sha256(output_xml),
             "mono_pdf_file": str(rendered.mono_pdf_path.relative_to(args.article_dir)),

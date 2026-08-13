@@ -169,6 +169,457 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         self.assertEqual(suppressed, [])
         self.assertEqual(word.unicode, "will")
 
+    def test_rebalances_unstructured_cross_page_sentence_at_chinese_boundary(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Box:
+            x: float
+            y: float
+            x2: float
+            y2: float
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            box: Box
+            xobj_id: int = 0
+            layout_label: str = "plain text"
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+            mediabox: object
+
+        @dataclass
+        class Mediabox:
+            box: Box
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        document = Document(
+            [
+                Page(
+                    [
+                        Paragraph(
+                            "Many challenges are shared. For example, collaborations use the",
+                            Box(90, 88, 522, 142),
+                        )
+                    ],
+                    Mediabox(Box(0, 0, 612, 792)),
+                ),
+                Page(
+                    [
+                        Paragraph(
+                            "same or fewer resources. Computing models must change.",
+                            Box(90, 608, 522, 702),
+                        )
+                    ],
+                    Mediabox(Box(0, 0, 612, 792)),
+                ),
+            ]
+        )
+        requested = [
+            bridge.RefillTranslation(
+                1,
+                0,
+                "Many challenges are shared. For example, collaborations use the\n",
+                "许多挑战为多个实验所共有。例如，各合作组使用的资源将基于",
+            ),
+            bridge.RefillTranslation(
+                2,
+                0,
+                "same or fewer resources. Computing models must change.\n",
+                "相同或更少的资源。计算模型必须改变。",
+            ),
+        ]
+
+        adjusted, moved = bridge.rebalance_cross_page_sentence_fragments(
+            document, requested
+        )
+
+        self.assertEqual(moved, [(1, 0, 2, 0)])
+        self.assertEqual(adjusted[0].translated_text, "许多挑战为多个实验所共有。")
+        self.assertEqual(
+            adjusted[1].translated_text,
+            "例如，各合作组使用的资源将基于相同或更少的资源。计算模型必须改变。",
+        )
+        self.assertEqual(
+            "".join(item.translated_text for item in adjusted),
+            "许多挑战为多个实验所共有。例如，各合作组使用的资源将基于相同或更少的资源。计算模型必须改变。",
+        )
+
+    def test_does_not_rebalance_cross_page_text_with_placeholders(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Box:
+            x: float
+            y: float
+            x2: float
+            y2: float
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            box: Box
+            xobj_id: int = 0
+            layout_label: str = "plain text"
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+            box: Box
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        document = Document(
+            [
+                Page([Paragraph("value {v1} using the", Box(90, 88, 522, 142))], Box(0, 0, 612, 792)),
+                Page([Paragraph("same resource.", Box(90, 608, 522, 702))], Box(0, 0, 612, 792)),
+            ]
+        )
+        requested = [
+            bridge.RefillTranslation(1, 0, "value {v1} using the\n", "数值{v1}使用"),
+            bridge.RefillTranslation(2, 0, "same resource.\n", "相同资源。"),
+        ]
+
+        adjusted, moved = bridge.rebalance_cross_page_sentence_fragments(
+            document, requested
+        )
+
+        self.assertEqual(adjusted, requested)
+        self.assertEqual(moved, [])
+
+    def test_rebalance_skips_untranslated_trailing_auxiliary_orphan(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Box:
+            x: float
+            y: float
+            x2: float
+            y2: float
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            box: Box
+            xobj_id: int = 0
+            layout_label: str = "plain text"
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+            box: Box
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        document = Document(
+            [
+                Page(
+                    [
+                        Paragraph("Collaborations use the", Box(90, 88, 500, 142)),
+                        Paragraph("will", Box(505, 99, 522, 107)),
+                    ],
+                    Box(0, 0, 612, 792),
+                ),
+                Page(
+                    [Paragraph("same resources.", Box(90, 608, 522, 702))],
+                    Box(0, 0, 612, 792),
+                ),
+            ]
+        )
+        requested = [
+            bridge.RefillTranslation(
+                1, 0, "Collaborations use the\n", "各合作组使用的资源。将基于"
+            ),
+            bridge.RefillTranslation(2, 0, "same resources.\n", "相同资源。"),
+        ]
+
+        adjusted, moved = bridge.rebalance_cross_page_sentence_fragments(
+            document, requested
+        )
+
+        self.assertEqual(moved, [(1, 0, 2, 0)])
+        self.assertEqual(adjusted[0].translated_text, "各合作组使用的资源。")
+        self.assertEqual(adjusted[1].translated_text, "将基于相同资源。")
+
+    def test_coalesces_same_baseline_line_fragments_before_typesetting(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Box:
+            x: float
+            y: float
+            x2: float
+            y2: float
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            box: Box
+            layout_label: str
+            xobj_id: int = 0
+            pdf_paragraph_composition: list[object] | None = None
+
+        @dataclass
+        class UnicodeRun:
+            unicode: str
+
+        @dataclass
+        class Composition:
+            pdf_same_style_unicode_characters: UnicodeRun | None = None
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        left_run = UnicodeRun("Belle\n")
+        left_composition = Composition(left_run)
+        translated_composition = Composition(UnicodeRun("II 估计"))
+        formula_composition = Composition()
+        left = Paragraph("Belle", Box(107, 99, 130, 107), "fallback_line", pdf_paragraph_composition=[left_composition])
+        body = Paragraph(
+            "II 估计，存储来自积分光度为 50 ab{v1}",
+            Box(135, 97, 499, 110),
+            "plain text",
+            pdf_paragraph_composition=[translated_composition, formula_composition],
+        )
+        suppressed = Paragraph("", Box(505, 99, 522, 107), "plain text", pdf_paragraph_composition=[])
+        document = Document([Page([left, body, suppressed])])
+
+        merged = bridge.coalesce_same_baseline_line_fragments(document)
+
+        self.assertEqual(merged, [(1, 0, 1)])
+        self.assertEqual(left.box, Box(107, 97, 499, 110))
+        self.assertEqual(left.unicode, "Belle II 估计，存储来自积分光度为 50 ab{v1}")
+        self.assertEqual(left_run.unicode, "Belle ")
+        self.assertEqual(
+            left.pdf_paragraph_composition,
+            [left_composition, translated_composition, formula_composition],
+        )
+        self.assertEqual(body.unicode, "")
+        self.assertEqual(body.pdf_paragraph_composition, [])
+
+    def test_carries_short_cross_page_line_chain_with_formula_to_next_page(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Box:
+            x: float
+            y: float
+            x2: float
+            y2: float
+
+        @dataclass
+        class Run:
+            unicode: str
+
+        @dataclass
+        class Composition:
+            pdf_same_style_unicode_characters: Run | None = None
+            pdf_formula: object | None = None
+
+        @dataclass
+        class Style:
+            font_id: str
+
+        @dataclass
+        class Character:
+            pdf_style: Style
+            char_unicode: str
+
+        @dataclass
+        class Formula:
+            pdf_character: list[Character]
+
+        @dataclass
+        class Font:
+            font_id: str
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            box: Box
+            layout_label: str = "plain text"
+            xobj_id: int = 0
+            pdf_paragraph_composition: list[Composition] | None = None
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+            box: Box
+            page_layout: list[object] | None = None
+            pdf_font: list[Font] | None = None
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        formula = Formula(
+            [Character(Style("R23"), "−"), Character(Style("R23"), "1")]
+        )
+        trailing = Paragraph(
+            "II estimates storage at 50 ab{v1}",
+            Box(107, 97, 499, 110),
+            "fallback_line",
+            pdf_paragraph_composition=[
+                Composition(Run("Belle II 估计，存储量为 50 ab")),
+                Composition(pdf_formula=formula),
+            ],
+        )
+        continuation_run = Run("要求约 14 PB。")
+        continuation = Paragraph(
+            "require about 14 PB.",
+            Box(90, 539, 523, 702),
+            pdf_paragraph_composition=[Composition(continuation_run)],
+        )
+        document = Document(
+            [
+                Page([trailing], Box(0, 0, 612, 792), [], [Font("R21"), Font("R23")]),
+                Page([continuation], Box(0, 0, 612, 792), [], [Font("R21")]),
+            ]
+        )
+
+        carries = bridge.identify_cross_page_line_fragment_carries(document)
+        trailing.unicode = "Belle II 估计，存储量为 50 ab{v1}"
+        continuation.unicode = "要求约 14 PB。"
+        applied = bridge.apply_cross_page_line_fragment_carries(document, carries)
+
+        self.assertEqual(carries, [(1, 0, 2, 0)])
+        self.assertEqual(applied, carries)
+        self.assertEqual(trailing.unicode, "")
+        self.assertEqual(trailing.pdf_paragraph_composition, [])
+        self.assertEqual(
+            continuation.unicode,
+            "Belle II 估计，存储量为 50 ab⁻¹ 要求约 14 PB。",
+        )
+        self.assertEqual(continuation_run.unicode, " 要求约 14 PB。")
+        self.assertEqual(
+            continuation.pdf_paragraph_composition[0]
+            .pdf_same_style_unicode_characters.unicode,
+            "Belle II 估计，存储量为 50 ab⁻¹",
+        )
+        self.assertEqual(len(continuation.pdf_paragraph_composition), 2)
+        self.assertEqual([font.font_id for font in document.page[1].pdf_font], ["R21"])
+
+    def test_detects_short_cross_page_carry_into_fallback_line(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Box:
+            x: float
+            y: float
+            x2: float
+            y2: float
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            box: Box
+            layout_label: str = "fallback_line"
+            xobj_id: int = 0
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+            box: Box
+            page_layout: list[object] | None = None
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        document = Document(
+            [
+                Page(
+                    [Paragraph("storage at 50 ab", Box(107, 97, 499, 110))],
+                    Box(0, 0, 612, 792),
+                    [],
+                ),
+                Page(
+                    [Paragraph("requires 14 PB.", Box(90, 608, 522, 620))],
+                    Box(0, 0, 612, 792),
+                    [],
+                ),
+            ]
+        )
+
+        self.assertEqual(
+            bridge.identify_cross_page_line_fragment_carries(document),
+            [(1, 0, 2, 0)],
+        )
+
+    def test_cross_page_carry_rejects_non_numeric_formula(self) -> None:
+        bridge = load_bridge()
+
+        @dataclass
+        class Run:
+            unicode: str
+
+        @dataclass
+        class Character:
+            char_unicode: str
+
+        @dataclass
+        class Formula:
+            pdf_character: list[Character]
+
+        @dataclass
+        class Composition:
+            pdf_same_style_unicode_characters: Run | None = None
+            pdf_formula: Formula | None = None
+
+        @dataclass
+        class Paragraph:
+            unicode: str
+            pdf_paragraph_composition: list[Composition]
+
+        @dataclass
+        class Page:
+            pdf_paragraph: list[Paragraph]
+            pdf_font: list[object]
+
+        @dataclass
+        class Document:
+            page: list[Page]
+
+        document = Document(
+            [
+                Page(
+                    [
+                        Paragraph(
+                            "quantity {v1}",
+                            [
+                                Composition(Run("量 ")),
+                                Composition(pdf_formula=Formula([Character("x")])),
+                            ],
+                        )
+                    ],
+                    [],
+                ),
+                Page([Paragraph("continues", [Composition(Run("继续"))])], []),
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError, "Cross-page formula is not a portable numeric superscript"
+        ):
+            bridge.apply_cross_page_line_fragment_carries(
+                document, [(1, 0, 2, 0)]
+            )
+
     def test_materializes_lazy_passthrough_values_before_xml_serialization(self) -> None:
         bridge = load_bridge()
 
@@ -255,6 +706,43 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         self.assertEqual(
             bridge.resolve_table_text_chunk_ids(article, manifest),
             {"chunk0001"},
+        )
+
+    def test_resolves_reference_regions_from_manifest_chunk_identities(self) -> None:
+        bridge = load_bridge()
+        article = self.root / "papers" / "arxiv_allowed"
+        article.mkdir(parents=True)
+        manifest = {
+            "babeldoc_ir_json_file": "babeldoc_ir.json",
+            "chunks": [
+                {"id": "chunk0001", "page_number": 4, "paragraph_index": 0},
+                {"id": "chunk0002", "page_number": 4, "paragraph_index": 1},
+            ],
+        }
+        (article / "babeldoc_ir.json").write_text(
+            json.dumps(
+                {
+                    "page": [
+                        {}, {}, {},
+                        {
+                            "pdf_paragraph": [
+                                {"box": {"x": 90, "y": 300, "x2": 520, "y2": 320}},
+                                {"box": {"x": 90, "y": 100, "x2": 520, "y2": 290}},
+                            ]
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        regions = bridge.resolve_reference_regions(
+            article, manifest, {"chunk0002"}
+        )
+
+        self.assertEqual(
+            regions,
+            [bridge.TableRegion(4, 1, (78.0, 97.0, 532.0, 293.0))],
         )
 
     def test_exported_units_are_consumable_by_translate_book_run_state(self) -> None:
@@ -824,6 +1312,70 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         self.assertEqual(report["table_region_count"], 2)
         with pymupdf.open(mono) as document:
             self.assertEqual(document[0].get_text().count("Technical Maturity"), 1)
+
+    def test_restore_reference_regions_does_not_expose_source_text_outside_clip(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "reference-source.pdf"
+        mono = self.root / "reference-mono.pdf"
+        dual = self.root / "reference-dual.pdf"
+        document = pymupdf.open()
+        page = document.new_page(width=300, height=400)
+        page.insert_text((30, 50), "SOURCE BODY MUST STAY HIDDEN", fontsize=12)
+        page.insert_text((30, 300), "[1] SOURCE REFERENCE", fontsize=12)
+        page.insert_text((30, 318), "[2] SECOND SOURCE REFERENCE", fontsize=12)
+        document.save(source)
+        document.close()
+        for path, width in ((mono, 300), (dual, 600)):
+            document = pymupdf.open()
+            page = document.new_page(width=width, height=400)
+            page.insert_text((30, 50), "CHINESE BODY", fontsize=12)
+            page.insert_text((30, 300), "[1] SEARCHABLE REFERENCE", fontsize=12)
+            if width == 600:
+                page.insert_text((330, 50), "CHINESE BODY", fontsize=12)
+                page.insert_text((330, 300), "[1] SEARCHABLE REFERENCE", fontsize=12)
+            document.save(path)
+            document.close()
+
+        bridge.restore_verbatim_reference_regions(
+            source_pdf=source,
+            mono_pdf=mono,
+            dual_pdf=dual,
+            regions=[bridge.TableRegion(1, 0, (20, 80, 280, 130))],
+        )
+
+        with pymupdf.open(mono) as document:
+            text = document[0].get_text()
+            self.assertIn("CHINESE BODY", text)
+            self.assertIn("SOURCE REFERENCE", text)
+            self.assertIn("SECOND SOURCE REFERENCE", text)
+            self.assertNotIn("SEARCHABLE REFERENCE", text)
+            self.assertNotIn("SOURCE BODY MUST STAY HIDDEN", text)
+
+    def test_restore_reference_regions_rejects_invalid_dual_page_geometry(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "reference-geometry-source.pdf"
+        mono = self.root / "reference-geometry-mono.pdf"
+        dual = self.root / "reference-geometry-dual.pdf"
+        for path, width in ((source, 300), (mono, 300), (dual, 500)):
+            document = pymupdf.open()
+            page = document.new_page(width=width, height=400)
+            page.insert_text((30, 300), "[1] REFERENCE", fontsize=12)
+            document.save(path)
+            document.close()
+
+        with self.assertRaisesRegex(
+            RuntimeError, "Cannot map reference regions onto page 1 dimensions"
+        ):
+            bridge.restore_verbatim_reference_regions(
+                source_pdf=source,
+                mono_pdf=mono,
+                dual_pdf=dual,
+                regions=[bridge.TableRegion(1, 0, (20, 80, 280, 130))],
+            )
 
     def test_figure_region_self_check_rejects_rendered_text_drift(self) -> None:
         bridge = load_bridge()
