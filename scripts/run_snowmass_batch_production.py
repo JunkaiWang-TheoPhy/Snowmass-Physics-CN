@@ -1600,6 +1600,7 @@ def production_metrics_and_gate(
 
 
 def _package_article(config: BatchConfig, record: dict[str, Any], article_dir: Path) -> dict[str, Any]:
+    article_dir = article_dir.resolve()
     environment_lock = _production_environment_lock()
     article_qc = evaluate_article_qc(article_dir)
     if not article_qc["ok"]:
@@ -1666,6 +1667,7 @@ def _adopt_verified_translation_chain(config: BatchConfig, record: dict[str, Any
 
 
 def _write_article_qc_receipts(config: BatchConfig, record: dict[str, Any], article_dir: Path, qc: dict[str, Any]) -> dict[str, Any]:
+    article_dir = article_dir.resolve()
     environment_lock = _production_environment_lock()
     target = article_dir / "rendered/translated_mono.pdf"
     audit = pdf_audit.audit_pdf(target)

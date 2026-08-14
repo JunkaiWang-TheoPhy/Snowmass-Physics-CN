@@ -2067,6 +2067,36 @@ class BatchResumeTests(unittest.TestCase):
 
             self.assertIsNone(result)
 
+    def test_write_article_qc_receipts_accepts_relative_article_directory(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
+            root = Path(temporary)
+            article = root.relative_to(Path.cwd()) / "article"
+            target = article / "rendered/translated_mono.pdf"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b"rendered")
+            config = self._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+
+            with (
+                mock.patch.object(
+                    module,
+                    "_production_environment_lock",
+                    return_value={"lock_sha256": "environment"},
+                ),
+                mock.patch.object(module.pdf_audit, "audit_pdf", return_value={"ok": True}),
+                mock.patch.object(module, "_record_stage_artifact"),
+            ):
+                result = module._write_article_qc_receipts(
+                    config,
+                    record,
+                    article,
+                    {"ok": True, "failures": []},
+                )
+
+            self.assertEqual(set(result), set(module.qc_contract.ALLOWED_KINDS))
+            self.assertTrue((article / "qc/visual.json").is_file())
+
     def test_rolling_executor_passes_exact_run_article_arguments(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
