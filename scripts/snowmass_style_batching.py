@@ -1310,6 +1310,7 @@ def execute_style_stage(
                             "response_id": request_status["response_id"],
                             "item_key": item.item_key,
                             "execution_policy": "model_pipeline",
+                            **({"run_id": run_id} if run_id is not None else {}),
                             "output_file": output_path.name,
                             "output_hash": text_hash(restored),
                             "qc": qc.to_dict(),

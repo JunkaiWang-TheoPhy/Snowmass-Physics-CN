@@ -957,6 +957,8 @@ class StyleExecutionTests(unittest.TestCase):
         self.assertEqual(result.total_tokens, 60)
         self.assertEqual(self._status("chunk0001")["status"], "complete")
         self.assertEqual(self._status("chunk0002")["status"], "complete")
+        self.assertEqual(self._status("chunk0001")["run_id"], "run-mixed")
+        self.assertEqual(self._status("chunk0002")["run_id"], "run-mixed")
         self.assertNotIn("usage", self._status("chunk0001"))
         self.assertNotIn("usage", self._status("chunk0002"))
         batch_status = self._batch_status()
