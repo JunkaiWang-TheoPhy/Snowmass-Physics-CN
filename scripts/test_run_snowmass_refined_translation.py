@@ -1661,6 +1661,34 @@ class RefinedOrchestratorTests(unittest.TestCase):
             [],
         )
 
+    def test_revision_ready_projection_supersedes_uncertain_analysis_from_old_request_identity(self) -> None:
+        module = load_module()
+        (self.article / "paper_status.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "phases": {
+                        "analysis": {
+                            "status": "uncertain",
+                            "input_hash": "old-request-identity",
+                            "conservative_cost_rmb": 0.05,
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = module.revision_ready_projection(self.article)
+
+        self.assertTrue(report["projection_ready"])
+        self.assertEqual(report["missing_stage_api_calls"]["analysis"], 1)
+        self.assertEqual(
+            report["identity_diagnostics"]["blocking_uncertain_checkpoints"],
+            [],
+        )
+
     def test_structure_dense_projection_matches_actual_stage_subrequest_fanout(self) -> None:
         module = load_module()
         source = " ".join(f"part $x_{{{index}}}$" for index in range(30)) + "\n"

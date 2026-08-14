@@ -2239,16 +2239,23 @@ def revision_ready_projection(
         return report
     paper_phases = paper_status.get("phases", {})
     for phase_name, phase in paper_phases.items():
+        expected_analysis_hash = _paper_phase_input_hash(
+            _analysis_instructions(),
+            source,
+            ANALYSIS_MAX_OUTPUT_TOKENS,
+        )
+        recorded_input_hash = phase.get("input_hash") if isinstance(phase, dict) else None
+        superseded_analysis_identity = (
+            phase_name == "analysis"
+            and isinstance(recorded_input_hash, str)
+            and bool(recorded_input_hash)
+            and recorded_input_hash != expected_analysis_hash
+        )
         authorized_analysis_replay = (
             retry_uncertain
             and phase_name == "analysis"
             and isinstance(phase, dict)
-            and phase.get("input_hash")
-            == _paper_phase_input_hash(
-                _analysis_instructions(),
-                source,
-                ANALYSIS_MAX_OUTPUT_TOKENS,
-            )
+            and recorded_input_hash == expected_analysis_hash
             and float(phase.get("conservative_cost_rmb") or 0) > 0
         )
         if (
@@ -2261,6 +2268,7 @@ def revision_ready_projection(
             )
             and phase.get("status") in {"running", "uncertain"}
             and not authorized_analysis_replay
+            and not superseded_analysis_identity
         ):
             diagnostics["blocking_uncertain_checkpoints"].append(f"paper:{phase_name}")
 
