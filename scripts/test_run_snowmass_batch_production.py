@@ -309,6 +309,7 @@ class StagePrerequisiteTests(unittest.TestCase):
         pipeline_lock_sha256: str = "pipeline-current",
         execution_lock_sha256: str = "execution-prior",
         promotion_next_stage: str = "pilot5",
+        campaign_root_sha256: str = "campaign-prior",
     ) -> Path:
         selected_record_ids = selected_record_ids or ["arxiv:a"]
         result_record_ids = result_record_ids or selected_record_ids
@@ -326,6 +327,7 @@ class StagePrerequisiteTests(unittest.TestCase):
             "execution_mode": execution_mode,
             "pipeline_lock_sha256": pipeline_lock_sha256,
             "execution_lock_sha256": execution_lock_sha256,
+            "campaign_root_sha256": campaign_root_sha256,
         }
         (run_dir / "snapshot.json").write_text(
             json.dumps(snapshot), encoding="utf-8"
@@ -416,6 +418,7 @@ class StagePrerequisiteTests(unittest.TestCase):
 
         self.assertTrue(report["satisfied"])
         self.assertEqual(report["run_id"], "deepseek_probe-proof")
+        self.assertEqual(report["campaign_root_sha256"], "campaign-prior")
         self.assertRegex(report["run_report_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             report["run_report_sha256"],
@@ -542,6 +545,32 @@ class StagePrerequisiteTests(unittest.TestCase):
                 expected_record_id="arxiv:b",
             )
             self.assertIn("prior_artifact_record_id_mismatch", wrong_record["errors"])
+
+    def test_prior_campaign_root_is_resolved_by_hash_from_explicit_history(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            current = base / "pilot5"
+            prior = base / "deepseek-probe"
+            unrelated = base / "old"
+            prerequisite = {
+                "campaign_root_sha256": module._campaign_root_sha256(prior),
+            }
+
+            resolved = module.resolve_prior_campaign_root(
+                current_output_root=current,
+                historical_roots=(unrelated, prior),
+                prerequisite=prerequisite,
+            )
+
+            self.assertEqual(resolved, prior.resolve())
+            self.assertIsNone(
+                module.resolve_prior_campaign_root(
+                    current_output_root=current,
+                    historical_roots=(unrelated,),
+                    prerequisite=prerequisite,
+                )
+            )
 
     def test_paid_non_shadow_run_refuses_before_preparation_without_prerequisite(self) -> None:
         module = load_module()

@@ -633,6 +633,7 @@ def stage_prerequisite_report(
         identity_keys = (
             "run_id",
             "stage",
+            "campaign_root_sha256",
             "rights_manifest_sha256",
             "environment_lock_sha256",
             "selected_record_ids",
@@ -737,6 +738,7 @@ def stage_prerequisite_report(
             "environment_lock_sha256": str(report["environment_lock_sha256"]),
             "pipeline_lock_sha256": str(report["pipeline_lock_sha256"]),
             "execution_lock_sha256": str(report["execution_lock_sha256"]),
+            "campaign_root_sha256": str(report["campaign_root_sha256"]),
             "transition": (
                 "local_shadow_to_deepseek_probe"
                 if local_transition
@@ -777,6 +779,26 @@ def prior_artifact_identity_report(
         if manifest.get(field) != prerequisite.get(field):
             errors.append(f"prior_artifact_{field}_mismatch")
     return {"ok": not errors, "errors": errors}
+
+
+def resolve_prior_campaign_root(
+    *,
+    current_output_root: Path,
+    historical_roots: tuple[Path, ...],
+    prerequisite: dict[str, Any],
+) -> Path | None:
+    """Resolve the accepted prior campaign only from explicitly scoped roots."""
+
+    expected = prerequisite.get("campaign_root_sha256")
+    if not isinstance(expected, str) or not expected:
+        return None
+    candidates = tuple(dict.fromkeys((*historical_roots, current_output_root)))
+    matches = [
+        Path(root).resolve()
+        for root in candidates
+        if _campaign_root_sha256(Path(root)) == expected
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _article_dir(config: BatchConfig, record_id: str) -> Path:
@@ -2232,8 +2254,19 @@ def _run_batch_active_model(config: BatchConfig, *, client: Any = None) -> dict[
     )
     if prerequisite["satisfied"] and prerequisite.get("record_ids"):
         artifact_errors: list[str] = []
+        prior_campaign_root = resolve_prior_campaign_root(
+            current_output_root=config.output_root,
+            historical_roots=config.historical_roots,
+            prerequisite=prerequisite,
+        )
         for record_id in prerequisite["record_ids"]:
-            article_dir = _article_dir(config, str(record_id))
+            article_dir = (
+                prior_campaign_root
+                / "papers"
+                / prepare.safe_record_name(str(record_id))
+                if prior_campaign_root is not None
+                else config.output_root / "__missing_prior_campaign__"
+            )
             identity = prior_artifact_identity_report(
                 _artifact_manifest_path(article_dir),
                 prerequisite,
