@@ -2280,7 +2280,7 @@ def _run_batch_active_model(config: BatchConfig, *, client: Any = None) -> dict[
         recoverable = [result for result in recoverable if result.get("status") != "quarantined"]
         projection_summary = _projection_summary(config, paid_pending)
         package_only_ids = [str(record["record_id"]) for record in package_only_records]
-        return {
+        preflight_report = {
             **snapshot,
             **projection_summary,
             "status": "preflight",
@@ -2296,6 +2296,11 @@ def _run_batch_active_model(config: BatchConfig, *, client: Any = None) -> dict[
             "quarantined_record_ids": [result["record_id"] for result in quarantined],
             "pending_record_count": len(selected) - len(recoverable),
         }
+        _atomic_json(
+            config.control_dir / "preflight" / f"{run_id}.json",
+            preflight_report,
+        )
+        return preflight_report
     run_dir = config.control_dir / "runs" / run_id
     with exclusive_run_lock(config.control_dir / "campaign"):
         with exclusive_run_lock(run_dir):

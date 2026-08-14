@@ -2579,6 +2579,14 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                 ),
             ):
                 summary = module.run_batch(config, client=zero_cost_test_client())
+            persisted = json.loads(
+                (
+                    config.control_dir
+                    / "preflight"
+                    / f"{summary['run_id']}.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(persisted, summary)
 
         prepare_all.assert_called_once_with(config, mock.ANY)
 
