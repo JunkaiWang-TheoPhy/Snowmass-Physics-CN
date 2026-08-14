@@ -2734,6 +2734,28 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
         self.assertEqual(payload["reason_code"], "stage_request_limit")
         self.assertIn("17 > 16", payload["message"])
 
+    def test_cli_returns_failure_for_completed_run_with_quarantine(self) -> None:
+        module = load_module()
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                module,
+                "run_batch",
+                return_value={"status": "complete_with_quarantine", "failed": 1},
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            exit_code = module.main(
+                [
+                    "--stage", "shadow",
+                    "--project-max-cost-rmb", "1000",
+                    "--stage-max-cost-rmb", "10",
+                ]
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(json.loads(output.getvalue())["failed"], 1)
+
 
 class RevisionReadyRunArticleTests(unittest.TestCase):
     def test_run_article_stops_after_revision_without_refill_or_package(self) -> None:

@@ -2377,7 +2377,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
-    return 0 if summary["status"] in {"preflight", "complete", "complete_with_quarantine"} else 2
+    if summary["status"] in {"preflight", "complete"}:
+        return 0
+    if summary["status"] == "complete_with_quarantine":
+        return 1
+    return 2
 
 
 if __name__ == "__main__":
