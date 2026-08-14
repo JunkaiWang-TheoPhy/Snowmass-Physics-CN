@@ -46,12 +46,14 @@ class OfflineReplayClient:
         self._chunk_outputs: dict[str, str] = {}
         self._style_items: dict[str, dict[str, dict[str, str]]] = {}
         self._style_requests: dict[str, dict[str, str]] = {}
+        self._legacy_style_items: dict[str, dict[str, dict[str, str]]] = {}
         self._evidence_paths: set[Path] = set()
         self._lock = threading.Lock()
         self.replay_calls = 0
         self.record_id = self._load_record_id()
         self._load_paper_outputs()
         self._load_chunk_outputs()
+        self._load_legacy_style_items()
         self._load_style_requests()
         self.fixture_sha256 = self._fixture_hash()
 
@@ -67,6 +69,7 @@ class OfflineReplayClient:
 
     def _load_record_id(self) -> str:
         manifest = self._load_json(self.article_dir / "manifest.json")
+        self._manifest = manifest
         record_id = manifest.get("record_id")
         if not isinstance(record_id, str) or not record_id:
             raise OfflineReplayMissError("fixture manifest has no record_id")
@@ -100,6 +103,7 @@ class OfflineReplayClient:
 
     def _load_paper_outputs(self) -> None:
         status = self._load_json(self.article_dir / "paper_status.json")
+        self._paper_status = status
         if status.get("record_id") not in {None, self.record_id}:
             raise OfflineReplayMissError("paper status record_id does not match fixture manifest")
         phases = status.get("phases")
@@ -171,6 +175,69 @@ class OfflineReplayClient:
                         "request_key": request_key,
                         "output": text,
                     }
+
+    def _load_legacy_style_items(self) -> None:
+        """Index hash-verified per-chunk draft evidence for offline batch replay."""
+
+        chunks = self._manifest.get("chunks")
+        if not isinstance(chunks, list):
+            return
+        phases = self._paper_status.get("phases")
+        prompt_phase = phases.get("prompt") if isinstance(phases, dict) else None
+        prompt_text: str | None = None
+        if isinstance(prompt_phase, dict) and prompt_phase.get("status") == "complete":
+            try:
+                prompt_text = self._artifact_text(
+                    prompt_phase.get("output_file"), prompt_phase.get("output_hash")
+                )
+            except OfflineReplayMissError:
+                prompt_text = None
+
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            try:
+                chunk_id = style_batching._validate_chunk_id(chunk.get("id"))
+                source = self._artifact_text(
+                    chunk.get("source_file"), chunk.get("source_hash")
+                )
+                status = self._load_json(
+                    self.article_dir / "chunk_status" / f"{chunk_id}.json"
+                )
+            except (OfflineReplayMissError, TypeError, ValueError):
+                continue
+            if status.get("chunk_id") not in {None, chunk_id}:
+                continue
+            stages = status.get("stages")
+            if not isinstance(stages, dict):
+                continue
+
+            verified_outputs: dict[str, str] = {}
+            for stage_name in ("translate", "terminology"):
+                stage_status = stages.get(stage_name)
+                if not isinstance(stage_status, dict) or stage_status.get("status") != "complete":
+                    continue
+                try:
+                    verified_outputs[stage_name] = self._artifact_text(
+                        stage_status.get("output_file"), stage_status.get("output_hash")
+                    )
+                except OfflineReplayMissError:
+                    continue
+
+            translated = verified_outputs.get("translate")
+            if translated is not None and prompt_text is not None:
+                self._legacy_style_items.setdefault("translate", {})[chunk_id] = {
+                    "input": runner.protect_stage_text(source)[0],
+                    "output": translated,
+                    "context": prompt_text,
+                }
+            terminology = verified_outputs.get("terminology")
+            if translated is not None and terminology is not None:
+                self._legacy_style_items.setdefault("terminology", {})[chunk_id] = {
+                    "input": runner.protect_stage_text(translated)[0],
+                    "output": terminology,
+                    "context": "",
+                }
 
     def _load_style_requests(self) -> None:
         path = self.article_dir / "style_batch_status.json"
@@ -269,9 +336,20 @@ class OfflineReplayClient:
             if not isinstance(chunks, list) or not stage:
                 raise OfflineReplayMissError("invalid style-batch replay request")
             batch_items: list[style_batching.StyleBatchItem] = []
+            legacy_outputs: dict[str, str] = {}
             for item in chunks:
                 chunk_id = str(item.get("id") or "") if isinstance(item, dict) else ""
                 fixture_item = self._style_items.get(stage, {}).get(chunk_id)
+                if fixture_item is None and isinstance(item, dict):
+                    legacy_item = self._legacy_style_items.get(stage, {}).get(chunk_id)
+                    if (
+                        legacy_item is not None
+                        and item.get("text") == legacy_item["input"]
+                        and item.get("read_only_context") == legacy_item["context"]
+                        and isinstance(item.get("locked_terminology"), str)
+                    ):
+                        legacy_outputs[chunk_id] = legacy_item["output"]
+                        continue
                 if fixture_item is None or not isinstance(item, dict):
                     raise OfflineReplayMissError(
                         f"no exact fixture for style request: {stage}/{chunk_id}"
@@ -287,24 +365,56 @@ class OfflineReplayClient:
                         item_key=fixture_item["item_key"],
                     )
                 )
-            request_key = style_batching.style_batch_request_key(
-                batch=style_batching.StyleBatch(tuple(batch_items)),
-                stage=stage,
-                model=runner.MODEL,
-                instructions=instructions,
-                max_output_tokens=max_output_tokens,
-            )
-            fixture_outputs = self._style_requests.get(request_key)
-            if fixture_outputs is None:
-                raise OfflineReplayMissError(
-                    f"no exact fixture for style request: {request_key}"
+            if legacy_outputs:
+                if batch_items or len(legacy_outputs) != len(chunks):
+                    raise OfflineReplayMissError(
+                        "legacy and native style fixtures cannot be mixed in one replay request"
+                    )
+                translations = {
+                    chunk_id: runner.protect_stage_text(output)[0]
+                    for chunk_id, output in legacy_outputs.items()
+                }
+                text = json.dumps({"translations": translations}, ensure_ascii=False)
+                identity = hashlib.sha256(
+                    json.dumps(
+                        {
+                            "stage": stage,
+                            "instructions": instructions,
+                            "input": input_text,
+                            "max_output_tokens": max_output_tokens,
+                            "outputs": {
+                                chunk_id: hashlib.sha256(output.encode()).hexdigest()
+                                for chunk_id, output in legacy_outputs.items()
+                            },
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+            else:
+                request_key = style_batching.style_batch_request_key(
+                    batch=style_batching.StyleBatch(tuple(batch_items)),
+                    stage=stage,
+                    model=runner.MODEL,
+                    instructions=instructions,
+                    max_output_tokens=max_output_tokens,
                 )
-            translations = {
-                item.chunk_id: runner.protect_stage_text(fixture_outputs[item.chunk_id])[0]
-                for item in batch_items
-            }
-            text = json.dumps({"translations": translations}, ensure_ascii=False)
-            identity = request_key
+                fixture_outputs = self._style_requests.get(request_key)
+                if fixture_outputs is None:
+                    raise OfflineReplayMissError(
+                        f"no exact fixture for style request: {request_key}"
+                    )
+                translations = {
+                    item.chunk_id: runner.protect_stage_text(fixture_outputs[item.chunk_id])[0]
+                    for item in batch_items
+                }
+                text = json.dumps({"translations": translations}, ensure_ascii=False)
+                identity = request_key
+            if text is None:
+                raise OfflineReplayMissError(
+                    "no exact fixture for style request"
+                )
         if text is None:
             paper_key = refined._paper_phase_input_hash(
                 instructions, input_text, max_output_tokens
