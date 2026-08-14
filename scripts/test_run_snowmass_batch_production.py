@@ -1681,6 +1681,47 @@ class BatchResumeTests(unittest.TestCase):
             self.assertEqual(result["paid_translation_pending_count"], 1)
             self.assertEqual(result["pending_record_count"], 2)
 
+    def test_preflight_quarantines_artifact_contract_drift_before_launch(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = module.BatchConfig(
+                **{**self._two_record_config(module, root).__dict__, "preflight_only": True}
+            )
+
+            def prepare(_config, records):
+                for record in records:
+                    article = module._article_dir(config, str(record["record_id"]))
+                    article.mkdir(parents=True, exist_ok=True)
+                    (article / "manifest.json").write_text(
+                        json.dumps({"record_id": record["record_id"]}),
+                        encoding="utf-8",
+                    )
+
+            with (
+                mock.patch.object(module, "_prepare_all", side_effect=prepare),
+                mock.patch.object(
+                    module,
+                    "_ensure_artifact_contract",
+                    side_effect=RuntimeError(
+                        "Production artifact contract failed: environment_lock_drift"
+                    ),
+                ),
+                mock.patch.object(module, "_resume_article_result", return_value=None),
+                mock.patch.object(module, "evaluate_article_qc", return_value={"ok": False}),
+                mock.patch.object(module, "discover_historical_spend", return_value=0.0),
+            ):
+                result = module.run_batch(config, client=zero_cost_test_client())
+
+            self.assertEqual(result["quarantined_count"], 2)
+            self.assertEqual(result["paid_translation_pending_count"], 0)
+            self.assertEqual(result["status"], "preflight_blocked")
+            self.assertFalse(result["launch_ready"])
+            self.assertEqual(
+                result["quarantined_record_ids"],
+                ["arxiv:a", "arxiv:b"],
+            )
+
     def test_preflight_projection_excludes_package_only_records(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

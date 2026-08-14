@@ -2300,15 +2300,40 @@ def _run_batch_active_model(config: BatchConfig, *, client: Any = None) -> dict[
         # Preparation is local and zero-paid. Projection is meaningless until the
         # source PDF has been parsed into a concrete chunk manifest.
         _prepare_all(config, selected)
+        for record in selected:
+            record_id = str(record["record_id"])
+            article_dir = _article_dir(config, record_id)
+            if not (article_dir / "manifest.json").is_file():
+                continue
+            try:
+                _ensure_artifact_contract(config, record, article_dir)
+            except Exception as error:
+                _persist_quarantine(config, record_id, error)
         recoverable, package_only_records, paid_pending = _classify_selected_records(config, selected)
         quarantined = [result for result in recoverable if result.get("status") == "quarantined"]
         recoverable = [result for result in recoverable if result.get("status") != "quarantined"]
         projection_summary = _projection_summary(config, paid_pending)
+        launch_projection = (
+            projection_summary["revision_ready_projection"]
+            if config.through_stage == "revision_ready"
+            else projection_summary["launch_projection"]
+        )
+        projected_worst_case_calls = int(
+            projection_summary.get("projected_worst_case_api_calls") or 0
+            if config.through_stage == "revision_ready"
+            else launch_projection.get("projected_worst_case_api_calls") or 0
+        )
+        launch_ready = (
+            not quarantined
+            and launch_projection.get("projection_ready") is True
+            and projected_worst_case_calls <= config.stage_max_api_calls
+        )
         package_only_ids = [str(record["record_id"]) for record in package_only_records]
         preflight_report = {
             **snapshot,
             **projection_summary,
-            "status": "preflight",
+            "status": "preflight" if launch_ready else "preflight_blocked",
+            "launch_ready": launch_ready,
             "historical_spent_rmb": discover_historical_spend(
                 historical_roots, config.usd_cny_rate
             ),
