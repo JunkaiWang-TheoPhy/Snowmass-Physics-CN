@@ -1323,7 +1323,7 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         document = pymupdf.open()
         page = document.new_page(width=300, height=400)
         page.insert_text((30, 50), "SOURCE BODY MUST STAY HIDDEN", fontsize=12)
-        page.insert_text((30, 300), "[1] SOURCE REFERENCE", fontsize=12)
+        page.insert_text((30, 300), "[1] C\u00e2mara SOURCE REFERENCE", fontsize=12)
         page.insert_text((30, 318), "[2] SECOND SOURCE REFERENCE", fontsize=12)
         document.save(source)
         document.close()
@@ -1348,7 +1348,7 @@ class BabelDocWorkspaceTests(unittest.TestCase):
         with pymupdf.open(mono) as document:
             text = document[0].get_text()
             self.assertIn("CHINESE BODY", text)
-            self.assertIn("SOURCE REFERENCE", text)
+            self.assertIn("C\u00e2mara SOURCE REFERENCE", text)
             self.assertIn("SECOND SOURCE REFERENCE", text)
             self.assertNotIn("SEARCHABLE REFERENCE", text)
             self.assertNotIn("SOURCE BODY MUST STAY HIDDEN", text)

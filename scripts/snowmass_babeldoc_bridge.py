@@ -1099,24 +1099,19 @@ def restore_verbatim_reference_regions(
             for page_index, clip, dual_clip, image_bytes, source_text in prepared_regions:
                 mono_page = mono[page_index]
                 dual_page = dual[page_index]
-                mono_page.insert_image(clip, stream=image_bytes, overlay=True)
-                dual_page.insert_image(dual_clip, stream=image_bytes, overlay=True)
                 for target_page, target_clip in (
                     (mono_page, clip),
                     (dual_page, dual_clip),
                 ):
-                    spare_height = target_page.insert_textbox(
+                    target_page.show_pdf_page(
                         target_clip,
-                        source_text,
-                        fontname="china-s",
-                        fontsize=3,
-                        render_mode=3,
+                        source,
+                        page_index,
+                        clip=clip,
+                        keep_proportion=False,
                         overlay=True,
                     )
-                    if spare_height < 0:
-                        raise RuntimeError(
-                            f"Reference text layer does not fit on page {page_index + 1}"
-                        )
+                    target_page.insert_image(target_clip, stream=image_bytes, overlay=True)
             mono.save(mono_temporary, garbage=4, deflate=True)
             dual.save(dual_temporary, garbage=4, deflate=True)
         os.replace(mono_temporary, mono_pdf)
