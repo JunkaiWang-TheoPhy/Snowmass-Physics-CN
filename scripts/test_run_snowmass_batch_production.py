@@ -199,6 +199,7 @@ class StagePrerequisiteTests(unittest.TestCase):
         recovered: bool = False,
         selected_record_ids: list[str] | None = None,
         result_record_ids: list[str] | None = None,
+        execution_mode: str = "live_api",
     ) -> Path:
         selected_record_ids = selected_record_ids or ["arxiv:a"]
         result_record_ids = result_record_ids or selected_record_ids
@@ -213,6 +214,7 @@ class StagePrerequisiteTests(unittest.TestCase):
             "environment_lock_sha256": environment_lock_sha256,
             "selected_record_ids": selected_record_ids,
             "through_stage": "packaged",
+            "execution_mode": execution_mode,
         }
         (run_dir / "snapshot.json").write_text(
             json.dumps(snapshot), encoding="utf-8"
@@ -332,6 +334,21 @@ class StagePrerequisiteTests(unittest.TestCase):
         self.assertFalse(report["satisfied"])
         self.assertIn("prior_stage_cohort_mismatch", report["reasons"])
         self.assertIn("prior_stage_result_ids_mismatch", report["reasons"])
+
+    def test_offline_replay_shadow_cannot_unlock_pilot5(self) -> None:
+        module = load_module()
+        self._write_prior_run(execution_mode="offline_replay")
+
+        report = module.stage_prerequisite_report(
+            self.control,
+            target_stage="pilot5",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="env-current",
+            expected_prior_record_ids=("arxiv:a",),
+        )
+
+        self.assertFalse(report["satisfied"])
+        self.assertIn("prior_stage_offline_replay_not_fresh", report["reasons"])
 
     def test_paid_non_shadow_run_refuses_before_preparation_without_prerequisite(self) -> None:
         module = load_module()
@@ -463,6 +480,136 @@ class TranslationProvenanceTests(unittest.TestCase):
 
         self.assertFalse(report["fresh"])
         self.assertIn("no_model_checkpoint_evidence", report["reasons"])
+
+    def test_model_failure_fallback_is_not_fresh_model_evidence(self) -> None:
+        module = load_module()
+        self._write_statuses(
+            paper_run_id="current-run",
+            chunk_run_id="current-run",
+        )
+        path = self.article / "chunk_status/chunk0001.json"
+        status = json.loads(path.read_text(encoding="utf-8"))
+        status["stages"]["translate"]["fallback_to_prior_stage"] = True
+        path.write_text(json.dumps(status), encoding="utf-8")
+
+        report = module.translation_provenance_report(self.article, "current-run")
+
+        self.assertFalse(report["fresh"])
+        self.assertIn("model_checkpoint_fallback:chunk0001:translate", report["reasons"])
+
+
+class ShadowReplayConfigTests(unittest.TestCase):
+    def test_offline_replay_client_never_receives_paid_budget_guard(self) -> None:
+        module = load_module()
+
+        class ReplayClient:
+            is_offline_replay = True
+
+        budget = object()
+        self.assertIsNone(module.model_budget_guard(ReplayClient(), budget))
+        self.assertIs(module.model_budget_guard(object(), budget), budget)
+
+    def test_shadow_snapshot_binds_replay_fixture_hash_and_client(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps(
+                    [{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]
+                ),
+                encoding="utf-8",
+            )
+            fixture = root / "fixture"
+            fixture.mkdir()
+            config = module.BatchConfig(
+                rights_manifest=manifest,
+                pdf_root=root / "pdf",
+                output_root=root / "output",
+                control_dir=root / "control",
+                stage="shadow",
+                explicit_ids=(),
+                max_articles=None,
+                project_max_cost_rmb=1000.0,
+                stage_max_cost_rmb=1.0,
+                usd_cny_rate=7.2,
+                chunk_concurrency=1,
+                article_concurrency=1,
+                through_stage="packaged",
+                translation_version="test",
+                packaged_on="2026-08-14",
+                stage_max_api_calls=1,
+                historical_roots=(),
+                shadow_replay_article=fixture,
+            )
+
+            fake_client = mock.Mock(
+                record_id="arxiv:a",
+                fixture_sha256="f" * 64,
+                is_offline_replay=True,
+            )
+            with (
+                mock.patch.object(
+                    module.offline_replay,
+                    "OfflineReplayClient",
+                    return_value=fake_client,
+                ),
+                mock.patch.object(
+                    module,
+                    "_production_environment_lock",
+                    return_value={"lock_sha256": "env-current"},
+                ),
+                mock.patch.object(
+                    module,
+                    "_run_batch_locked",
+                    return_value={"status": "captured"},
+                ) as locked,
+            ):
+                result = module.run_batch(config)
+
+            self.assertEqual(result["status"], "captured")
+            self.assertIs(locked.call_args.kwargs["client"], fake_client)
+            snapshot = locked.call_args.kwargs["snapshot"]
+            self.assertEqual(snapshot["execution_mode"], "offline_replay")
+            self.assertEqual(snapshot["replay_fixture_sha256"], "f" * 64)
+
+    def test_replay_is_rejected_outside_shadow(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps(
+                    [{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]
+                ),
+                encoding="utf-8",
+            )
+            config = module.BatchConfig(
+                rights_manifest=manifest,
+                pdf_root=root / "pdf",
+                output_root=root / "output",
+                control_dir=root / "control",
+                stage="pilot5",
+                explicit_ids=("arxiv:a",),
+                max_articles=None,
+                project_max_cost_rmb=1000.0,
+                stage_max_cost_rmb=1.0,
+                usd_cny_rate=7.2,
+                chunk_concurrency=1,
+                article_concurrency=1,
+                through_stage="packaged",
+                translation_version="test",
+                packaged_on="2026-08-14",
+                stage_max_api_calls=1,
+                historical_roots=(),
+                shadow_replay_article=root / "fixture",
+            )
+
+            with self.assertRaisesRegex(
+                module.ProjectionGateRefusedError,
+                "only valid for shadow",
+            ):
+                module.run_batch(config)
 
 
 class ArticleQCTests(unittest.TestCase):
@@ -1605,6 +1752,35 @@ class BatchResumeTests(unittest.TestCase):
 
 
 class PromotionGateTests(unittest.TestCase):
+    def test_offline_replay_is_diagnostic_not_promotion_evidence(self) -> None:
+        module = load_module()
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 0.0,
+            "project_reserved_rmb": 0.0,
+            "stage_spent_rmb": 0.0,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {"api_calls": 0, "uncertain_calls": 0},
+        }
+
+        _metrics, gate = module.production_metrics_and_gate(
+            stage="shadow",
+            through_stage="packaged",
+            eligible_record_count=273,
+            selected_count=1,
+            selected_record_ids=("arxiv:a",),
+            expected_record_ids=("arxiv:a",),
+            execution_mode="offline_replay",
+            results=[
+                {"record_id": "arxiv:a", "status": "packaged", "source_characters": 10000}
+            ],
+            failures=[],
+            budget=budget,
+        )
+
+        self.assertFalse(gate["allowed"])
+        self.assertIn("offline_replay_not_promotion_evidence", gate["reasons"])
+
     def test_result_ids_must_match_selected_cohort_for_promotion(self) -> None:
         module = load_module()
         budget = {

@@ -37,6 +37,7 @@ import run_snowmass_refined_translation as refined
 import run_snowmass_translation as runner
 import snowmass_constraint_compiler as constraint_compiler
 import snowmass_manual_review as manual_review
+import snowmass_offline_replay as offline_replay
 import snowmass_publication_qc as publication_qc
 import snowmass_qc_contract as qc_contract
 import snowmass_production_contract as production_contract
@@ -85,6 +86,7 @@ def _production_environment_lock() -> dict[str, Any]:
         Path(production_contract.__file__),
         Path(pdf_audit.__file__),
         Path(publication_qc.__file__),
+        Path(offline_replay.__file__),
         refined.TRACKED_HARD_CONSTRAINTS,
     )
     return production_contract.build_environment_lock(
@@ -280,6 +282,7 @@ class BatchConfig:
     retry_uncertain: bool = False
     historical_roots: tuple[Path, ...] = DEFAULT_HISTORICAL_ROOTS
     preflight_only: bool = False
+    shadow_replay_article: Path | None = None
 
 
 def _sha256(path: Path) -> str:
@@ -523,10 +526,12 @@ def _run_id(
     records: list[dict[str, Any]],
     *,
     environment_lock_sha256: str,
+    replay_fixture_sha256: str | None = None,
 ) -> str:
     payload = {
         "rights_sha256": _sha256(config.rights_manifest),
         "environment_lock_sha256": environment_lock_sha256,
+        "replay_fixture_sha256": replay_fixture_sha256,
         "stage": config.stage,
         "records": [record["record_id"] for record in records],
         "stage_max_cost_rmb": config.stage_max_cost_rmb,
@@ -588,6 +593,7 @@ def stage_prerequisite_report(
             "environment_lock_sha256",
             "selected_record_ids",
             "through_stage",
+            "execution_mode",
         )
         if any(report.get(key) != snapshot.get(key) for key in identity_keys):
             reasons.add("prior_stage_snapshot_mismatch")
@@ -617,6 +623,8 @@ def stage_prerequisite_report(
             reasons.add("prior_stage_result_ids_mismatch")
         if report.get("status") != "complete" or report.get("through_stage") != "packaged":
             reasons.add("prior_stage_not_complete_packaged")
+        if report.get("execution_mode") == "offline_replay":
+            reasons.add("prior_stage_offline_replay_not_fresh")
         if report.get("failures") or report.get("hard_failures"):
             reasons.add("prior_stage_has_failures")
         if any(result.get("status") != "packaged" for result in results):
@@ -983,6 +991,8 @@ def translation_provenance_report(article_dir: Path, run_id: str) -> dict[str, A
         checkpoint_ids.append(checkpoint_id)
         if not isinstance(payload, dict) or payload.get("status") != "complete":
             reasons.append(f"model_checkpoint_incomplete:{checkpoint_id}")
+        if isinstance(payload, dict) and payload.get("fallback_to_prior_stage"):
+            reasons.append(f"model_checkpoint_fallback:{checkpoint_id}")
         if isinstance(payload, dict) and payload.get("run_id") == run_id:
             current_ids.append(checkpoint_id)
         else:
@@ -1036,6 +1046,12 @@ def translation_provenance_report(article_dir: Path, run_id: str) -> dict[str, A
         "reused_model_checkpoint_ids": sorted(reused_ids),
         "reasons": sorted(set(reasons)),
     }
+
+
+def model_budget_guard(client: Any, budget: Any) -> Any | None:
+    """Keep offline replay outside all paid-request accounting paths."""
+
+    return None if getattr(client, "is_offline_replay", False) is True else budget
 
 
 def _projection_report_for_record(
@@ -1299,6 +1315,7 @@ def production_metrics_and_gate(
     budget: dict[str, Any],
     selected_record_ids: tuple[str, ...] | None = None,
     expected_record_ids: tuple[str, ...] | None = None,
+    execution_mode: str = "live_api",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Summarize cost efficiency and fail closed before expanding a campaign."""
 
@@ -1388,6 +1405,8 @@ def production_metrics_and_gate(
     expected_status = "qc_passed" if through_stage in {"rendered", "qc_passed"} else through_stage
     if failures:
         reasons.append("article_failures")
+    if execution_mode == "offline_replay":
+        reasons.append("offline_replay_not_promotion_evidence")
     if recovered_results:
         reasons.append("recovered_results_not_promotion_evidence")
     if not fresh_results:
@@ -1884,6 +1903,29 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         config.max_articles,
     )
     canonical_stage_records = select_stage_records(records, config.stage)
+    replay_client = None
+    replay_fixture_sha256 = None
+    execution_mode = "live_api"
+    if config.shadow_replay_article is not None:
+        if config.stage != "shadow":
+            raise ProjectionGateRefusedError(
+                "--shadow-replay-article is only valid for shadow",
+                reason_code="offline_replay_scope",
+            )
+        if client is not None:
+            raise ProjectionGateRefusedError(
+                "offline replay cannot be combined with an injected client",
+                reason_code="offline_replay_client_conflict",
+            )
+        replay_client = offline_replay.OfflineReplayClient(config.shadow_replay_article)
+        selected_ids = [str(record["record_id"]) for record in selected]
+        if selected_ids != [replay_client.record_id]:
+            raise ProjectionGateRefusedError(
+                "offline replay fixture record does not match the canonical shadow record",
+                reason_code="offline_replay_record_mismatch",
+            )
+        replay_fixture_sha256 = replay_client.fixture_sha256
+        execution_mode = "offline_replay"
     rights_manifest_sha256 = _sha256(config.rights_manifest)
     environment_lock = _production_environment_lock()
     environment_lock_sha256 = str(environment_lock["lock_sha256"])
@@ -1929,6 +1971,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         config,
         selected,
         environment_lock_sha256=environment_lock_sha256,
+        replay_fixture_sha256=replay_fixture_sha256,
     )
     snapshot = {
         "schema_version": 2,
@@ -1936,6 +1979,12 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         "stage": config.stage,
         "rights_manifest_sha256": rights_manifest_sha256,
         "environment_lock_sha256": environment_lock_sha256,
+        "execution_mode": execution_mode,
+        **(
+            {"replay_fixture_sha256": replay_fixture_sha256}
+            if replay_fixture_sha256 is not None
+            else {}
+        ),
         "stage_prerequisite": prerequisite,
         "eligible_record_count": len(records),
         "selected_record_ids": [record["record_id"] for record in selected],
@@ -1985,7 +2034,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
                 run_id=run_id,
                 run_dir=run_dir,
                 historical_roots=historical_roots,
-                client=client,
+                client=replay_client or client,
             )
 
 
@@ -2124,6 +2173,7 @@ def _run_batch_locked(
                 budget=budget_snapshot,
                 selected_record_ids=tuple(snapshot["selected_record_ids"]),
                 expected_record_ids=tuple(snapshot["canonical_stage_record_ids"]),
+                execution_mode=str(snapshot["execution_mode"]),
             )
             _atomic_json(
                 run_dir / "run.json",
@@ -2168,7 +2218,16 @@ def _run_batch_locked(
                 ordinal, record = next(iterator)
             except StopIteration:
                 break
-            futures[executor.submit(_run_article, config, record, run_id, actual_client, budget)] = (ordinal, record)
+            futures[
+                executor.submit(
+                    _run_article,
+                    config,
+                    record,
+                    run_id,
+                    actual_client,
+                    model_budget_guard(actual_client, budget),
+                )
+            ] = (ordinal, record)
         while futures:
             done, _pending = concurrent.futures.wait(
                 futures, return_when=concurrent.futures.FIRST_COMPLETED
@@ -2215,7 +2274,7 @@ def _run_batch_locked(
                         next_record,
                         run_id,
                         actual_client,
-                        budget,
+                        model_budget_guard(actual_client, budget),
                     )
                 ] = (next_ordinal, next_record)
     persist()
@@ -2247,6 +2306,7 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
     parser.add_argument("--historical-root", action="append", type=Path)
     parser.add_argument("--retry-uncertain", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument("--shadow-replay-article", type=Path)
     args = parser.parse_args(argv)
     try:
         project = validate_budget(
@@ -2280,6 +2340,7 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
         retry_uncertain=args.retry_uncertain,
         historical_roots=tuple(args.historical_root or DEFAULT_HISTORICAL_ROOTS),
         preflight_only=args.preflight_only,
+        shadow_replay_article=args.shadow_replay_article,
     )
 
 
