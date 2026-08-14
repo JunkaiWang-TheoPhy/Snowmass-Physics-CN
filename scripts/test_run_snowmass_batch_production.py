@@ -1564,6 +1564,29 @@ class RunLockTests(unittest.TestCase):
 
 
 class BatchResumeTests(unittest.TestCase):
+    def test_run_identity_is_scoped_to_the_campaign_output_root(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = self._two_record_config(module, root)
+            second = module.BatchConfig(
+                **{**first.__dict__, "output_root": root / "fresh-output"}
+            )
+            records = [{"record_id": "arxiv:a"}]
+
+            first_id = module._run_id(
+                first,
+                records,
+                environment_lock_sha256="environment",
+            )
+            second_id = module._run_id(
+                second,
+                records,
+                environment_lock_sha256="environment",
+            )
+
+            self.assertNotEqual(first_id, second_id)
+
     def _two_record_config(self, module, root: Path):
         manifest = root / "papers.json"
         records = [

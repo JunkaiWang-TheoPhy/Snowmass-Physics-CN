@@ -558,6 +558,10 @@ def discover_historical_spend(roots: Iterable[Path], usd_cny_rate: float) -> flo
     return sum(refined.existing_article_cost_rmb(path, usd_cny_rate) for path in article_dirs)
 
 
+def _campaign_root_sha256(output_root: Path) -> str:
+    return hashlib.sha256(str(Path(output_root).resolve()).encode("utf-8")).hexdigest()
+
+
 def _run_id(
     config: BatchConfig,
     records: list[dict[str, Any]],
@@ -567,6 +571,7 @@ def _run_id(
 ) -> str:
     payload = {
         "rights_sha256": _sha256(config.rights_manifest),
+        "campaign_root_sha256": _campaign_root_sha256(config.output_root),
         "environment_lock_sha256": environment_lock_sha256,
         "replay_fixture_sha256": replay_fixture_sha256,
         "stage": config.stage,
@@ -2268,6 +2273,7 @@ def _run_batch_active_model(config: BatchConfig, *, client: Any = None) -> dict[
         "schema_version": 2,
         "run_id": run_id,
         "stage": config.stage,
+        "campaign_root_sha256": _campaign_root_sha256(config.output_root),
         "rights_manifest_sha256": rights_manifest_sha256,
         "environment_lock_sha256": environment_lock_sha256,
         "pipeline_lock_sha256": environment_lock["pipeline_lock_sha256"],
