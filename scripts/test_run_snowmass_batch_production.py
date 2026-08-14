@@ -176,7 +176,7 @@ class BatchSelectionTests(unittest.TestCase):
         config = module._parse_args([*base, "--stage-max-api-calls", "777"])
         self.assertEqual(config.stage_max_api_calls, 777)
 
-    def test_deepseek_probe_has_a_ten_rmb_hard_cap(self) -> None:
+    def test_deepseek_probe_has_a_hundred_rmb_hard_cap(self) -> None:
         module = load_module()
         base = [
             "--stage", "deepseek_probe",
@@ -184,10 +184,10 @@ class BatchSelectionTests(unittest.TestCase):
             "--stage-max-api-calls", "200",
         ]
         with self.assertRaises(SystemExit):
-            module._parse_args([*base, "--stage-max-cost-rmb", "10.01"])
+            module._parse_args([*base, "--stage-max-cost-rmb", "100.01"])
 
-        config = module._parse_args([*base, "--stage-max-cost-rmb", "10"])
-        self.assertEqual(config.stage_max_cost_rmb, 10.0)
+        config = module._parse_args([*base, "--stage-max-cost-rmb", "100"])
+        self.assertEqual(config.stage_max_cost_rmb, 100.0)
 
     def test_programmatic_preflight_rejects_zero_stage_request_cap(self) -> None:
         module = load_module()

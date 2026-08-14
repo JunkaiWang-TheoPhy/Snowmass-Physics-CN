@@ -58,7 +58,7 @@ DEFAULT_PDF_ROOT = ROOT / "tmp/pdfs/snowmass2021"
 DEFAULT_OUTPUT_ROOT = ROOT / "output/snowmass2021/babeldoc_production"
 DEFAULT_CONTROL_DIR = ROOT / "output/snowmass2021/production_control"
 DEFAULT_HISTORICAL_ROOTS = (ROOT / "output/snowmass2021/babeldoc_ab_v1",)
-DEEPSEEK_PROBE_MAX_COST_RMB = 10.0
+DEEPSEEK_PROBE_MAX_COST_RMB = 100.0
 STAGE_LIMITS = {
     "shadow": 1,
     "deepseek_probe": 1,
