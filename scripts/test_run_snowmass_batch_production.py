@@ -1681,6 +1681,31 @@ class BatchResumeTests(unittest.TestCase):
             self.assertEqual(result["paid_translation_pending_count"], 1)
             self.assertEqual(result["pending_record_count"], 2)
 
+    def test_package_only_revalidates_refill_before_qc_and_packaging(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            record = {"record_id": "arxiv:a", "publication_allowed": True}
+            article = module._article_dir(config, "arxiv:a")
+            article.mkdir(parents=True)
+
+            with (
+                mock.patch.object(module, "_refill_article") as refill_article,
+                mock.patch.object(
+                    module,
+                    "evaluate_article_qc",
+                    return_value={"ok": True, "failures": []},
+                ) as evaluate_qc,
+                mock.patch.object(module, "_source_character_count", return_value=7),
+                mock.patch.object(module, "_package_article", return_value={"ok": True}),
+            ):
+                result = module._package_only_result(config, record)
+
+            refill_article.assert_called_once_with(config, article)
+            evaluate_qc.assert_called_once_with(article)
+            self.assertEqual(result["status"], "packaged")
+
     def test_preflight_quarantines_artifact_contract_drift_before_launch(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
@@ -1995,12 +2020,14 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "evaluate_article_qc", return_value={"ok": True}),
                 mock.patch.object(module, "_source_character_count", return_value=7),
                 mock.patch.object(module, "_record_stage_artifact"),
+                mock.patch.object(module, "_refill_article") as refill_article,
                 mock.patch.object(module, "_package_article", return_value=expected["package"]),
                 mock.patch.object(module.refined, "run_refined_article") as translate,
             ):
                 result = module._run_article(config, record, "run", object(), object())
 
             self.assertEqual(result, expected)
+            refill_article.assert_called_once_with(config, article)
             translate.assert_not_called()
 
     def test_resume_rejects_receipt_bound_to_stale_rendered_source(self) -> None:

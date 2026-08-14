@@ -1716,6 +1716,7 @@ def _package_only_result(
     record: dict[str, Any],
 ) -> dict[str, Any]:
     article_dir = _article_dir(config, str(record["record_id"]))
+    _refill_article(config, article_dir)
     qc = evaluate_article_qc(article_dir)
     if not qc["ok"]:
         raise RuntimeError("publication QC failed: " + ", ".join(qc["failures"]))
@@ -1930,6 +1931,9 @@ def _run_article(
     )
     if config.through_stage == "packaged":
         existing_qc = evaluate_article_qc(article_dir)
+        if existing_qc["ok"]:
+            _refill_article(config, article_dir)
+            existing_qc = evaluate_article_qc(article_dir)
         if existing_qc["ok"]:
             receipt = _package_article(config, record, article_dir)
             return {
