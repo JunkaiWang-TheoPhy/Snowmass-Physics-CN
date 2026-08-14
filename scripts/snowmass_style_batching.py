@@ -95,6 +95,7 @@ class StyleStagePlan:
     worst_case_requests: int
     restoration_data: dict[str, tuple[dict[str, str], Any]] = field(default_factory=dict)
     input_stage: str = ""
+    mandatory: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,7 @@ class StyleStageResult:
     output_tokens: int
     total_tokens: int
     total_cost_rmb: float
+    failed_chunk_ids: tuple[str, ...] = ()
 
 
 def stage_plan_projection(plan: StyleStagePlan) -> dict[str, Any]:
@@ -507,6 +509,7 @@ def prepare_style_items(
     stage: str,
     input_stage: str,
     context_factory: Callable[[dict[str, Any]], str],
+    mandatory: bool = False,
 ) -> StyleStagePlan:
     reused: list[str] = []
     local: list[str] = []
@@ -518,9 +521,15 @@ def prepare_style_items(
         chunk_id = _validate_chunk_id(chunk["id"])
         source_path = runner.article_artifact_path(article_dir, str(chunk["source_file"]))
         source = source_path.read_text(encoding="utf-8")
-        prior_path = runner.stage_output_path(article_dir, chunk_id, str(chunk["output_file"]), input_stage)
+        prior_path = (
+            source_path
+            if input_stage == "source"
+            else runner.stage_output_path(
+                article_dir, chunk_id, str(chunk["output_file"]), input_stage
+            )
+        )
         if not runner.nonempty(prior_path):
-            raise RuntimeError(f"style stage input is missing or blank: {prior_path}")
+            raise RuntimeError(f"batched stage input is missing or blank: {prior_path}")
         prior = prior_path.read_text(encoding="utf-8")
         selected_terms = runner.compile_glossary_terms(source, terms)
         context_identity = str(context_factory(chunk) or "")
@@ -546,6 +555,21 @@ def prepare_style_items(
         if _checkpoint_matches(stage_status, output_path, item_key=item_key, policy=policy):
             reused.append(chunk_id)
             continue
+
+        if (
+            mandatory
+            and runner.checkpoint_policy_matches(stage_status, policy)
+            and runner.checkpoint_is_reusable_after_contract_change(
+                stage_status, output_path
+            )
+        ):
+            candidate = output_path.read_text(encoding="utf-8")
+            live_qc = runner.validate_chunk(source, candidate, {}, selected_terms)
+            if live_qc.ok:
+                stage_status.update({"item_key": item_key, "qc": live_qc.to_dict()})
+                runner.atomic_json(status_path, status)
+                reused.append(chunk_id)
+                continue
 
         if bool(task.get("passthrough")):
             _complete_local_stage(
@@ -583,6 +607,25 @@ def prepare_style_items(
             local.append(chunk_id)
             continue
 
+        decision = runner.stage_decision(stage, prior, selected_terms)
+        if not decision.should_call_model:
+            _complete_local_stage(
+                article_dir=article_dir,
+                stage=stage,
+                task=task,
+                chunk=chunk,
+                source=source,
+                output_text=prior,
+                glossary_terms=selected_terms,
+                item_key=item_key,
+                policy=policy,
+                decision_reason=decision.reason,
+                status_path=status_path,
+                status=status,
+            )
+            local.append(chunk_id)
+            continue
+
         protected_text, mapping, typed_nodes = runner.protect_stage_text(prior)
         restoration_data[chunk_id] = (mapping, typed_nodes)
         model_items.append(
@@ -609,6 +652,7 @@ def prepare_style_items(
         worst_case_requests=worst_case_requests,
         restoration_data=restoration_data,
         input_stage=input_stage,
+        mandatory=mandatory,
     )
 
 
@@ -1285,9 +1329,9 @@ def execute_style_stage(
             failed_after_recovery.extend(process_batch(batch))
 
     if failed_after_recovery:
-        if not plan.input_stage:
+        if not plan.input_stage and not plan.mandatory:
             raise RuntimeError("style fallback requires an explicit planned input stage")
-        for chunk_id in failed_after_recovery:
+        for chunk_id in (() if plan.mandatory else failed_after_recovery):
             item = item_map[chunk_id]
             chunk = chunk_map[chunk_id]
             task = dict(task_factory(chunk))
@@ -1364,13 +1408,14 @@ def execute_style_stage(
             )
 
     planned_chunks = len(plan.reused) + len(plan.local) + len(plan.model_items)
-    completed_chunks = planned_chunks
+    unresolved = tuple(failed_after_recovery) if plan.mandatory else ()
+    completed_chunks = planned_chunks - len(unresolved)
     return StyleStageResult(
         planned_chunks=planned_chunks,
         completed_chunks=completed_chunks,
         reused_chunks=len(plan.reused),
         local_chunks=len(plan.local),
-        failed_chunks=0,
+        failed_chunks=len(unresolved),
         normal_requests=normal_requests,
         recovery_requests=recovery_requests,
         input_tokens=totals["input_tokens"],
@@ -1378,4 +1423,5 @@ def execute_style_stage(
         output_tokens=totals["output_tokens"],
         total_tokens=totals["total_tokens"],
         total_cost_rmb=totals["cost_rmb"],
+        failed_chunk_ids=unresolved,
     )

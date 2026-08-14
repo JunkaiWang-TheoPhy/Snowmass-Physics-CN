@@ -1521,6 +1521,195 @@ def run_batched_final_style_passes(
     return {"anti_ai": anti_ai_result, "academic": academic_result}
 
 
+def run_batched_draft_passes(
+    article_dir: Path,
+    *,
+    chunks: list[dict[str, Any]],
+    chunk_task: Any,
+    terms: list[dict[str, Any]],
+    prompt: str,
+    client: Any,
+    budget_guard: runner.BudgetGuard | None,
+    run_id: str | None,
+) -> dict[str, style_batching.StyleStageResult]:
+    """Batch plain draft chunks and retain the legacy structure-dense path."""
+
+    def split_batch_safe(
+        stage: str,
+        candidates: list[dict[str, Any]],
+        *,
+        input_stage: str,
+        context: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        safe: list[dict[str, Any]] = []
+        legacy: list[dict[str, Any]] = []
+        for chunk in candidates:
+            task = chunk_task(chunk)
+            if task.get("passthrough") or task.get("fixed_translation") is not None:
+                safe.append(chunk)
+                continue
+            source = runner.article_artifact_path(
+                article_dir, str(chunk["source_file"])
+            ).read_text(encoding="utf-8")
+            current_path = (
+                runner.article_artifact_path(article_dir, str(chunk["source_file"]))
+                if input_stage == "source"
+                else runner.stage_output_path(
+                    article_dir, str(chunk["id"]), str(chunk["output_file"]), input_stage
+                )
+            )
+            current = current_path.read_text(encoding="utf-8")
+            status_path = article_dir / "chunk_status" / f"{chunk['id']}.json"
+            chunk_status = _load_json(status_path) if status_path.is_file() else {}
+            stage_status = chunk_status.get("stages", {}).get(stage, {})
+            plan = _planned_stage_model_subrequests(
+                article_dir=article_dir,
+                chunk=chunk,
+                stage=stage,
+                current=current,
+                terms=terms,
+                paper_context=context,
+                stage_status=stage_status if isinstance(stage_status, dict) else {},
+            )
+            if not plan["decision"].should_call_model or (
+                plan["model_subrequest_count"] == 1
+            ):
+                safe.append(chunk)
+            else:
+                legacy.append(chunk)
+        return safe, legacy
+
+    translate_chunks, translate_legacy = split_batch_safe(
+        "translate", chunks, input_stage="source", context=prompt
+    )
+    translate_plan = style_batching.prepare_style_items(
+        article_dir=article_dir,
+        chunks=translate_chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="translate",
+        input_stage="source",
+        context_factory=lambda _chunk: prompt,
+        mandatory=True,
+    )
+    _require_style_request_capacity(
+        budget_guard,
+        stage="translate",
+        worst_case_requests=translate_plan.worst_case_requests,
+    )
+    if len(translate_plan.model_items) < 2:
+        translate_legacy.extend(
+            chunk for chunk in translate_chunks
+            if str(chunk["id"]) in {item.chunk_id for item in translate_plan.model_items}
+        )
+        translate_result = style_batching.StyleStageResult(
+            planned_chunks=len(translate_plan.reused) + len(translate_plan.local),
+            completed_chunks=len(translate_plan.reused) + len(translate_plan.local),
+            reused_chunks=len(translate_plan.reused), local_chunks=len(translate_plan.local),
+            failed_chunks=0, normal_requests=0, recovery_requests=0,
+            input_tokens=0, cached_tokens=0, output_tokens=0, total_tokens=0,
+            total_cost_rmb=0.0,
+        )
+    else:
+        translate_result = style_batching.execute_style_stage(
+        article_dir=article_dir,
+        chunks=translate_chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="translate",
+        plan=translate_plan,
+        client=client,
+        instructions=runner.stage_instructions("translate", ""),
+        max_output_tokens=_style_batch_max_output_tokens(translate_plan),
+        budget_guard=budget_guard,
+        run_id=run_id,
+            model=runner.MODEL,
+        )
+    translate_fallback_ids = set(translate_result.failed_chunk_ids)
+    translate_legacy.extend(
+        chunk for chunk in translate_chunks if str(chunk["id"]) in translate_fallback_ids
+    )
+    _run_chunk_barrier(
+        translate_legacy,
+        concurrency=min(8, max(1, len(translate_legacy))),
+        phase="draft_translate_legacy",
+        record_id=str(chunk_task(chunks[0])["record_id"]),
+        progress_callback=_print_barrier_progress,
+        stop_event=getattr(budget_guard, "stop_event", None),
+        invoke=lambda chunk, attempt: runner.process_chunk(
+            chunk_task(chunk), client, terms, run_id, budget_guard,
+            stages=("translate",),
+            paper_context=_qc_retry_context(article_dir, chunk, prompt, attempt, terms=terms),
+        ),
+    )
+
+    terminology_chunks, terminology_legacy = split_batch_safe(
+        "terminology", chunks, input_stage="translate", context=""
+    )
+    terminology_plan = style_batching.prepare_style_items(
+        article_dir=article_dir,
+        chunks=terminology_chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="terminology",
+        input_stage="translate",
+        context_factory=lambda _chunk: "",
+        mandatory=True,
+    )
+    _require_style_request_capacity(
+        budget_guard,
+        stage="terminology",
+        worst_case_requests=terminology_plan.worst_case_requests,
+    )
+    if len(terminology_plan.model_items) < 2:
+        terminology_legacy.extend(
+            chunk for chunk in terminology_chunks
+            if str(chunk["id"]) in {item.chunk_id for item in terminology_plan.model_items}
+        )
+        terminology_result = style_batching.StyleStageResult(
+            planned_chunks=len(terminology_plan.reused) + len(terminology_plan.local),
+            completed_chunks=len(terminology_plan.reused) + len(terminology_plan.local),
+            reused_chunks=len(terminology_plan.reused), local_chunks=len(terminology_plan.local),
+            failed_chunks=0, normal_requests=0, recovery_requests=0,
+            input_tokens=0, cached_tokens=0, output_tokens=0, total_tokens=0,
+            total_cost_rmb=0.0,
+        )
+    else:
+        terminology_result = style_batching.execute_style_stage(
+        article_dir=article_dir,
+        chunks=terminology_chunks,
+        task_factory=chunk_task,
+        terms=terms,
+        stage="terminology",
+        plan=terminology_plan,
+        client=client,
+        instructions=runner.stage_instructions("terminology", ""),
+        max_output_tokens=_style_batch_max_output_tokens(terminology_plan),
+        budget_guard=budget_guard,
+        run_id=run_id,
+            model=runner.MODEL,
+        )
+    terminology_fallback_ids = set(terminology_result.failed_chunk_ids)
+    terminology_legacy.extend(
+        chunk for chunk in terminology_chunks
+        if str(chunk["id"]) in terminology_fallback_ids
+    )
+    _run_chunk_barrier(
+        terminology_legacy,
+        concurrency=min(8, max(1, len(terminology_legacy))),
+        phase="draft_terminology_legacy",
+        record_id=str(chunk_task(chunks[0])["record_id"]),
+        progress_callback=_print_barrier_progress,
+        stop_event=getattr(budget_guard, "stop_event", None),
+        invoke=lambda chunk, attempt: runner.process_chunk(
+            chunk_task(chunk), client, terms, run_id, budget_guard,
+            stages=("terminology",),
+            paper_context=_qc_retry_context(article_dir, chunk, "", attempt, terms=terms),
+        ),
+    )
+    return {"translate": translate_result, "terminology": terminology_result}
+
+
 def _qc_retry_context(
     article_dir: Path,
     chunk: dict[str, Any],
@@ -2437,6 +2626,15 @@ def style_projection_report(
     figure_text_ids = runner.figure_text_chunk_ids(article_dir, manifest)
     table_text_ids = runner.table_text_chunk_ids(article_dir, manifest)
     hard_exact_translations = _hard_exact_translations(article_dir, record_id)
+    constraints = runner.constraint_compiler.load_constraints(
+        article_dir, record_id, TRACKED_HARD_CONSTRAINTS
+    )
+    try:
+        constraint_plan = runner.constraint_compiler.load_constraint_plan(
+            article_dir, manifest, constraints
+        )
+    except RuntimeError:
+        constraint_plan = {"plan_sha256": "legacy"}
     fragile_fragment_ids = {
         str(chunk["id"])
         for chunk in chunks
@@ -2575,6 +2773,12 @@ def run_refined_article(
     figure_text_ids = runner.figure_text_chunk_ids(article_dir, manifest)
     table_text_ids = runner.table_text_chunk_ids(article_dir, manifest)
     hard_exact_translations = _hard_exact_translations(article_dir, record_id)
+    constraints = runner.constraint_compiler.load_constraints(
+        article_dir, record_id, TRACKED_HARD_CONSTRAINTS
+    )
+    constraint_plan = runner.constraint_compiler.load_constraint_plan(
+        article_dir, manifest, constraints
+    )
     fragile_fragment_ids = {
         str(chunk["id"])
         for chunk in chunks
@@ -2613,6 +2817,7 @@ def run_refined_article(
             "fixed_translation_reason": (
                 "hard_exact_translation" if fixed_translation is not None else None
             ),
+            "constraint_plan_sha256": constraint_plan.get("plan_sha256"),
             "retry_uncertain": retry_uncertain,
         }
 
@@ -2663,24 +2868,26 @@ def run_refined_article(
         status_path=status_path,
     )
 
-    _run_chunk_barrier(
-        chunks,
-        concurrency=concurrency,
-        phase="draft",
-        record_id=record_id,
-        progress_callback=_print_barrier_progress,
-        stop_event=getattr(budget_guard, "stop_event", None),
-        invoke=lambda chunk, attempt: runner.process_chunk(
-            chunk_task(chunk),
-            client,
-            terms,
-            run_id,
-            budget_guard,
-            stages=("translate", "terminology"),
-            paper_context=_qc_retry_context(
-                article_dir, chunk, prompt, attempt, terms=terms
-            ),
-        ),
+    run_batched_draft_passes(
+        article_dir,
+        chunks=chunks,
+        chunk_task=chunk_task,
+        terms=terms,
+        prompt=prompt,
+        client=client,
+        budget_guard=budget_guard,
+        run_id=run_id,
+    )
+    _print_barrier_progress(
+        {
+            "phase": "draft",
+            "record_id": record_id,
+            "attempt": 0,
+            "completed": len(chunks),
+            "total": len(chunks),
+            "retryable": 0,
+            "terminal_failures": 0,
+        }
     )
     draft, draft_signature = _verified_merge(article_dir, record_id, chunks, "terminology")
     draft = _deterministic_phase(

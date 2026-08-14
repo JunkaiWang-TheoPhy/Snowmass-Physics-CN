@@ -1209,6 +1209,89 @@ class RefinedOrchestratorTests(unittest.TestCase):
         )
         self._compile_current_constraint_plan()
 
+    def test_batched_draft_passes_translate_plain_chunks_in_one_request(self) -> None:
+        module = load_module()
+        self._replace_with_short_chunks(3)
+        manifest = json.loads((self.article / "manifest.json").read_text(encoding="utf-8"))
+        chunks = manifest["chunks"]
+        constraint_plan = module.runner.constraint_compiler.load_constraint_plan(
+            self.article,
+            manifest,
+            module.runner.constraint_compiler.load_constraints(
+                self.article,
+                "arxiv:allowed",
+                module.TRACKED_HARD_CONSTRAINTS,
+            ),
+        )
+
+        def chunk_task(chunk):
+            return {
+                "article_dir": self.article,
+                "record_id": "arxiv:allowed",
+                "chunk": chunk,
+                "passthrough": False,
+                "passthrough_reason": None,
+                "fixed_translation": None,
+                "fixed_translation_reason": None,
+                "constraint_plan_sha256": constraint_plan["plan_sha256"],
+                "retry_uncertain": False,
+            }
+
+        class BatchClient:
+            calls = 0
+
+            def complete(self, instructions: str, input_text: str, max_output_tokens: int):
+                self.calls += 1
+                payload = json.loads(input_text)
+                translations = {
+                    item["id"]: item["text"].replace(
+                        "Original paragraph", "原文段落"
+                    )
+                    for item in payload["chunks"]
+                }
+                return {
+                    "id": "draft-batch",
+                    "status": "completed",
+                    "model": "fake-model",
+                    "output_text": json.dumps(
+                        {"translations": translations}, ensure_ascii=False
+                    ),
+                    "usage": {
+                        "input_tokens": 30,
+                        "input_tokens_details": {"cached_tokens": 0},
+                        "output_tokens": 30,
+                        "output_tokens_details": {"reasoning_tokens": 0},
+                        "total_tokens": 60,
+                    },
+                }, 0.1
+
+        client = BatchClient()
+        results = module.run_batched_draft_passes(
+            self.article,
+            chunks=chunks,
+            chunk_task=chunk_task,
+            terms=[],
+            prompt="保持准确、完整。",
+            client=client,
+            budget_guard=None,
+            run_id="draft-batch-test",
+        )
+
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(results["translate"].normal_requests, 1)
+        self.assertEqual(results["translate"].recovery_requests, 0)
+        self.assertEqual(results["terminology"].normal_requests, 0)
+        for chunk in chunks:
+            status = json.loads(
+                (
+                    self.article
+                    / "chunk_status"
+                    / f"{chunk['id']}.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["stages"]["translate"]["status"], "complete")
+            self.assertEqual(status["stages"]["terminology"]["status"], "complete")
+
     def _write_chunk_stage(
         self,
         module,
