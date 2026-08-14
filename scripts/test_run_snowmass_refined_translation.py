@@ -1621,6 +1621,46 @@ class RefinedOrchestratorTests(unittest.TestCase):
             report["identity_diagnostics"]["blocking_uncertain_checkpoints"],
         )
 
+    def test_revision_ready_projection_allows_budgeted_analysis_replay_when_authorized(self) -> None:
+        module = load_module()
+        manifest = json.loads((self.article / "manifest.json").read_text(encoding="utf-8"))
+        chunks = manifest["chunks"]
+        source = module._tagged_source(self.article, chunks)
+        (self.article / "paper_status.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "record_id": "arxiv:allowed",
+                    "phases": {
+                        "analysis": {
+                            "status": "uncertain",
+                            "input_hash": module._paper_phase_input_hash(
+                                module._analysis_instructions(),
+                                source,
+                                module.ANALYSIS_MAX_OUTPUT_TOKENS,
+                            ),
+                            "conservative_cost_rmb": 0.05,
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        blocked = module.revision_ready_projection(self.article)
+        authorized = module.revision_ready_projection(
+            self.article,
+            retry_uncertain=True,
+        )
+
+        self.assertFalse(blocked["projection_ready"])
+        self.assertTrue(authorized["projection_ready"])
+        self.assertEqual(authorized["missing_stage_api_calls"]["analysis"], 1)
+        self.assertEqual(
+            authorized["identity_diagnostics"]["blocking_uncertain_checkpoints"],
+            [],
+        )
+
     def test_structure_dense_projection_matches_actual_stage_subrequest_fanout(self) -> None:
         module = load_module()
         source = " ".join(f"part $x_{{{index}}}$" for index in range(30)) + "\n"

@@ -50,7 +50,7 @@ from snowmass_pipeline import (
 TRANSLATION_ROOT = Path("output/snowmass2021_translation")
 RIGHTS_MANIFEST = Path("site/data/papers.json")
 TRACKED_HARD_CONSTRAINTS = SCRIPT_DIR.parent / "translations/snowmass-hard-constraints.json"
-API_URL = "https://api.deepseek.com/responses"
+API_URL = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-v4-flash"
 ACTIVE_PROVIDER = "deepseek"
 ACTIVE_EXECUTION_LOCK_SHA256 = ""
@@ -959,13 +959,80 @@ def build_request_payload(instructions: str, input_text: str, max_output_tokens:
     )
     return {
         "model": MODEL,
-        "instructions": instructions,
-        "input": input_text,
-        "reasoning": {"effort": "none"},
-        "max_output_tokens": max_output_tokens,
+        "messages": [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": input_text},
+        ],
+        "thinking": {"type": "disabled"},
+        "max_tokens": max_output_tokens,
         "temperature": 0.15,
-        "text": {"format": output_format},
+        "response_format": output_format,
     }
+
+
+def normalize_chat_completion_response(response: Any) -> dict[str, Any]:
+    """Adapt the official Chat Completions response to the internal response contract."""
+
+    if not isinstance(response, dict):
+        raise ResponseValidationError("DeepSeek chat completion must be an object")
+    choices = response.get("choices")
+    if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
+        raise ResponseValidationError("DeepSeek chat completion must contain exactly one choice")
+    choice = choices[0]
+    message = choice.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    finish_reason = str(choice.get("finish_reason") or "")
+    usage = response.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    completion_details = usage.get("completion_tokens_details")
+    completion_details = completion_details if isinstance(completion_details, dict) else {}
+    normalized: dict[str, Any] = {
+        "id": str(response.get("id") or ""),
+        "model": str(response.get("model") or ""),
+        "usage": {
+            "input_tokens": usage.get("prompt_tokens"),
+            "input_tokens_details": {
+                "cached_tokens": usage.get("prompt_cache_hit_tokens")
+            },
+            "output_tokens": usage.get("completion_tokens"),
+            "output_tokens_details": {
+                "reasoning_tokens": completion_details.get("reasoning_tokens", 0)
+            },
+            "total_tokens": usage.get("total_tokens"),
+        },
+    }
+    if finish_reason == "stop":
+        if not isinstance(content, str) or not content.strip():
+            raise ResponseValidationError("DeepSeek chat completion contained no message content")
+        normalized.update(
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": content}],
+                    }
+                ],
+            }
+        )
+    elif finish_reason == "length":
+        normalized.update(
+            {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+            }
+        )
+    else:
+        normalized.update(
+            {
+                "status": "failed",
+                "error": {
+                    "code": finish_reason or "unknown_finish_reason",
+                    "message": f"Chat completion stopped with {finish_reason or 'no finish reason'}",
+                },
+            }
+        )
+    return normalized
 
 
 def request_key(
@@ -1370,7 +1437,9 @@ class DeepSeekClient:
             try:
                 with urllib.request.urlopen(request, timeout=900) as response_stream:
                     response = json.loads(response_stream.read().decode("utf-8"))
-                return response, round(time.monotonic() - started, 3)
+                return normalize_chat_completion_response(response), round(
+                    time.monotonic() - started, 3
+                )
             except urllib.error.HTTPError as error:
                 try:
                     error_body = error.read().decode("utf-8", errors="replace")

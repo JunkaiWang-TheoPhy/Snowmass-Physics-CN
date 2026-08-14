@@ -48,6 +48,33 @@ def completed_response(text: str = "译文\n", *, model: str = RUNNER.MODEL) -> 
     }
 
 
+def chat_completion_response(
+    text: str = "译文\n",
+    *,
+    model: str = RUNNER.MODEL,
+    finish_reason: str = "stop",
+) -> dict[str, object]:
+    return {
+        "id": "chatcmpl_123",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": finish_reason,
+                "message": {"role": "assistant", "content": text},
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 10,
+            "prompt_cache_hit_tokens": 1,
+            "prompt_cache_miss_tokens": 9,
+            "completion_tokens": 20,
+            "total_tokens": 30,
+        },
+    }
+
+
 class RightsGateTests(unittest.TestCase):
     def test_loader_accepts_only_explicit_publication_permission(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1013,10 +1040,18 @@ class ProcessChunkTests(unittest.TestCase):
         )
         plain = RUNNER.build_request_payload("Translate", "text", 128)
 
-        self.assertEqual(structured["text"]["format"], {"type": "json_object"})
-        self.assertEqual(fallback["text"]["format"], {"type": "json_object"})
-        self.assertEqual(style_batch["text"]["format"], {"type": "json_object"})
-        self.assertEqual(plain["text"]["format"], {"type": "text"})
+        self.assertEqual(structured["response_format"], {"type": "json_object"})
+        self.assertEqual(fallback["response_format"], {"type": "json_object"})
+        self.assertEqual(style_batch["response_format"], {"type": "json_object"})
+        self.assertEqual(plain["response_format"], {"type": "text"})
+        self.assertEqual(plain["thinking"], {"type": "disabled"})
+        self.assertEqual(
+            plain["messages"],
+            [
+                {"role": "system", "content": "Translate"},
+                {"role": "user", "content": "text"},
+            ],
+        )
 
     def test_structure_dense_input_splits_losslessly_at_bounded_density(self) -> None:
         module = RUNNER
@@ -2593,7 +2628,7 @@ class DeepSeekClientRetryTests(unittest.TestCase):
         client = RUNNER.DeepSeekClient("test-key", max_retries=0)
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(
-            completed_response('{"translations":{"chunk0001":"译文"}}')
+            chat_completion_response('{"translations":{"chunk0001":"译文"}}')
         ).encode()
         with mock.patch.object(RUNNER.urllib.request, "urlopen", return_value=response) as urlopen:
             client.complete(
@@ -2604,8 +2639,10 @@ class DeepSeekClientRetryTests(unittest.TestCase):
 
         request = urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(payload["text"]["format"], {"type": "json_object"})
-        self.assertIn("STYLE-BATCH JSON PROTOCOL", payload["instructions"])
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertIn("STYLE-BATCH JSON PROTOCOL", payload["messages"][0]["content"])
+        self.assertEqual(RUNNER.API_URL, "https://api.deepseek.com/chat/completions")
 
     def test_client_retries_tls_handshake_eof_before_request(self) -> None:
         client = RUNNER.DeepSeekClient("test-key", max_retries=2)
@@ -2614,7 +2651,7 @@ class DeepSeekClientRetryTests(unittest.TestCase):
         )
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(
-            completed_response("ok")
+            chat_completion_response("ok")
         ).encode()
         with (
             mock.patch.object(
@@ -2628,6 +2665,8 @@ class DeepSeekClientRetryTests(unittest.TestCase):
             result, _latency = client.complete("instructions", "input", 2048)
 
         self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["usage"]["input_tokens"], 10)
+        self.assertEqual(result["usage"]["input_tokens_details"]["cached_tokens"], 1)
         self.assertEqual(urlopen.call_count, 2)
         sleep.assert_called_once()
 

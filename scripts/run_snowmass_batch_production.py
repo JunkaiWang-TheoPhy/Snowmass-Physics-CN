@@ -84,7 +84,7 @@ TERMINAL_STAGES = (
 )
 _ACTIVE_PROVIDER = "deepseek"
 _ACTIVE_EXECUTION_BINDING: dict[str, Any] = {
-    "protocol": "openai_responses",
+    "protocol": "openai_chat_completions",
     "endpoint": runner.API_URL,
     "billing_mode": "paid_api",
 }
@@ -1197,7 +1197,10 @@ def _projection_report_for_record(
             "projected_worst_case_api_calls": 0,
         }
     try:
-        revision_projection = refined.revision_ready_projection(article_dir)
+        revision_projection = refined.revision_ready_projection(
+            article_dir,
+            retry_uncertain=config.retry_uncertain,
+        )
         if revision_projection.get("projection_ready") is not True:
             return {
                 "record_id": record_id,
@@ -1308,7 +1311,10 @@ def _revision_ready_projection_report_for_record(
     record_id = str(record["record_id"])
     article_dir = _article_dir(config, record_id)
     try:
-        report = refined.revision_ready_projection(article_dir)
+        report = refined.revision_ready_projection(
+            article_dir,
+            retry_uncertain=config.retry_uncertain,
+        )
     except Exception as error:
         return {
             "record_id": record_id,

@@ -2155,7 +2155,11 @@ def _planned_stage_model_subrequests(
     }
 
 
-def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
+def revision_ready_projection(
+    article_dir: Path,
+    *,
+    retry_uncertain: bool = False,
+) -> dict[str, Any]:
     article_dir = Path(article_dir)
     diagnostics = {
         "record_identity_mismatches": [],
@@ -2235,6 +2239,18 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
         return report
     paper_phases = paper_status.get("phases", {})
     for phase_name, phase in paper_phases.items():
+        authorized_analysis_replay = (
+            retry_uncertain
+            and phase_name == "analysis"
+            and isinstance(phase, dict)
+            and phase.get("input_hash")
+            == _paper_phase_input_hash(
+                _analysis_instructions(),
+                source,
+                ANALYSIS_MAX_OUTPUT_TOKENS,
+            )
+            and float(phase.get("conservative_cost_rmb") or 0) > 0
+        )
         if (
             isinstance(phase, dict)
             and (
@@ -2244,6 +2260,7 @@ def revision_ready_projection(article_dir: Path) -> dict[str, Any]:
                 or phase_name.startswith("critique_shard_")
             )
             and phase.get("status") in {"running", "uncertain"}
+            and not authorized_analysis_replay
         ):
             diagnostics["blocking_uncertain_checkpoints"].append(f"paper:{phase_name}")
 
