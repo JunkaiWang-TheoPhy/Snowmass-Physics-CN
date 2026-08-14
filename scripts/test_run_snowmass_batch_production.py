@@ -632,6 +632,7 @@ class TranslationProvenanceTests(unittest.TestCase):
                         },
                         "terminology": {
                             "status": "complete",
+                            "execution_policy": "model_pipeline",
                             "decision": {
                                 "action": "copy_prior_text",
                                 "reason": "terminology_noop",

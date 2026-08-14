@@ -1150,9 +1150,10 @@ def translation_provenance_report(article_dir: Path, run_id: str) -> dict[str, A
                     continue
                 decision = stage.get("decision")
                 model_backed = (
-                    isinstance(decision, dict)
-                    and decision.get("action") == "call_model"
-                ) or stage.get("execution_policy") == "model_pipeline"
+                    decision.get("action") == "call_model"
+                    if isinstance(decision, dict)
+                    else stage.get("execution_policy") == "model_pipeline"
+                )
                 if model_backed:
                     observe(f"{status_path.stem}:{stage_name}", stage)
 
