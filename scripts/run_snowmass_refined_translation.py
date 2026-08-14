@@ -104,6 +104,8 @@ def _paper_phase_input_hash(
         json.dumps(
             {
                 "model": runner.MODEL,
+                "provider": runner.ACTIVE_PROVIDER,
+                "execution_lock_sha256": runner.ACTIVE_EXECUTION_LOCK_SHA256,
                 "instructions": instructions,
                 "input": input_text,
                 "max_output_tokens": max_output_tokens,

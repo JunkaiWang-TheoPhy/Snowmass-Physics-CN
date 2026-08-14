@@ -698,6 +698,29 @@ class RequestKeyAndCheckpointTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
 
+    def test_request_key_is_bound_to_execution_lock(self) -> None:
+        prior = RUNNER.ACTIVE_EXECUTION_LOCK_SHA256
+        try:
+            RUNNER.ACTIVE_EXECUTION_LOCK_SHA256 = "execution-a"
+            first = RUNNER.request_key(
+                stage="translate",
+                model="model",
+                instructions="instructions",
+                input_text="input",
+                max_output_tokens=1024,
+            )
+            RUNNER.ACTIVE_EXECUTION_LOCK_SHA256 = "execution-b"
+            second = RUNNER.request_key(
+                stage="translate",
+                model="model",
+                instructions="instructions",
+                input_text="input",
+                max_output_tokens=1024,
+            )
+        finally:
+            RUNNER.ACTIVE_EXECUTION_LOCK_SHA256 = prior
+        self.assertNotEqual(first, second)
+
     def test_qc_contract_version_requires_v5_checkpoint_revalidation(self) -> None:
         self.assertEqual(RUNNER.QC_CONTRACT_VERSION, 5)
 

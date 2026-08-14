@@ -140,6 +140,73 @@ class SnowmassProductionContractTests(unittest.TestCase):
         self.assertEqual(first["python"]["version"], "3.12.7")
         self.assertEqual(first["assets"]["fonts"][0]["sha256"], sha256_file(self.font_asset))
         self.assertEqual(first["assets"]["cover_assets"][1]["sha256"], sha256_file(self.qr_asset))
+        self.assertRegex(first["pipeline_lock_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(first["execution_lock_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_pipeline_and_execution_locks_have_separate_drift_boundaries(self) -> None:
+        module = load_module()
+        deepseek = self.build_lock(module)
+        local = self.build_lock(
+            module,
+            model="local/model",
+            provider="local_openai",
+            pricing_contract={"currency": "RMB", "input": 0, "output": 0},
+            execution_binding={
+                "protocol": "openai_chat_completions",
+                "endpoint": "http://127.0.0.1:8000",
+                "model_manifest_sha256": "a" * 64,
+                "server_binary_sha256": "b" * 64,
+            },
+        )
+        changed_pipeline = self.build_lock(
+            module,
+            contract_versions={"translation_qc": 6, "packaging": 3},
+        )
+
+        self.assertEqual(deepseek["pipeline_lock_sha256"], local["pipeline_lock_sha256"])
+        self.assertNotEqual(deepseek["execution_lock_sha256"], local["execution_lock_sha256"])
+        self.assertNotEqual(deepseek["lock_sha256"], local["lock_sha256"])
+        self.assertNotEqual(
+            deepseek["pipeline_lock_sha256"], changed_pipeline["pipeline_lock_sha256"]
+        )
+
+    def test_current_execution_drift_is_allowed_but_pipeline_drift_fails(self) -> None:
+        module = load_module()
+        deepseek = self.build_lock(module)
+        local = self.build_lock(
+            module,
+            model="local/model",
+            provider="local_openai",
+            pricing_contract={"currency": "RMB", "input": 0, "output": 0},
+            execution_binding={
+                "protocol": "openai_chat_completions",
+                "endpoint": "http://127.0.0.1:8000",
+                "model_manifest_sha256": "a" * 64,
+                "server_binary_sha256": "b" * 64,
+            },
+        )
+        changed_pipeline = self.build_lock(
+            module,
+            contract_versions={"translation_qc": 6, "packaging": 3},
+        )
+        self.initialize_manifest(module, local)
+
+        execution_drift = module.validate_artifact_manifest(
+            self.manifest_path,
+            article_root=self.article,
+            current_environment_lock=deepseek,
+            rights_manifest_path=self.rights_manifest,
+        )
+        pipeline_drift = module.validate_artifact_manifest(
+            self.manifest_path,
+            article_root=self.article,
+            current_environment_lock=changed_pipeline,
+            rights_manifest_path=self.rights_manifest,
+        )
+
+        self.assertTrue(execution_drift["ok"], execution_drift["errors"])
+        self.assertFalse(pipeline_drift["ok"])
+        self.assertIn("pipeline_lock_drift", pipeline_drift["errors"])
 
     def test_record_artifact_rejects_path_escape_and_duplicate_ids(self) -> None:
         module = load_module()
@@ -281,7 +348,7 @@ class SnowmassProductionContractTests(unittest.TestCase):
             rights_manifest_path=self.rights_manifest,
         )
         self.assertFalse(drift_report["ok"])
-        self.assertIn("environment_lock_drift", drift_report["errors"])
+        self.assertIn("pipeline_lock_drift", drift_report["errors"])
 
         drifted_rights = self.root / "papers-drifted.json"
         drifted_rights.write_text(

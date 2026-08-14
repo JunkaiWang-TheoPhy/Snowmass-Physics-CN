@@ -2035,6 +2035,7 @@ class RefinedOrchestratorTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        self._compile_current_constraint_plan()
 
         style_calls: list[tuple[str, tuple[str, ...]]] = []
         release_third_anti_ai = __import__("threading").Event()

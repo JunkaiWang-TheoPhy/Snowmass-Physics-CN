@@ -30,6 +30,15 @@ def load_module():
     return module
 
 
+def zero_cost_test_client():
+    return mock.Mock(
+        is_zero_cost_test_double=True,
+        is_zero_cost_local=False,
+        local_model_calls=1,
+        local_model_attempts=1,
+    )
+
+
 class BatchCliStartupTests(unittest.TestCase):
     def test_direct_script_help_starts_from_repository_root(self) -> None:
         result = subprocess.run(
@@ -41,6 +50,9 @@ class BatchCliStartupTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--project-max-cost-rmb", result.stdout)
+        self.assertIn("--local-openai-base-url", result.stdout)
+        self.assertIn("--local-model-manifest", result.stdout)
+        self.assertIn("--local-server-binary", result.stdout)
 
 
 class BatchSelectionTests(unittest.TestCase):
@@ -180,7 +192,80 @@ class BatchSelectionTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "request limit"):
-            module.run_batch(config, client=object())
+            module.run_batch(config, client=zero_cost_test_client())
+
+
+class ProductionPrelaunchSafetyTests(unittest.TestCase):
+    @staticmethod
+    def _config(module, root: Path, *, stage: str, explicit_ids=()):
+        manifest = root / "papers.json"
+        manifest.write_text(
+            json.dumps(
+                [
+                    {
+                        "record_id": f"arxiv:{index}",
+                        "publication_allowed": True,
+                        "page_count": index + 1,
+                    }
+                    for index in range(6)
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return module.BatchConfig(
+            rights_manifest=manifest,
+            pdf_root=root / "pdf",
+            output_root=root / "output",
+            control_dir=root / "control",
+            stage=stage,
+            explicit_ids=tuple(explicit_ids),
+            max_articles=None,
+            project_max_cost_rmb=1000.0,
+            stage_max_cost_rmb=10.0,
+            usd_cny_rate=7.2,
+            chunk_concurrency=1,
+            article_concurrency=1,
+            through_stage="packaged",
+            translation_version="test",
+            packaged_on="2026-08-14",
+            stage_max_api_calls=10,
+            historical_roots=(),
+        )
+
+    def test_paid_stage_rejects_noncanonical_cohort_before_preparation(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(
+                module,
+                Path(temporary),
+                stage="pilot5",
+                explicit_ids=("arxiv:5",),
+            )
+            with (
+                mock.patch.object(module, "_prepare_all") as prepare_all,
+                mock.patch.object(module.runner, "DeepSeekClient") as deepseek_client,
+                self.assertRaisesRegex(
+                    module.ProjectionGateRefusedError,
+                    "complete canonical stage cohort",
+                ),
+            ):
+                module.run_batch(config)
+            prepare_all.assert_not_called()
+            deepseek_client.assert_not_called()
+
+    def test_paid_shadow_is_rejected_before_client_creation(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(module, Path(temporary), stage="shadow")
+            with (
+                mock.patch.object(module.runner, "DeepSeekClient") as deepseek_client,
+                self.assertRaisesRegex(
+                    module.ProjectionGateRefusedError,
+                    "shadow must use zero-paid",
+                ),
+            ):
+                module.run_batch(config)
+            deepseek_client.assert_not_called()
 
 
 class StagePrerequisiteTests(unittest.TestCase):
@@ -200,6 +285,8 @@ class StagePrerequisiteTests(unittest.TestCase):
         selected_record_ids: list[str] | None = None,
         result_record_ids: list[str] | None = None,
         execution_mode: str = "live_api",
+        pipeline_lock_sha256: str = "pipeline-current",
+        execution_lock_sha256: str = "execution-prior",
     ) -> Path:
         selected_record_ids = selected_record_ids or ["arxiv:a"]
         result_record_ids = result_record_ids or selected_record_ids
@@ -215,6 +302,8 @@ class StagePrerequisiteTests(unittest.TestCase):
             "selected_record_ids": selected_record_ids,
             "through_stage": "packaged",
             "execution_mode": execution_mode,
+            "pipeline_lock_sha256": pipeline_lock_sha256,
+            "execution_lock_sha256": execution_lock_sha256,
         }
         (run_dir / "snapshot.json").write_text(
             json.dumps(snapshot), encoding="utf-8"
@@ -350,6 +439,85 @@ class StagePrerequisiteTests(unittest.TestCase):
         self.assertFalse(report["satisfied"])
         self.assertIn("prior_stage_offline_replay_not_fresh", report["reasons"])
 
+    def test_local_shadow_can_unlock_live_pilot_only_with_same_pipeline_lock(self) -> None:
+        module = load_module()
+        self._write_prior_run(
+            environment_lock_sha256="local-environment",
+            execution_mode="local_model",
+            pipeline_lock_sha256="pipeline-current",
+            execution_lock_sha256="local-execution",
+        )
+
+        accepted = module.stage_prerequisite_report(
+            self.control,
+            target_stage="pilot5",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="deepseek-environment",
+            pipeline_lock_sha256="pipeline-current",
+            current_execution_mode="live_api",
+            expected_prior_record_ids=("arxiv:a",),
+        )
+        rejected = module.stage_prerequisite_report(
+            self.control,
+            target_stage="pilot5",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="deepseek-environment",
+            pipeline_lock_sha256="pipeline-drifted",
+            current_execution_mode="live_api",
+            expected_prior_record_ids=("arxiv:a",),
+        )
+
+        self.assertTrue(accepted["satisfied"], accepted["reasons"])
+        self.assertEqual(accepted["transition"], "local_shadow_to_live_pilot5")
+        self.assertEqual(accepted["execution_lock_sha256"], "local-execution")
+        self.assertFalse(rejected["satisfied"])
+        self.assertIn("prior_stage_pipeline_lock_mismatch", rejected["reasons"])
+
+    def test_prior_artifacts_must_match_the_accepted_prior_run_identity(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "production_artifacts.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "record_id": "arxiv:a",
+                        "environment_lock_sha256": "prior-environment",
+                        "pipeline_lock_sha256": "pipeline-current",
+                        "execution_lock_sha256": "local-execution",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            prerequisite = {
+                "environment_lock_sha256": "prior-environment",
+                "pipeline_lock_sha256": "pipeline-current",
+                "execution_lock_sha256": "local-execution",
+            }
+            self.assertTrue(
+                module.prior_artifact_identity_report(
+                    manifest,
+                    prerequisite,
+                    expected_record_id="arxiv:a",
+                )["ok"]
+            )
+            prerequisite["execution_lock_sha256"] = "different-execution"
+            report = module.prior_artifact_identity_report(
+                manifest,
+                prerequisite,
+                expected_record_id="arxiv:a",
+            )
+            self.assertFalse(report["ok"])
+            self.assertIn(
+                "prior_artifact_execution_lock_sha256_mismatch",
+                report["errors"],
+            )
+            wrong_record = module.prior_artifact_identity_report(
+                manifest,
+                {**prerequisite, "execution_lock_sha256": "local-execution"},
+                expected_record_id="arxiv:b",
+            )
+            self.assertIn("prior_artifact_record_id_mismatch", wrong_record["errors"])
+
     def test_paid_non_shadow_run_refuses_before_preparation_without_prerequisite(self) -> None:
         module = load_module()
         manifest = self.root / "papers.json"
@@ -383,7 +551,11 @@ class StagePrerequisiteTests(unittest.TestCase):
             mock.patch.object(
                 module,
                 "_production_environment_lock",
-                return_value={"lock_sha256": "env-current"},
+                return_value={
+                    "lock_sha256": "env-current",
+                    "pipeline_lock_sha256": "pipeline-current",
+                    "execution_lock_sha256": "execution-current",
+                },
             ),
             mock.patch.object(
                 module,
@@ -395,7 +567,7 @@ class StagePrerequisiteTests(unittest.TestCase):
                 "prior-stage promotion evidence",
             ),
         ):
-            module.run_batch(config, client=object())
+            module.run_batch(config, client=zero_cost_test_client())
 
 
 class TranslationProvenanceTests(unittest.TestCase):
@@ -509,6 +681,11 @@ class ShadowReplayConfigTests(unittest.TestCase):
         self.assertIsNone(module.model_budget_guard(ReplayClient(), budget))
         self.assertIs(module.model_budget_guard(object(), budget), budget)
 
+        class LocalClient:
+            is_zero_cost_local = True
+
+        self.assertIsNone(module.model_budget_guard(LocalClient(), budget))
+
     def test_shadow_snapshot_binds_replay_fixture_hash_and_client(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
@@ -557,7 +734,11 @@ class ShadowReplayConfigTests(unittest.TestCase):
                 mock.patch.object(
                     module,
                     "_production_environment_lock",
-                    return_value={"lock_sha256": "env-current"},
+                    return_value={
+                        "lock_sha256": "env-current",
+                        "pipeline_lock_sha256": "pipeline-current",
+                        "execution_lock_sha256": "execution-current",
+                    },
                 ),
                 mock.patch.object(
                     module,
@@ -610,6 +791,169 @@ class ShadowReplayConfigTests(unittest.TestCase):
                 "only valid for shadow",
             ):
                 module.run_batch(config)
+
+
+class LocalShadowConfigTests(unittest.TestCase):
+    def test_local_shadow_binds_model_identity_and_uses_active_model(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps(
+                    [{"record_id": "arxiv:a", "publication_allowed": True, "page_count": 1}]
+                ),
+                encoding="utf-8",
+            )
+            config = module.BatchConfig(
+                rights_manifest=manifest,
+                pdf_root=root / "pdf",
+                output_root=root / "output",
+                control_dir=root / "control",
+                stage="shadow",
+                explicit_ids=(),
+                max_articles=None,
+                project_max_cost_rmb=1000.0,
+                stage_max_cost_rmb=1.0,
+                usd_cny_rate=7.2,
+                chunk_concurrency=1,
+                article_concurrency=1,
+                through_stage="packaged",
+                translation_version="test",
+                packaged_on="2026-08-14",
+                stage_max_api_calls=1,
+                historical_roots=(),
+                local_openai_base_url="http://127.0.0.1:8000",
+                local_model="local/model",
+                local_model_manifest=root / "model-manifest.json",
+                local_server_binary=root / "server",
+            )
+            fake_client = mock.Mock(
+                model="local/model",
+                model_manifest_sha256="c" * 64,
+                is_zero_cost_local=True,
+                local_model_calls=0,
+                local_model_attempts=0,
+            )
+
+            def capture(_config, **kwargs):
+                self.assertEqual(module.runner.MODEL, "local/model")
+                self.assertEqual(kwargs["snapshot"]["execution_mode"], "local_model")
+                self.assertEqual(kwargs["snapshot"]["model"], "local/model")
+                self.assertEqual(kwargs["snapshot"]["model_manifest_sha256"], "c" * 64)
+                self.assertEqual(kwargs["snapshot"]["server_binary_sha256"], "e" * 64)
+                self.assertEqual(
+                    module.runner.ACTIVE_EXECUTION_LOCK_SHA256,
+                    "execution-current",
+                )
+                self.assertIs(kwargs["client"], fake_client)
+                module.local_openai.LocalOpenAIClient.assert_called_once_with(
+                    base_url="http://127.0.0.1:8000",
+                    model="local/model",
+                    model_manifest_sha256="c" * 64,
+                    max_calls=1,
+                )
+                return {"status": "captured"}
+
+            original_model = module.runner.MODEL
+            with (
+                mock.patch.object(
+                    module.local_openai,
+                    "LocalOpenAIClient",
+                    return_value=fake_client,
+                ),
+                mock.patch.object(
+                    module.local_attestation,
+                    "verify_local_execution",
+                    return_value={
+                        "model_manifest_sha256": "c" * 64,
+                        "model_root": "/models/local",
+                        "server_binary_sha256": "e" * 64,
+                        "server_command_sha256": "f" * 64,
+                    },
+                ),
+                mock.patch.object(
+                    module,
+                    "_production_environment_lock",
+                    return_value={
+                        "lock_sha256": "env-current",
+                        "pipeline_lock_sha256": "pipeline-current",
+                        "execution_lock_sha256": "execution-current",
+                    },
+                ) as environment_lock,
+                mock.patch.object(module, "_run_batch_locked", side_effect=capture),
+            ):
+                result = module.run_batch(config)
+
+            self.assertEqual(result["status"], "captured")
+            self.assertEqual(module.runner.MODEL, original_model)
+            environment_lock.assert_called_once_with(provider="local_openai")
+
+    def test_local_model_configuration_is_all_or_nothing_and_shadow_only(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "papers.json"
+            manifest.write_text(
+                json.dumps([{"record_id": "arxiv:a", "publication_allowed": True}]),
+                encoding="utf-8",
+            )
+            base = dict(
+                rights_manifest=manifest,
+                pdf_root=root / "pdf",
+                output_root=root / "output",
+                control_dir=root / "control",
+                stage="shadow",
+                explicit_ids=(),
+                max_articles=None,
+                project_max_cost_rmb=1000.0,
+                stage_max_cost_rmb=1.0,
+                usd_cny_rate=7.2,
+                chunk_concurrency=1,
+                article_concurrency=1,
+                through_stage="packaged",
+                translation_version="test",
+                packaged_on="2026-08-14",
+                stage_max_api_calls=1,
+                historical_roots=(),
+            )
+            incomplete = module.BatchConfig(
+                **base,
+                local_openai_base_url="http://127.0.0.1:8000",
+            )
+            with self.assertRaisesRegex(module.ProjectionGateRefusedError, "all be provided"):
+                module.run_batch(incomplete)
+
+            non_shadow = module.BatchConfig(
+                **{**base, "stage": "pilot5"},
+                local_openai_base_url="http://127.0.0.1:8000",
+                local_model="local/model",
+                local_model_manifest=root / "model-manifest.json",
+                local_server_binary=root / "server",
+            )
+            with self.assertRaisesRegex(module.ProjectionGateRefusedError, "only valid for shadow"):
+                module.run_batch(non_shadow)
+
+            malformed_identity = module.BatchConfig(
+                **base,
+                local_openai_base_url="http://127.0.0.1:8000",
+                local_model="local/model",
+                local_model_manifest=root / "model-manifest.json",
+                local_server_binary=root / "server",
+            )
+            with mock.patch.object(
+                module.local_attestation,
+                "verify_local_execution",
+                return_value={
+                    "model_manifest_sha256": "not-a-sha",
+                    "model_root": "/models/local",
+                    "server_binary_sha256": "e" * 64,
+                    "server_command_sha256": "f" * 64,
+                },
+            ), self.assertRaisesRegex(
+                module.ProjectionGateRefusedError, "64-character lowercase SHA-256"
+            ):
+                module.run_batch(malformed_identity)
 
 
 class ArticleQCTests(unittest.TestCase):
@@ -1030,6 +1374,9 @@ class RunLockTests(unittest.TestCase):
                 environment_lock=old_lock,
             )
             new_lock = {**old_lock, "git": {**old_lock["git"], "commit": "new-commit"}}
+            new_lock["pipeline_lock_sha256"] = module.production_contract._json_sha256(
+                module.production_contract._pipeline_lock_payload(new_lock)
+            )
             new_lock["lock_sha256"] = module.production_contract._json_sha256(
                 {key: value for key, value in new_lock.items() if key != "lock_sha256"}
             )
@@ -1086,6 +1433,9 @@ class RunLockTests(unittest.TestCase):
             )
             (article / "05-revision.md").write_text("new revision", encoding="utf-8")
             new_lock = {**old_lock, "git": {**old_lock["git"], "commit": "new-commit"}}
+            new_lock["pipeline_lock_sha256"] = module.production_contract._json_sha256(
+                module.production_contract._pipeline_lock_payload(new_lock)
+            )
             new_lock["lock_sha256"] = module.production_contract._json_sha256(
                 {key: value for key, value in new_lock.items() if key != "lock_sha256"}
             )
@@ -1233,7 +1583,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_run_article", side_effect=process),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(attempted, ["arxiv:a", "arxiv:b"])
             self.assertEqual(result["status"], "complete_with_quarantine")
@@ -1298,7 +1648,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "evaluate_article_qc", side_effect=qc),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(result["verified_resume_count"], 0)
             self.assertEqual(result["verified_package_only_count"], 1)
@@ -1341,7 +1691,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_projection_report_for_record", side_effect=projection),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(projected_records, ["arxiv:b"])
             self.assertEqual(result["projected_normal_api_calls"], 3)
@@ -1383,7 +1733,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_projection_report_for_record", side_effect=AssertionError("package-only must not project as paid")),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertTrue(result["style_projection"]["projection_ready"])
             self.assertEqual(result["verified_package_only_count"], 1)
@@ -1444,7 +1794,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_run_article", side_effect=process),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(projected_records, ["arxiv:b"])
             self.assertEqual(attempted, ["arxiv:b"])
@@ -1466,7 +1816,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_run_article", side_effect=process),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(attempted, ["arxiv:a"])
             self.assertEqual(result["status"], "stopped")
@@ -1495,7 +1845,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_run_article", side_effect=fail),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(attempted, ["arxiv:a", "arxiv:b", "arxiv:c"])
             self.assertEqual(result["status"], "stopped")
@@ -1525,7 +1875,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_run_article", side_effect=process),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(result["status"], "complete_with_quarantine")
             self.assertEqual(result["not_started"], 0)
@@ -1552,7 +1902,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_run_article", side_effect=process),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(attempted, ["arxiv:b"])
             self.assertEqual(result["status"], "complete")
@@ -1668,7 +2018,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_run_article", side_effect=complete_article),
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             ):
-                result = module.run_batch(config, client=object())
+                result = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(result["status"], "complete")
             self.assertEqual([len(call) for call in calls], [5, 5])
@@ -1736,10 +2086,10 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "discover_historical_spend", return_value=0.0),
             )
             with patches[0], patches[1], patches[2]:
-                first = module.run_batch(config, client=object())
+                first = module.run_batch(config, client=zero_cost_test_client())
                 ledger = config.control_dir / "budget_ledger.jsonl"
                 first_events = [json.loads(line) for line in ledger.read_text().splitlines()]
-                second = module.run_batch(config, client=object())
+                second = module.run_batch(config, client=zero_cost_test_client())
                 second_events = [json.loads(line) for line in ledger.read_text().splitlines()]
 
             paid_kinds = {"settle", "commit_estimate", "recover_orphan"}
@@ -1752,6 +2102,44 @@ class BatchResumeTests(unittest.TestCase):
 
 
 class PromotionGateTests(unittest.TestCase):
+    def test_local_shadow_requires_observed_local_model_calls(self) -> None:
+        module = load_module()
+        budget = {
+            "project_max_cost_rmb": 1000.0,
+            "project_spent_rmb": 0.0,
+            "project_reserved_rmb": 0.0,
+            "stage_spent_rmb": 0.0,
+            "stage_reserved_rmb": 0.0,
+            "stage_usage": {"api_calls": 0, "uncertain_calls": 0},
+        }
+        kwargs = dict(
+            stage="shadow",
+            through_stage="packaged",
+            eligible_record_count=273,
+            selected_count=1,
+            selected_record_ids=("arxiv:a",),
+            expected_record_ids=("arxiv:a",),
+            execution_mode="local_model",
+            results=[
+                {"record_id": "arxiv:a", "status": "packaged", "source_characters": 10000}
+            ],
+            failures=[],
+            budget=budget,
+        )
+
+        _metrics, missing_gate = module.production_metrics_and_gate(
+            **kwargs,
+            local_model_calls=0,
+        )
+        _metrics, observed_gate = module.production_metrics_and_gate(
+            **kwargs,
+            local_model_calls=3,
+        )
+
+        self.assertFalse(missing_gate["allowed"])
+        self.assertIn("local_shadow_has_no_model_calls", missing_gate["reasons"])
+        self.assertTrue(observed_gate["allowed"])
+
     def test_offline_replay_is_diagnostic_not_promotion_evidence(self) -> None:
         module = load_module()
         budget = {
@@ -2190,7 +2578,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                     side_effect=AssertionError("revision-ready preflight must not use style projection"),
                 ),
             ):
-                summary = module.run_batch(config, client=object())
+                summary = module.run_batch(config, client=zero_cost_test_client())
 
         prepare_all.assert_called_once_with(config, mock.ANY)
 
@@ -2229,7 +2617,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                     },
                 ),
             ):
-                summary = module.run_batch(config, client=object())
+                summary = module.run_batch(config, client=zero_cost_test_client())
 
         self.assertEqual(summary["status"], "preflight")
         self.assertEqual(summary["projected_normal_api_calls"], 7)
@@ -2281,7 +2669,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                     },
                 ),
             ):
-                summary = module.run_batch(config, client=object())
+                summary = module.run_batch(config, client=zero_cost_test_client())
 
         self.assertTrue(summary["launch_projection"]["projection_ready"])
         self.assertEqual(summary["launch_projection"]["projected_worst_case_api_calls"], 7)
@@ -2412,7 +2800,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaisesRegex(Exception, "7.*6|6.*7|cap|projection"):
-                    module.run_batch(config)
+                    module.run_batch(config, client=zero_cost_test_client())
 
         self.assertEqual(len(guard_instances), 1)
 
@@ -2468,7 +2856,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaisesRegex(Exception, "17.*16|16.*17|projection"):
-                    module.run_batch(config)
+                    module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(len(guard_instances), 1)
 
@@ -2515,7 +2903,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                     "source_characters": 1,
                 }) as run_article,
             ):
-                summary = module.run_batch(config, client=object())
+                summary = module.run_batch(config, client=zero_cost_test_client())
 
             self.assertEqual(summary["status"], "complete")
             run_article.assert_called_once()
@@ -2582,7 +2970,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "arxiv:a|not ready"):
-                    module.run_batch(config)
+                    module.run_batch(config, client=zero_cost_test_client())
 
     def test_usage_summary_counts_each_style_batch_attempt_once(self) -> None:
         module = load_module()
@@ -2598,6 +2986,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                                 "requests": [
                                     {
                                         "attempt_id": "anti-1",
+                                        "request_key": "shared-style-request",
                                         "status": "settled",
                                         "usage": {
                                             "input_tokens": 11,
@@ -2612,6 +3001,7 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
                                 "requests": [
                                     {
                                         "attempt_id": "academic-1",
+                                        "request_key": "academic-style-request",
                                         "status": "settled",
                                         "usage": {
                                             "input_tokens": 13,
@@ -2655,6 +3045,40 @@ class StyleProjectionLaunchGateTests(unittest.TestCase):
         self.assertEqual(usage["cached_tokens"], 3)
         self.assertEqual(usage["output_tokens"], 12)
         self.assertEqual(usage["total_tokens"], 36)
+
+    def test_usage_summary_counts_normal_chunk_requests_with_request_keys(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            article_dir = Path(temporary) / "paper"
+            status_dir = article_dir / "chunk_status"
+            status_dir.mkdir(parents=True)
+            (status_dir / "chunk0001.json").write_text(
+                json.dumps(
+                    {
+                        "stages": {
+                            "translate": {
+                                "run_id": "run-one",
+                                "request_key": "normal-translate-request",
+                                "usage": {
+                                    "input_tokens": 17,
+                                    "cached_tokens": 2,
+                                    "output_tokens": 9,
+                                    "total_tokens": 26,
+                                },
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            usage = module.collect_article_run_usage(article_dir, run_id="run-one")
+
+        self.assertEqual(usage["api_calls"], 1)
+        self.assertEqual(usage["input_tokens"], 17)
+        self.assertEqual(usage["cached_tokens"], 2)
+        self.assertEqual(usage["output_tokens"], 9)
+        self.assertEqual(usage["total_tokens"], 26)
 
     def test_cli_returns_structured_status_for_projection_not_ready_gate(self) -> None:
         module = load_module()

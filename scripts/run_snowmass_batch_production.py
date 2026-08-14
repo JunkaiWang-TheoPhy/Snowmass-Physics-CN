@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import datetime as dt
 import difflib
 import hashlib
@@ -37,6 +37,8 @@ import run_snowmass_refined_translation as refined
 import run_snowmass_translation as runner
 import snowmass_constraint_compiler as constraint_compiler
 import snowmass_manual_review as manual_review
+import snowmass_local_openai as local_openai
+import snowmass_local_attestation as local_attestation
 import snowmass_offline_replay as offline_replay
 import snowmass_publication_qc as publication_qc
 import snowmass_qc_contract as qc_contract
@@ -72,9 +74,21 @@ TERMINAL_STAGES = (
     "qc_passed",
     "packaged",
 )
+_ACTIVE_PROVIDER = "deepseek"
+_ACTIVE_EXECUTION_BINDING: dict[str, Any] = {
+    "protocol": "openai_responses",
+    "endpoint": runner.API_URL,
+    "billing_mode": "paid_api",
+}
+_EXECUTION_CONTEXT_LOCK = threading.RLock()
 
 
-def _production_environment_lock() -> dict[str, Any]:
+def _production_environment_lock(
+    *,
+    provider: str | None = None,
+    execution_binding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    provider = provider or _ACTIVE_PROVIDER
     contract_files = (
         Path(__file__),
         Path(runner.__file__),
@@ -87,6 +101,8 @@ def _production_environment_lock() -> dict[str, Any]:
         Path(pdf_audit.__file__),
         Path(publication_qc.__file__),
         Path(offline_replay.__file__),
+        Path(local_openai.__file__),
+        Path(local_attestation.__file__),
         refined.TRACKED_HARD_CONSTRAINTS,
     )
     return production_contract.build_environment_lock(
@@ -94,13 +110,18 @@ def _production_environment_lock() -> dict[str, Any]:
         babeldoc_version=prepare.BRIDGE.BABELDOC_VERSION,
         ir_version=str(prepare.BRIDGE.IR_PIPELINE_VERSION),
         model=runner.MODEL,
-        provider="deepseek",
-        pricing_contract={
-            "currency": "USD",
-            "input_cache_hit": runner.INPUT_CACHE_HIT_USD_PER_MILLION,
-            "input_cache_miss": runner.INPUT_CACHE_MISS_USD_PER_MILLION,
-            "output": runner.OUTPUT_USD_PER_MILLION,
-        },
+        provider=provider,
+        execution_binding=execution_binding or _ACTIVE_EXECUTION_BINDING,
+        pricing_contract=(
+            {
+                "currency": "USD",
+                "input_cache_hit": runner.INPUT_CACHE_HIT_USD_PER_MILLION,
+                "input_cache_miss": runner.INPUT_CACHE_MISS_USD_PER_MILLION,
+                "output": runner.OUTPUT_USD_PER_MILLION,
+            }
+            if provider == "deepseek"
+            else {"currency": "RMB", "input": 0, "output": 0}
+        ),
         contract_versions={
             "translation_qc": runner.QC_CONTRACT_VERSION,
             "refill": refill.REFILL_SCHEMA_VERSION,
@@ -125,9 +146,10 @@ def _recoverable_environment_transition(
 
     stored_errors = set(stored_report.get("errors") or [])
     current_errors = set(current_report.get("errors") or [])
-    if "environment_lock_drift" not in current_errors:
+    drift_errors = current_errors & {"environment_lock_drift", "pipeline_lock_drift"}
+    if len(drift_errors) != 1:
         return False
-    if current_errors - {"environment_lock_drift"} != stored_errors:
+    if current_errors - drift_errors != stored_errors:
         return False
     for error in stored_errors:
         if not error.startswith("artifact_hash_mismatch:"):
@@ -283,6 +305,13 @@ class BatchConfig:
     historical_roots: tuple[Path, ...] = DEFAULT_HISTORICAL_ROOTS
     preflight_only: bool = False
     shadow_replay_article: Path | None = None
+    local_openai_base_url: str | None = None
+    local_model: str | None = None
+    local_model_manifest: Path | None = None
+    local_server_binary: Path | None = None
+    local_model_manifest_sha256: str | None = None
+    local_server_binary_sha256: str | None = None
+    local_server_command_sha256: str | None = None
 
 
 def _sha256(path: Path) -> str:
@@ -551,6 +580,8 @@ def stage_prerequisite_report(
     rights_manifest_sha256: str,
     environment_lock_sha256: str,
     expected_prior_record_ids: tuple[str, ...],
+    pipeline_lock_sha256: str | None = None,
+    current_execution_mode: str = "live_api",
 ) -> dict[str, Any]:
     """Find a complete, fresh prior-stage promotion proof for this contract."""
 
@@ -594,6 +625,8 @@ def stage_prerequisite_report(
             "selected_record_ids",
             "through_stage",
             "execution_mode",
+            "pipeline_lock_sha256",
+            "execution_lock_sha256",
         )
         if any(report.get(key) != snapshot.get(key) for key in identity_keys):
             reasons.add("prior_stage_snapshot_mismatch")
@@ -601,8 +634,28 @@ def stage_prerequisite_report(
             reasons.add("prior_stage_name_mismatch")
         if report.get("rights_manifest_sha256") != rights_manifest_sha256:
             reasons.add("prior_stage_rights_manifest_mismatch")
-        if report.get("environment_lock_sha256") != environment_lock_sha256:
+        prior_mode = str(report.get("execution_mode") or "")
+        local_transition = (
+            previous_stage == "shadow"
+            and target_stage == "pilot5"
+            and prior_mode == "local_model"
+            and current_execution_mode == "live_api"
+        )
+        if (
+            pipeline_lock_sha256 is not None
+            and report.get("pipeline_lock_sha256") != pipeline_lock_sha256
+        ):
+            reasons.add("prior_stage_pipeline_lock_mismatch")
+        if (
+            report.get("environment_lock_sha256") != environment_lock_sha256
+            and not local_transition
+        ):
             reasons.add("prior_stage_environment_lock_mismatch")
+        if local_transition and (
+            pipeline_lock_sha256 is None
+            or not isinstance(report.get("execution_lock_sha256"), str)
+        ):
+            reasons.add("prior_stage_cross_provider_evidence_incomplete")
         selected_ids = report.get("selected_record_ids")
         results = report.get("results")
         if not isinstance(selected_ids, list) or len(selected_ids) != expected_count:
@@ -662,6 +715,12 @@ def stage_prerequisite_report(
             "run_id": str(report["run_id"]),
             "run_report_sha256": _sha256(run_path),
             "record_ids": list(selected_ids),
+            "environment_lock_sha256": str(report["environment_lock_sha256"]),
+            "pipeline_lock_sha256": str(report["pipeline_lock_sha256"]),
+            "execution_lock_sha256": str(report["execution_lock_sha256"]),
+            "transition": (
+                "local_shadow_to_live_pilot5" if local_transition else "same_execution"
+            ),
             "reasons": [],
         }
     return {
@@ -670,6 +729,31 @@ def stage_prerequisite_report(
         "satisfied": False,
         "reasons": sorted(observed_reasons or {"no_matching_prior_stage_run"}),
     }
+
+
+def prior_artifact_identity_report(
+    manifest_path: Path,
+    prerequisite: dict[str, Any],
+    *,
+    expected_record_id: str,
+) -> dict[str, Any]:
+    """Bind prior-stage article artifacts to the exact accepted run identity."""
+
+    try:
+        manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {"ok": False, "errors": ["prior_artifact_manifest_invalid"]}
+    errors = []
+    if manifest.get("record_id") != expected_record_id:
+        errors.append("prior_artifact_record_id_mismatch")
+    for field in (
+        "environment_lock_sha256",
+        "pipeline_lock_sha256",
+        "execution_lock_sha256",
+    ):
+        if manifest.get(field) != prerequisite.get(field):
+            errors.append(f"prior_artifact_{field}_mismatch")
+    return {"ok": not errors, "errors": errors}
 
 
 def _article_dir(config: BatchConfig, record_id: str) -> Path:
@@ -934,6 +1018,27 @@ def collect_article_run_usage(article_dir: Path, run_id: str | None = None) -> d
                 if isinstance(raw_response, dict):
                     add_usage(raw_response.get("usage"))
 
+    style_status_path = article_dir / "style_batch_status.json"
+    style_payload: dict[str, Any] = {}
+    style_request_keys: set[str] = set()
+    if style_status_path.is_file():
+        try:
+            loaded_style_payload = json.loads(style_status_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            loaded_style_payload = {}
+        if isinstance(loaded_style_payload, dict):
+            style_payload = loaded_style_payload
+            style_stages = style_payload.get("stages")
+            if isinstance(style_stages, dict):
+                for style_stage in style_stages.values():
+                    requests = style_stage.get("requests") if isinstance(style_stage, dict) else None
+                    if isinstance(requests, list):
+                        style_request_keys.update(
+                            str(entry["request_key"])
+                            for entry in requests
+                            if isinstance(entry, dict) and entry.get("request_key")
+                        )
+
     chunk_dir = article_dir / "chunk_status"
     if chunk_dir.is_dir():
         for path in chunk_dir.glob("*.json"):
@@ -949,17 +1054,12 @@ def collect_article_run_usage(article_dir: Path, run_id: str | None = None) -> d
                     continue
                 if run_id is not None and stage.get("run_id") != run_id:
                     continue
-                if stage.get("request_key"):
+                if str(stage.get("request_key") or "") in style_request_keys:
                     continue
                 add_usage(stage.get("usage"))
 
-    style_status_path = article_dir / "style_batch_status.json"
-    if style_status_path.is_file():
-        try:
-            payload = json.loads(style_status_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            payload = {}
-        stages = payload.get("stages") if isinstance(payload, dict) else {}
+    if style_payload:
+        stages = style_payload.get("stages")
         seen_attempt_ids: set[str] = set()
         if isinstance(stages, dict):
             for stage_payload in stages.values():
@@ -1051,7 +1151,11 @@ def translation_provenance_report(article_dir: Path, run_id: str) -> dict[str, A
 def model_budget_guard(client: Any, budget: Any) -> Any | None:
     """Keep offline replay outside all paid-request accounting paths."""
 
-    return None if getattr(client, "is_offline_replay", False) is True else budget
+    zero_cost = (
+        getattr(client, "is_offline_replay", False) is True
+        or getattr(client, "is_zero_cost_local", False) is True
+    )
+    return None if zero_cost else budget
 
 
 def _projection_report_for_record(
@@ -1316,6 +1420,8 @@ def production_metrics_and_gate(
     selected_record_ids: tuple[str, ...] | None = None,
     expected_record_ids: tuple[str, ...] | None = None,
     execution_mode: str = "live_api",
+    local_model_calls: int = 0,
+    local_model_attempts: int = 0,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Summarize cost efficiency and fail closed before expanding a campaign."""
 
@@ -1400,6 +1506,8 @@ def production_metrics_and_gate(
         "uncertain_request_rate": round(uncertain_calls / api_calls, 6) if api_calls else 0.0,
         "style_batch_projection": style_projection,
         "manual_review_chunks": manual_review_chunks,
+        "local_model_calls": max(0, int(local_model_calls)),
+        "local_model_attempts": max(0, int(local_model_attempts)),
     }
     reasons: list[str] = []
     expected_status = "qc_passed" if through_stage in {"rendered", "qc_passed"} else through_stage
@@ -1407,6 +1515,10 @@ def production_metrics_and_gate(
         reasons.append("article_failures")
     if execution_mode == "offline_replay":
         reasons.append("offline_replay_not_promotion_evidence")
+    if execution_mode == "diagnostic_injected":
+        reasons.append("diagnostic_injected_not_promotion_evidence")
+    if execution_mode == "local_model" and local_model_calls <= 0:
+        reasons.append("local_shadow_has_no_model_calls")
     if recovered_results:
         reasons.append("recovered_results_not_promotion_evidence")
     if not fresh_results:
@@ -1878,6 +1990,100 @@ def _run_article(
 
 
 def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
+    """Run under an exclusive process-local model/provider identity context."""
+
+    with _EXECUTION_CONTEXT_LOCK:
+        return _run_batch_with_execution_context(config, client=client)
+
+
+def _run_batch_with_execution_context(
+    config: BatchConfig,
+    *,
+    client: Any = None,
+) -> dict[str, Any]:
+    local_fields = (
+        config.local_openai_base_url,
+        config.local_model,
+        config.local_model_manifest,
+        config.local_server_binary,
+    )
+    local_configured = all(local_fields)
+    if any(local_fields) and not local_configured:
+        raise ProjectionGateRefusedError(
+            "local OpenAI base URL, model, model manifest, and server binary must all be provided",
+            reason_code="local_model_config_incomplete",
+        )
+    if local_configured and config.stage != "shadow":
+        raise ProjectionGateRefusedError(
+            "local model execution is only valid for shadow",
+            reason_code="local_model_scope",
+        )
+    if local_configured and config.shadow_replay_article is not None:
+        raise ProjectionGateRefusedError(
+            "local model execution cannot be combined with offline replay",
+            reason_code="local_model_replay_conflict",
+        )
+    if local_configured and client is not None:
+        raise ProjectionGateRefusedError(
+            "local model execution cannot be combined with an injected client",
+            reason_code="local_model_client_conflict",
+        )
+    if local_configured:
+        try:
+            identity = local_attestation.verify_local_execution(
+                base_url=str(config.local_openai_base_url),
+                model=str(config.local_model),
+                model_manifest=Path(config.local_model_manifest),
+                server_binary=Path(config.local_server_binary),
+            )
+        except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as error:
+            raise ProjectionGateRefusedError(
+                f"local execution attestation failed: {error}",
+                reason_code="local_execution_attestation_failed",
+            ) from error
+        config = replace(
+            config,
+            local_model_manifest_sha256=identity["model_manifest_sha256"],
+            local_server_binary_sha256=identity["server_binary_sha256"],
+            local_server_command_sha256=identity["server_command_sha256"],
+        )
+    if local_configured and (
+        re.fullmatch(r"[0-9a-f]{64}", str(config.local_model_manifest_sha256)) is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(config.local_server_binary_sha256)) is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(config.local_server_command_sha256)) is None
+    ):
+        raise ProjectionGateRefusedError(
+            "local model and server identities must be 64-character lowercase SHA-256 values",
+            reason_code="local_model_identity_invalid",
+        )
+    previous_model = runner.MODEL
+    previous_runner_provider = runner.ACTIVE_PROVIDER
+    previous_execution_lock = runner.ACTIVE_EXECUTION_LOCK_SHA256
+    global _ACTIVE_PROVIDER, _ACTIVE_EXECUTION_BINDING
+    previous_provider = _ACTIVE_PROVIDER
+    previous_binding = _ACTIVE_EXECUTION_BINDING
+    if local_configured:
+        runner.MODEL = str(config.local_model)
+        _ACTIVE_PROVIDER = "local_openai"
+        _ACTIVE_EXECUTION_BINDING = {
+            "protocol": "openai_chat_completions",
+            "endpoint": str(config.local_openai_base_url).rstrip("/"),
+            "billing_mode": "local_unmetered",
+            "model_manifest_sha256": config.local_model_manifest_sha256,
+            "server_binary_sha256": config.local_server_binary_sha256,
+            "server_command_sha256": config.local_server_command_sha256,
+        }
+    try:
+        return _run_batch_active_model(config, client=client)
+    finally:
+        runner.MODEL = previous_model
+        runner.ACTIVE_PROVIDER = previous_runner_provider
+        runner.ACTIVE_EXECUTION_LOCK_SHA256 = previous_execution_lock
+        _ACTIVE_PROVIDER = previous_provider
+        _ACTIVE_EXECUTION_BINDING = previous_binding
+
+
+def _run_batch_active_model(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
     validate_budget(
         config.project_max_cost_rmb,
         label="project",
@@ -1904,8 +2110,17 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
     )
     canonical_stage_records = select_stage_records(records, config.stage)
     replay_client = None
+    local_client = None
     replay_fixture_sha256 = None
     execution_mode = "live_api"
+    provider = "deepseek"
+    if client is not None and config.shadow_replay_article is None and config.local_model is None:
+        if getattr(client, "is_zero_cost_test_double", False) is not True:
+            raise ProjectionGateRefusedError(
+                "injected clients must be explicitly marked zero-cost test doubles",
+                reason_code="untrusted_injected_client",
+            )
+        execution_mode = "diagnostic_injected"
     if config.shadow_replay_article is not None:
         if config.stage != "shadow":
             raise ProjectionGateRefusedError(
@@ -1926,14 +2141,44 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
             )
         replay_fixture_sha256 = replay_client.fixture_sha256
         execution_mode = "offline_replay"
+    if config.local_model is not None:
+        local_client = local_openai.LocalOpenAIClient(
+            base_url=str(config.local_openai_base_url),
+            model=config.local_model,
+            model_manifest_sha256=str(config.local_model_manifest_sha256),
+            max_calls=config.stage_max_api_calls,
+        )
+        execution_mode = "local_model"
+        provider = "local_openai"
+    if (
+        not config.preflight_only
+        and execution_mode in {"live_api", "local_model"}
+        and [record["record_id"] for record in selected]
+        != [record["record_id"] for record in canonical_stage_records]
+    ):
+        raise ProjectionGateRefusedError(
+            "production launch requires the complete canonical stage cohort",
+            reason_code="noncanonical_stage_cohort",
+        )
+    if config.stage == "shadow" and execution_mode == "live_api" and not config.preflight_only:
+        raise ProjectionGateRefusedError(
+            "shadow must use zero-paid local model execution or offline replay",
+            reason_code="paid_shadow_forbidden",
+        )
     rights_manifest_sha256 = _sha256(config.rights_manifest)
-    environment_lock = _production_environment_lock()
+    environment_lock = _production_environment_lock(provider=provider)
     environment_lock_sha256 = str(environment_lock["lock_sha256"])
+    runner.ACTIVE_PROVIDER = provider
+    runner.ACTIVE_EXECUTION_LOCK_SHA256 = str(
+        environment_lock["execution_lock_sha256"]
+    )
     prerequisite = stage_prerequisite_report(
         config.control_dir,
         target_stage=config.stage,
         rights_manifest_sha256=rights_manifest_sha256,
         environment_lock_sha256=environment_lock_sha256,
+        pipeline_lock_sha256=str(environment_lock["pipeline_lock_sha256"]),
+        current_execution_mode=execution_mode,
         expected_prior_record_ids=tuple(
             str(record["record_id"])
             for record in select_stage_records(
@@ -1946,13 +2191,22 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         artifact_errors: list[str] = []
         for record_id in prerequisite["record_ids"]:
             article_dir = _article_dir(config, str(record_id))
+            identity = prior_artifact_identity_report(
+                _artifact_manifest_path(article_dir),
+                prerequisite,
+                expected_record_id=str(record_id),
+            )
             state = production_contract.derive_paper_state(
                 _artifact_manifest_path(article_dir),
                 article_root=article_dir,
-                current_environment_lock=environment_lock,
                 rights_manifest_path=config.rights_manifest,
             )
-            if state.get("publishable") is not True or state.get("state") != "packaged":
+            if (
+                identity["ok"] is not True
+                or state.get("publishable") is not True
+                or state.get("state") != "packaged"
+                or state.get("record_id") != str(record_id)
+            ):
                 artifact_errors.append(str(record_id))
         if artifact_errors:
             prerequisite = {
@@ -1979,10 +2233,28 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
         "stage": config.stage,
         "rights_manifest_sha256": rights_manifest_sha256,
         "environment_lock_sha256": environment_lock_sha256,
+        "pipeline_lock_sha256": environment_lock["pipeline_lock_sha256"],
+        "execution_lock_sha256": environment_lock["execution_lock_sha256"],
         "execution_mode": execution_mode,
+        "model": runner.MODEL,
         **(
             {"replay_fixture_sha256": replay_fixture_sha256}
             if replay_fixture_sha256 is not None
+            else {}
+        ),
+        **(
+            {"model_manifest_sha256": config.local_model_manifest_sha256}
+            if config.local_model_manifest_sha256 is not None
+            else {}
+        ),
+        **(
+            {"server_binary_sha256": config.local_server_binary_sha256}
+            if config.local_server_binary_sha256 is not None
+            else {}
+        ),
+        **(
+            {"server_command_sha256": config.local_server_command_sha256}
+            if config.local_server_command_sha256 is not None
             else {}
         ),
         "stage_prerequisite": prerequisite,
@@ -2034,7 +2306,7 @@ def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
                 run_id=run_id,
                 run_dir=run_dir,
                 historical_roots=historical_roots,
-                client=replay_client or client,
+                client=local_client or replay_client or client,
             )
 
 
@@ -2174,6 +2446,12 @@ def _run_batch_locked(
                 selected_record_ids=tuple(snapshot["selected_record_ids"]),
                 expected_record_ids=tuple(snapshot["canonical_stage_record_ids"]),
                 execution_mode=str(snapshot["execution_mode"]),
+                local_model_calls=int(
+                    getattr(actual_client, "local_model_calls", 0) or 0
+                ),
+                local_model_attempts=int(
+                    getattr(actual_client, "local_model_attempts", 0) or 0
+                ),
             )
             _atomic_json(
                 run_dir / "run.json",
@@ -2244,7 +2522,10 @@ def _run_batch_locked(
                             "error": f"{type(error).__name__}: {error}",
                         }
                     )
-                    if isinstance(error, runner.BudgetExceededError):
+                    if isinstance(
+                        error,
+                        (runner.BudgetExceededError, RequestLimitExceededError),
+                    ):
                         stop_event.set()
                         hard_failures.append(failure)
                     else:
@@ -2307,6 +2588,10 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
     parser.add_argument("--retry-uncertain", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--shadow-replay-article", type=Path)
+    parser.add_argument("--local-openai-base-url")
+    parser.add_argument("--local-model")
+    parser.add_argument("--local-model-manifest", type=Path)
+    parser.add_argument("--local-server-binary", type=Path)
     args = parser.parse_args(argv)
     try:
         project = validate_budget(
@@ -2341,6 +2626,10 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
         historical_roots=tuple(args.historical_root or DEFAULT_HISTORICAL_ROOTS),
         preflight_only=args.preflight_only,
         shadow_replay_article=args.shadow_replay_article,
+        local_openai_base_url=args.local_openai_base_url,
+        local_model=args.local_model,
+        local_model_manifest=args.local_model_manifest,
+        local_server_binary=args.local_server_binary,
     )
 
 

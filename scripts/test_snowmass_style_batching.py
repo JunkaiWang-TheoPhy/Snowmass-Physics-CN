@@ -277,6 +277,15 @@ class StyleBatchProtocolTests(unittest.TestCase):
         self.assertNotEqual(
             request_key(first_batch), request_key(first_batch, max_output_tokens=4097)
         )
+        prior = batching.runner.ACTIVE_EXECUTION_LOCK_SHA256
+        try:
+            batching.runner.ACTIVE_EXECUTION_LOCK_SHA256 = "execution-a"
+            first_execution = request_key(first_batch)
+            batching.runner.ACTIVE_EXECUTION_LOCK_SHA256 = "execution-b"
+            second_execution = request_key(first_batch)
+        finally:
+            batching.runner.ACTIVE_EXECUTION_LOCK_SHA256 = prior
+        self.assertNotEqual(first_execution, second_execution)
 
     def test_malformed_expected_ids_are_rejected_even_when_the_mapping_matches(self) -> None:
         batching = load_batching()

@@ -482,6 +482,8 @@ def style_batch_request_key(
         "protocol": STYLE_BATCH_PROTOCOL,
         "stage": stage,
         "model": model,
+        "provider": runner.ACTIVE_PROVIDER,
+        "execution_lock_sha256": runner.ACTIVE_EXECUTION_LOCK_SHA256,
         "item_keys": [item.item_key for item in batch.items],
         "instructions": instructions,
         "payload": serialized_payload,

@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping
 
 
 SCHEMA_VERSION = 1
+ENVIRONMENT_LOCK_SCHEMA_VERSION = 2
 STAGE_SEQUENCE = (
     "prepared",
     "revision_ready",
@@ -155,7 +156,39 @@ def _environment_lock_errors(environment_lock: Mapping[str, Any]) -> list[str]:
         {key: value for key, value in environment_lock.items() if key != "lock_sha256"}
     ) != lock_hash:
         errors.append("environment_lock_content_mismatch")
+    if environment_lock.get("lock_schema_version") == ENVIRONMENT_LOCK_SCHEMA_VERSION:
+        pipeline_payload = _pipeline_lock_payload(environment_lock)
+        execution_payload = _execution_lock_payload(environment_lock)
+        if environment_lock.get("pipeline_lock_sha256") != _json_sha256(pipeline_payload):
+            errors.append("pipeline_lock_content_mismatch")
+        if environment_lock.get("execution_lock_sha256") != _json_sha256(execution_payload):
+            errors.append("execution_lock_content_mismatch")
     return errors
+
+
+def _pipeline_lock_payload(environment_lock: Mapping[str, Any]) -> dict[str, Any]:
+    contracts = dict(environment_lock.get("contracts") or {})
+    for key in ("model", "provider", "pricing", "execution_binding"):
+        contracts.pop(key, None)
+    return {
+        "schema_version": ENVIRONMENT_LOCK_SCHEMA_VERSION,
+        "python": environment_lock.get("python"),
+        "packages": environment_lock.get("packages"),
+        "contracts": contracts,
+        "assets": environment_lock.get("assets"),
+        "git": environment_lock.get("git"),
+    }
+
+
+def _execution_lock_payload(environment_lock: Mapping[str, Any]) -> dict[str, Any]:
+    contracts = environment_lock.get("contracts") or {}
+    return {
+        "schema_version": ENVIRONMENT_LOCK_SCHEMA_VERSION,
+        "model": contracts.get("model"),
+        "provider": contracts.get("provider"),
+        "pricing": contracts.get("pricing"),
+        "execution_binding": contracts.get("execution_binding") or {},
+    }
 
 
 @contextmanager
@@ -181,6 +214,7 @@ def build_environment_lock(
     model: str | None = None,
     provider: str | None = None,
     pricing_contract: Mapping[str, Any] | None = None,
+    execution_binding: Mapping[str, Any] | None = None,
     contract_versions: Mapping[str, Any] | None = None,
     font_paths: Iterable[str | Path] = (),
     cover_asset_paths: Iterable[str | Path] = (),
@@ -206,6 +240,7 @@ def build_environment_lock(
             "model": model,
             "provider": provider,
             "pricing": dict(pricing_contract or {}),
+            "execution_binding": dict(execution_binding or {}),
             "versions": dict(contract_versions or {}),
         },
         "assets": {
@@ -217,6 +252,9 @@ def build_environment_lock(
             "tree": git_tree or _git_rev(repo_root, "HEAD^{tree}"),
         },
     }
+    payload["lock_schema_version"] = ENVIRONMENT_LOCK_SCHEMA_VERSION
+    payload["pipeline_lock_sha256"] = _json_sha256(_pipeline_lock_payload(payload))
+    payload["execution_lock_sha256"] = _json_sha256(_execution_lock_payload(payload))
     payload["lock_sha256"] = _json_sha256(payload)
     return payload
 
@@ -255,6 +293,8 @@ def write_artifact_manifest(
         "publication_allowed": True,
         "rights_manifest_sha256": rights_manifest_sha256,
         "environment_lock_sha256": environment_lock["lock_sha256"],
+        "pipeline_lock_sha256": environment_lock.get("pipeline_lock_sha256"),
+        "execution_lock_sha256": environment_lock.get("execution_lock_sha256"),
         "environment_lock": dict(environment_lock),
         "artifacts": [dict(record) for record in artifacts],
     }
@@ -367,7 +407,12 @@ def validate_artifact_manifest(
         elif live_record.get("publication_allowed") is not True:
             errors.append("live_publication_not_allowed")
     if current_environment_lock is not None:
-        if manifest.get("environment_lock_sha256") != current_environment_lock.get("lock_sha256"):
+        stored_pipeline = manifest.get("pipeline_lock_sha256")
+        current_pipeline = current_environment_lock.get("pipeline_lock_sha256")
+        if isinstance(stored_pipeline, str) and isinstance(current_pipeline, str):
+            if stored_pipeline != current_pipeline:
+                errors.append("pipeline_lock_drift")
+        elif manifest.get("environment_lock_sha256") != current_environment_lock.get("lock_sha256"):
             errors.append("environment_lock_drift")
     stored_environment = manifest.get("environment_lock")
     if not isinstance(stored_environment, dict) or stored_environment.get("lock_sha256") != manifest.get(
@@ -380,6 +425,11 @@ def validate_artifact_manifest(
         errors.append("stored_environment_lock_content_mismatch")
     if isinstance(stored_environment, dict):
         errors.extend(_environment_lock_errors(stored_environment))
+        for field in ("pipeline_lock_sha256", "execution_lock_sha256"):
+            stored_value = stored_environment.get(field)
+            manifest_value = manifest.get(field)
+            if stored_value is not None and stored_value != manifest_value:
+                errors.append(f"stored_{field}_mismatch")
     if rights_manifest_sha256 is None and rights_manifest_path is not None:
         rights_manifest_sha256 = _sha256_file(Path(rights_manifest_path))
     if rights_manifest_sha256 is not None and manifest.get("rights_manifest_sha256") != rights_manifest_sha256:

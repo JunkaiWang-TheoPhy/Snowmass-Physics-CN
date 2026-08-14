@@ -52,6 +52,8 @@ RIGHTS_MANIFEST = Path("site/data/papers.json")
 TRACKED_HARD_CONSTRAINTS = SCRIPT_DIR.parent / "translations/snowmass-hard-constraints.json"
 API_URL = "https://api.deepseek.com/responses"
 MODEL = "deepseek-v4-flash"
+ACTIVE_PROVIDER = "deepseek"
+ACTIVE_EXECUTION_LOCK_SHA256 = ""
 STAGES = ("translate", "terminology", "anti_ai", "academic")
 OPTIONAL_STYLE_STAGES = frozenset({"anti_ai", "academic"})
 QC_CONTRACT_VERSION = 5
@@ -977,6 +979,8 @@ def request_key(
     payload = {
         "stage": stage,
         "qc_contract_version": QC_CONTRACT_VERSION,
+        "provider": ACTIVE_PROVIDER,
+        "execution_lock_sha256": ACTIVE_EXECUTION_LOCK_SHA256,
         **build_request_payload(instructions, input_text, max_output_tokens),
     }
     payload["model"] = model
