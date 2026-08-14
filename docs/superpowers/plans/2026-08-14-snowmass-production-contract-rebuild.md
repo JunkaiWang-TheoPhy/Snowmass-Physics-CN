@@ -17,7 +17,7 @@
 - References remain source-language verbatim while the section heading may use a locked translation.
 - Resume and repackage operations may recover work but cannot count as fresh promotion evidence.
 - Unknown or incomplete evidence is quarantined; it never silently falls back to publishable.
-- No paid production resumes until the shadow gate passes.
+- No paid expansion beyond one paper resumes until the fresh DeepSeek probe passes.
 
 ---
 
@@ -47,7 +47,7 @@
 - [ ] Reproduce that a prepared new paper currently reports zero calls and cannot launch; lock a finite positive translation projection.
 - [ ] Exclude recovered/repackaged usage and results from cost/promotion evidence while retaining them in audit totals.
 - [ ] Compute translation/revision projections before style artifacts exist, and compute style projection only after revision-ready.
-- [x] Add gated stages `shadow`, `deepseek_probe`, `pilot5`, `pilot10`, `pilot25`, `batch50`, `remainder` without hard-coded eligible totals. The offline shadow may unlock only the one-paper paid DeepSeek probe.
+- [x] Add gated paid stages `deepseek_probe`, `pilot5`, `pilot10`, `pilot25`, `batch50`, `remainder` without hard-coded eligible totals. Offline `shadow` is diagnostic only; each paid stage performs a zero-paid local projection before client construction.
 - [ ] Require fresh sample counts and zero critical failures before each promotion.
 
 ### Task 3: Runtime and structural fail-closed repairs
@@ -98,7 +98,7 @@
 - Create: `scripts/test_snowmass_shadow_gate.py`
 
 - [ ] Cover title fragmentation, ordinary-text title, two running headers, references variants, figures/tables with and without regions, placeholder reordering, long documents, malformed PDFs, numbers, units, citations and model-meta responses.
-- [ ] Run a zero-paid-call shadow from source fixture to packaged fixture, then require a fresh one-paper DeepSeek probe before `pilot5`.
+- [ ] Retain zero-paid offline shadow as diagnostic coverage, then require a fresh one-paper DeepSeek probe before `pilot5`; historical replay is not a paid-stage prerequisite.
 - [ ] Assert that removing any receipt or changing any parent hash makes the paper non-publishable.
 
 ### Task 7: Integration and release decision
@@ -110,7 +110,7 @@
 - [ ] Run the existing ten-paper artifacts through migration/read-only validation; label them legacy evidence, not fresh evidence.
 - [ ] Obtain independent code review of P0 invariants.
 - [ ] Commit verified changes with Lore trailers.
-- [ ] Keep production frozen unless shadow passes with zero critical failures and no paid API requests.
+- [ ] Keep expansion beyond one paper frozen unless the fresh DeepSeek probe passes with zero critical failures.
 
 ## Self-review
 

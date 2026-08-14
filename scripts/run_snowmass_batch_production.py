@@ -68,7 +68,6 @@ STAGE_LIMITS = {
     "batch50": 50,
 }
 PREVIOUS_STAGE = {
-    "deepseek_probe": "shadow",
     "pilot5": "deepseek_probe",
     "pilot10": "pilot5",
     "pilot25": "pilot10",
@@ -1532,7 +1531,7 @@ def production_metrics_and_gate(
     expected_status = "qc_passed" if through_stage in {"rendered", "qc_passed"} else through_stage
     if failures:
         reasons.append("article_failures")
-    if execution_mode == "offline_replay" and stage != "shadow":
+    if execution_mode == "offline_replay":
         reasons.append("offline_replay_not_promotion_evidence")
     if execution_mode == "diagnostic_injected":
         reasons.append("diagnostic_injected_not_promotion_evidence")
@@ -1580,7 +1579,6 @@ def production_metrics_and_gate(
     elif projected_total > float(budget.get("project_max_cost_rmb") or 0) + 1e-12:
         reasons.append("projected_full_corpus_cost_exceeds_cap")
     next_stage = {
-        "shadow": "deepseek_probe",
         "deepseek_probe": "pilot5",
         "pilot5": "pilot10",
         "pilot10": "pilot25",

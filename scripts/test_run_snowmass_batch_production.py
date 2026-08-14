@@ -299,7 +299,7 @@ class StagePrerequisiteTests(unittest.TestCase):
     def _write_prior_run(
         self,
         *,
-        stage: str = "shadow",
+        stage: str = "deepseek_probe",
         environment_lock_sha256: str = "env-current",
         rights_manifest_sha256: str = "rights-current",
         recovered: bool = False,
@@ -308,7 +308,7 @@ class StagePrerequisiteTests(unittest.TestCase):
         execution_mode: str = "live_api",
         pipeline_lock_sha256: str = "pipeline-current",
         execution_lock_sha256: str = "execution-prior",
-        promotion_next_stage: str = "deepseek_probe",
+        promotion_next_stage: str = "pilot5",
     ) -> Path:
         selected_record_ids = selected_record_ids or ["arxiv:a"]
         result_record_ids = result_record_ids or selected_record_ids
@@ -364,12 +364,26 @@ class StagePrerequisiteTests(unittest.TestCase):
         (run_dir / "run.json").write_text(json.dumps(report), encoding="utf-8")
         return run_dir
 
+    def test_deepseek_probe_is_the_first_live_stage_after_local_preflight(self) -> None:
+        module = load_module()
+
+        report = module.stage_prerequisite_report(
+            self.control,
+            target_stage="deepseek_probe",
+            rights_manifest_sha256="rights-current",
+            environment_lock_sha256="env-current",
+            expected_prior_record_ids=(),
+        )
+
+        self.assertTrue(report["satisfied"], report["reasons"])
+        self.assertIsNone(report["required_stage"])
+
     def test_non_shadow_stage_requires_current_fresh_prior_stage_evidence(self) -> None:
         module = load_module()
 
         missing = module.stage_prerequisite_report(
             self.control,
-            target_stage="deepseek_probe",
+            target_stage="pilot5",
             rights_manifest_sha256="rights-current",
             environment_lock_sha256="env-current",
             expected_prior_record_ids=("arxiv:a",),
@@ -380,7 +394,7 @@ class StagePrerequisiteTests(unittest.TestCase):
         self._write_prior_run(recovered=True)
         recovered = module.stage_prerequisite_report(
             self.control,
-            target_stage="deepseek_probe",
+            target_stage="pilot5",
             rights_manifest_sha256="rights-current",
             environment_lock_sha256="env-current",
             expected_prior_record_ids=("arxiv:a",),
@@ -394,14 +408,14 @@ class StagePrerequisiteTests(unittest.TestCase):
 
         report = module.stage_prerequisite_report(
             self.control,
-            target_stage="deepseek_probe",
+            target_stage="pilot5",
             rights_manifest_sha256="rights-current",
             environment_lock_sha256="env-current",
             expected_prior_record_ids=("arxiv:a",),
         )
 
         self.assertTrue(report["satisfied"])
-        self.assertEqual(report["run_id"], "shadow-proof")
+        self.assertEqual(report["run_id"], "deepseek_probe-proof")
         self.assertRegex(report["run_report_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             report["run_report_sha256"],
@@ -417,7 +431,7 @@ class StagePrerequisiteTests(unittest.TestCase):
 
         report = module.stage_prerequisite_report(
             self.control,
-            target_stage="deepseek_probe",
+            target_stage="pilot5",
             rights_manifest_sha256="rights-current",
             environment_lock_sha256="env-current",
             expected_prior_record_ids=("arxiv:a",),
@@ -436,7 +450,7 @@ class StagePrerequisiteTests(unittest.TestCase):
 
         report = module.stage_prerequisite_report(
             self.control,
-            target_stage="deepseek_probe",
+            target_stage="pilot5",
             rights_manifest_sha256="rights-current",
             environment_lock_sha256="env-current",
             expected_prior_record_ids=("arxiv:canonical",),
@@ -448,7 +462,11 @@ class StagePrerequisiteTests(unittest.TestCase):
 
     def test_offline_replay_shadow_cannot_unlock_pilot5(self) -> None:
         module = load_module()
-        self._write_prior_run(execution_mode="offline_replay")
+        self._write_prior_run(
+            stage="shadow",
+            execution_mode="offline_replay",
+            promotion_next_stage="deepseek_probe",
+        )
 
         report = module.stage_prerequisite_report(
             self.control,
@@ -460,24 +478,6 @@ class StagePrerequisiteTests(unittest.TestCase):
 
         self.assertFalse(report["satisfied"])
         self.assertIn("no_matching_prior_stage_run", report["reasons"])
-
-    def test_offline_replay_shadow_unlocks_only_deepseek_probe(self) -> None:
-        module = load_module()
-        self._write_prior_run(
-            execution_mode="offline_replay",
-            promotion_next_stage="deepseek_probe",
-        )
-
-        report = module.stage_prerequisite_report(
-            self.control,
-            target_stage="deepseek_probe",
-            rights_manifest_sha256="rights-current",
-            environment_lock_sha256="env-current",
-            expected_prior_record_ids=("arxiv:a",),
-        )
-
-        self.assertTrue(report["satisfied"], report["reasons"])
-        self.assertEqual(report["transition"], "offline_shadow_to_deepseek_probe")
 
     def test_deepseek_probe_unlocks_pilot5(self) -> None:
         module = load_module()
@@ -497,40 +497,6 @@ class StagePrerequisiteTests(unittest.TestCase):
 
         self.assertTrue(report["satisfied"], report["reasons"])
         self.assertEqual(report["transition"], "same_execution")
-
-    def test_local_shadow_can_unlock_deepseek_probe_only_with_same_pipeline_lock(self) -> None:
-        module = load_module()
-        self._write_prior_run(
-            environment_lock_sha256="local-environment",
-            execution_mode="local_model",
-            pipeline_lock_sha256="pipeline-current",
-            execution_lock_sha256="local-execution",
-        )
-
-        accepted = module.stage_prerequisite_report(
-            self.control,
-            target_stage="deepseek_probe",
-            rights_manifest_sha256="rights-current",
-            environment_lock_sha256="deepseek-environment",
-            pipeline_lock_sha256="pipeline-current",
-            current_execution_mode="live_api",
-            expected_prior_record_ids=("arxiv:a",),
-        )
-        rejected = module.stage_prerequisite_report(
-            self.control,
-            target_stage="deepseek_probe",
-            rights_manifest_sha256="rights-current",
-            environment_lock_sha256="deepseek-environment",
-            pipeline_lock_sha256="pipeline-drifted",
-            current_execution_mode="live_api",
-            expected_prior_record_ids=("arxiv:a",),
-        )
-
-        self.assertTrue(accepted["satisfied"], accepted["reasons"])
-        self.assertEqual(accepted["transition"], "local_shadow_to_deepseek_probe")
-        self.assertEqual(accepted["execution_lock_sha256"], "local-execution")
-        self.assertFalse(rejected["satisfied"])
-        self.assertIn("prior_stage_pipeline_lock_mismatch", rejected["reasons"])
 
     def test_prior_artifacts_must_match_the_accepted_prior_run_identity(self) -> None:
         module = load_module()
@@ -2197,9 +2163,10 @@ class PromotionGateTests(unittest.TestCase):
 
         self.assertFalse(missing_gate["allowed"])
         self.assertIn("local_shadow_has_no_model_calls", missing_gate["reasons"])
-        self.assertTrue(observed_gate["allowed"])
+        self.assertFalse(observed_gate["allowed"])
+        self.assertIn("campaign_complete", observed_gate["reasons"])
 
-    def test_offline_replay_promotes_only_to_paid_deepseek_probe(self) -> None:
+    def test_offline_replay_remains_diagnostic_only(self) -> None:
         module = load_module()
         budget = {
             "project_max_cost_rmb": 1000.0,
@@ -2225,8 +2192,8 @@ class PromotionGateTests(unittest.TestCase):
             budget=budget,
         )
 
-        self.assertTrue(gate["allowed"], gate["reasons"])
-        self.assertEqual(gate["next_stage"], "deepseek_probe")
+        self.assertFalse(gate["allowed"])
+        self.assertIn("offline_replay_not_promotion_evidence", gate["reasons"])
 
     def test_result_ids_must_match_selected_cohort_for_promotion(self) -> None:
         module = load_module()
