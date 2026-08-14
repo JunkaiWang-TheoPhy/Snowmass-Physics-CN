@@ -515,6 +515,38 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
             },
         )
 
+    def test_publication_preflight_locks_repeated_running_headers(self) -> None:
+        module = load_module()
+        chunks = [
+            {"id": "chunk0001", "order": 1, "page_number": 1, "layout_label": "title"},
+            {"id": "chunk0002", "order": 2, "page_number": 2, "layout_label": "abandon"},
+            {"id": "chunk0003", "order": 3, "page_number": 3, "layout_label": "abandon"},
+            {"id": "chunk0004", "order": 4, "page_number": 4, "layout_label": "abandon"},
+            {"id": "chunk0005", "order": 5, "page_number": 5, "layout_label": "abandon"},
+        ]
+        translations = [
+            module.BRIDGE.RefillTranslation(1, 0, "Paper title", "锁定论文标题"),
+            module.BRIDGE.RefillTranslation(2, 0, "Sim and Kissel, et al.", "Sim和Kissel等人"),
+            module.BRIDGE.RefillTranslation(3, 0, "Paper title", "论文标题变体"),
+            module.BRIDGE.RefillTranslation(4, 0, "Sim and Kissel, et al.", "Sim、Kissel等"),
+            module.BRIDGE.RefillTranslation(5, 0, "Paper title", "另一个标题变体"),
+        ]
+
+        prepared, report = module.prepare_publication_translations(
+            self.article,
+            {"chunks": chunks},
+            translations,
+            constraints={"schema_version": 1, "exact_translations": []},
+            glossary=[],
+        )
+
+        self.assertEqual(prepared[1].translated_text, "Sim and Kissel, et al.")
+        self.assertEqual(prepared[3].translated_text, "Sim and Kissel, et al.")
+        self.assertEqual(prepared[2].translated_text, "锁定论文标题")
+        self.assertEqual(prepared[4].translated_text, "锁定论文标题")
+        self.assertEqual(report["running_header_groups"], 2)
+        self.assertEqual(report["running_header_occurrences"], 4)
+
     def test_repeated_header_ignores_source_passthrough_when_one_translation_exists(self) -> None:
         module = load_module()
         source = "Snowmass2021 Cosmic Frontier White Paper"

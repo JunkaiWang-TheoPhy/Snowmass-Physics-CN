@@ -363,6 +363,57 @@ def prepare_publication_translations(
             raise RuntimeError(f"exact translation source was not found: {source}")
         exact_occurrences += matched
 
+    exact_targets = {
+        _normalized_phrase(str(rule.get("source", ""))): str(rule.get("target", "")).strip()
+        for rule in constraints.get("exact_translations", [])
+        if str(rule.get("source", "")).strip() and str(rule.get("target", "")).strip()
+    }
+    repeated_abandon_groups: dict[str, list[int]] = {}
+    for index, (chunk, translation) in enumerate(zip(chunks, translations, strict=True)):
+        if (
+            str(chunk.get("layout_label", "")) != "abandon"
+            or str(chunk["id"]) in passthrough_chunk_ids
+        ):
+            continue
+        normalized_source = _normalized_phrase(translation.source_text)
+        if normalized_source and len(normalized_source) <= 240:
+            repeated_abandon_groups.setdefault(normalized_source, []).append(index)
+
+    running_header_groups = 0
+    running_header_occurrences = 0
+    for normalized_source, indices in repeated_abandon_groups.items():
+        if len({int(chunks[index].get("page_number") or 0) for index in indices}) < 2:
+            continue
+        canonical_target = exact_targets.get(normalized_source)
+        if canonical_target is None:
+            canonical_index = next(
+                (
+                    index
+                    for index, (chunk, translation) in enumerate(
+                        zip(chunks, translations, strict=True)
+                    )
+                    if str(chunk.get("layout_label", "")) != "abandon"
+                    and str(chunk["id"]) not in passthrough_chunk_ids
+                    and _normalized_phrase(translation.source_text) == normalized_source
+                ),
+                None,
+            )
+            canonical_target = (
+                prepared_texts[canonical_index].strip()
+                if canonical_index is not None
+                else translations[indices[0]].source_text.strip()
+            )
+        for index in indices:
+            trailing_newline = (
+                "\n"
+                if translations[index].translated_text.endswith("\n")
+                or translations[index].source_text.endswith("\n")
+                else ""
+            )
+            prepared_texts[index] = canonical_target + trailing_newline
+        running_header_groups += 1
+        running_header_occurrences += len(indices)
+
     normalized_title_count = 0
     for index, chunk in enumerate(chunks):
         if str(chunk.get("layout_label", "")) != "title":
@@ -397,7 +448,7 @@ def prepare_publication_translations(
             abstract_seen = True
         if (
             not in_references
-            and str(chunk.get("layout_label", "")) != "title"
+            and str(chunk.get("layout_label", "")) not in {"title", "abandon"}
             and str(chunk["id"]) not in passthrough_chunk_ids
             and (
                 not has_abstract_heading
@@ -453,6 +504,8 @@ def prepare_publication_translations(
         "reference_passthrough_units": len(reference_chunk_ids),
         "reference_entry_separator_insertions": reference_entry_separator_insertions,
         "normalized_title_count": normalized_title_count,
+        "running_header_groups": running_header_groups,
+        "running_header_occurrences": running_header_occurrences,
         "publication_chunk_sha256": chunk_hashes,
     }
 
