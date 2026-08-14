@@ -47,7 +47,7 @@
 - [ ] Reproduce that a prepared new paper currently reports zero calls and cannot launch; lock a finite positive translation projection.
 - [ ] Exclude recovered/repackaged usage and results from cost/promotion evidence while retaining them in audit totals.
 - [ ] Compute translation/revision projections before style artifacts exist, and compute style projection only after revision-ready.
-- [ ] Add cumulative stages `shadow`, `pilot5`, `pilot10`, `pilot25`, `batch50`, `remainder` without hard-coded eligible totals.
+- [x] Add gated stages `shadow`, `deepseek_probe`, `pilot5`, `pilot10`, `pilot25`, `batch50`, `remainder` without hard-coded eligible totals. The offline shadow may unlock only the one-paper paid DeepSeek probe.
 - [ ] Require fresh sample counts and zero critical failures before each promotion.
 
 ### Task 3: Runtime and structural fail-closed repairs
@@ -98,7 +98,7 @@
 - Create: `scripts/test_snowmass_shadow_gate.py`
 
 - [ ] Cover title fragmentation, ordinary-text title, two running headers, references variants, figures/tables with and without regions, placeholder reordering, long documents, malformed PDFs, numbers, units, citations and model-meta responses.
-- [ ] Run a zero-paid-call shadow from source fixture to packaged fixture.
+- [ ] Run a zero-paid-call shadow from source fixture to packaged fixture, then require a fresh one-paper DeepSeek probe before `pilot5`.
 - [ ] Assert that removing any receipt or changing any parent hash makes the paper non-publishable.
 
 ### Task 7: Integration and release decision

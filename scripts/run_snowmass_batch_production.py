@@ -58,9 +58,18 @@ DEFAULT_PDF_ROOT = ROOT / "tmp/pdfs/snowmass2021"
 DEFAULT_OUTPUT_ROOT = ROOT / "output/snowmass2021/babeldoc_production"
 DEFAULT_CONTROL_DIR = ROOT / "output/snowmass2021/production_control"
 DEFAULT_HISTORICAL_ROOTS = (ROOT / "output/snowmass2021/babeldoc_ab_v1",)
-STAGE_LIMITS = {"shadow": 1, "pilot5": 5, "pilot10": 10, "pilot25": 25, "batch50": 50}
+DEEPSEEK_PROBE_MAX_COST_RMB = 10.0
+STAGE_LIMITS = {
+    "shadow": 1,
+    "deepseek_probe": 1,
+    "pilot5": 5,
+    "pilot10": 10,
+    "pilot25": 25,
+    "batch50": 50,
+}
 PREVIOUS_STAGE = {
-    "pilot5": "shadow",
+    "deepseek_probe": "shadow",
+    "pilot5": "deepseek_probe",
     "pilot10": "pilot5",
     "pilot25": "pilot10",
     "batch50": "pilot25",
@@ -637,8 +646,14 @@ def stage_prerequisite_report(
         prior_mode = str(report.get("execution_mode") or "")
         local_transition = (
             previous_stage == "shadow"
-            and target_stage == "pilot5"
+            and target_stage == "deepseek_probe"
             and prior_mode == "local_model"
+            and current_execution_mode == "live_api"
+        )
+        offline_probe_transition = (
+            previous_stage == "shadow"
+            and target_stage == "deepseek_probe"
+            and prior_mode == "offline_replay"
             and current_execution_mode == "live_api"
         )
         if (
@@ -676,7 +691,7 @@ def stage_prerequisite_report(
             reasons.add("prior_stage_result_ids_mismatch")
         if report.get("status") != "complete" or report.get("through_stage") != "packaged":
             reasons.add("prior_stage_not_complete_packaged")
-        if report.get("execution_mode") == "offline_replay":
+        if report.get("execution_mode") == "offline_replay" and not offline_probe_transition:
             reasons.add("prior_stage_offline_replay_not_fresh")
         if report.get("failures") or report.get("hard_failures"):
             reasons.add("prior_stage_has_failures")
@@ -719,7 +734,11 @@ def stage_prerequisite_report(
             "pipeline_lock_sha256": str(report["pipeline_lock_sha256"]),
             "execution_lock_sha256": str(report["execution_lock_sha256"]),
             "transition": (
-                "local_shadow_to_live_pilot5" if local_transition else "same_execution"
+                "local_shadow_to_deepseek_probe"
+                if local_transition
+                else "offline_shadow_to_deepseek_probe"
+                if offline_probe_transition
+                else "same_execution"
             ),
             "reasons": [],
         }
@@ -1513,7 +1532,7 @@ def production_metrics_and_gate(
     expected_status = "qc_passed" if through_stage in {"rendered", "qc_passed"} else through_stage
     if failures:
         reasons.append("article_failures")
-    if execution_mode == "offline_replay":
+    if execution_mode == "offline_replay" and stage != "shadow":
         reasons.append("offline_replay_not_promotion_evidence")
     if execution_mode == "diagnostic_injected":
         reasons.append("diagnostic_injected_not_promotion_evidence")
@@ -1561,7 +1580,8 @@ def production_metrics_and_gate(
     elif projected_total > float(budget.get("project_max_cost_rmb") or 0) + 1e-12:
         reasons.append("projected_full_corpus_cost_exceeds_cap")
     next_stage = {
-        "shadow": "pilot5",
+        "shadow": "deepseek_probe",
+        "deepseek_probe": "pilot5",
         "pilot5": "pilot10",
         "pilot10": "pilot25",
         "pilot25": "batch50",
@@ -2094,6 +2114,13 @@ def _run_batch_active_model(config: BatchConfig, *, client: Any = None) -> dict[
         label="stage",
         maximum=config.project_max_cost_rmb,
     )
+    if (
+        config.stage == "deepseek_probe"
+        and config.stage_max_cost_rmb > DEEPSEEK_PROBE_MAX_COST_RMB
+    ):
+        raise ValueError(
+            f"DeepSeek probe budget must not exceed {DEEPSEEK_PROBE_MAX_COST_RMB:g} RMB"
+        )
     validate_request_limit(config.stage_max_api_calls, label="stage")
     if config.chunk_concurrency < 1 or config.chunk_concurrency > 64:
         raise ValueError("chunk_concurrency must be between 1 and 64")
@@ -2604,7 +2631,16 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
             label="project",
             maximum=AUTHORIZED_PROJECT_MAX_RMB,
         )
-        stage = validate_budget(args.stage_max_cost_rmb, label="stage", maximum=project)
+        stage_maximum = (
+            min(project, DEEPSEEK_PROBE_MAX_COST_RMB)
+            if args.stage == "deepseek_probe"
+            else project
+        )
+        stage = validate_budget(
+            args.stage_max_cost_rmb,
+            label="stage",
+            maximum=stage_maximum,
+        )
         stage_max_api_calls = validate_request_limit(
             args.stage_max_api_calls, label="stage"
         )
