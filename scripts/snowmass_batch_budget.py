@@ -620,3 +620,37 @@ class PersistentBudgetGuard:
                 "active_reservations": len(active),
                 "stage_usage": stage_usage,
             }
+
+
+def read_project_spent_rmb(control_dir: Path) -> float | None:
+    """Read settled project spend from the durable ledger without mutating it."""
+
+    control_dir = Path(control_dir)
+    ledger_path = control_dir / "budget_ledger.jsonl"
+    if not ledger_path.is_file():
+        return None
+    lock_path = control_dir / "budget.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock_stream:
+        fcntl.flock(lock_stream.fileno(), fcntl.LOCK_SH)
+        try:
+            events: list[dict[str, Any]] = []
+            for line_number, line in enumerate(
+                ledger_path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise RuntimeError(
+                        f"Malformed Snowmass budget ledger line {line_number}"
+                    ) from error
+                if not isinstance(event, dict) or "kind" not in event:
+                    raise RuntimeError(
+                        f"Invalid Snowmass budget ledger event on line {line_number}"
+                    )
+                events.append(event)
+            project_spent, _run_spent, _active = PersistentBudgetGuard._state(events)
+            return project_spent
+        finally:
+            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)

@@ -1734,6 +1734,19 @@ class BatchResumeTests(unittest.TestCase):
             self.assertEqual(result["paid_translation_pending_count"], 1)
             self.assertEqual(result["pending_record_count"], 2)
 
+    def test_authoritative_historical_spend_never_underreports_budget_ledger(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            control = Path(temporary) / "control"
+            roots = (Path(temporary) / "artifacts",)
+            with (
+                mock.patch.object(module, "discover_historical_spend", return_value=6.23),
+                mock.patch.object(module, "read_project_spent_rmb", return_value=26.22),
+            ):
+                spent = module.authoritative_historical_spend(control, roots, 7.2)
+
+        self.assertEqual(spent, 26.22)
+
     def test_package_only_revalidates_refill_before_qc_and_packaging(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

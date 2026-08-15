@@ -48,6 +48,7 @@ from snowmass_batch_budget import (
     AUTHORIZED_PROJECT_MAX_RMB,
     PersistentBudgetGuard,
     RequestLimitExceededError,
+    read_project_spent_rmb,
     validate_budget,
     validate_request_limit,
 )
@@ -556,6 +557,18 @@ def discover_historical_spend(roots: Iterable[Path], usd_cny_rate: float) -> flo
         if papers.is_dir():
             article_dirs.update(path.resolve() for path in papers.iterdir() if path.is_dir())
     return sum(refined.existing_article_cost_rmb(path, usd_cny_rate) for path in article_dirs)
+
+
+def authoritative_historical_spend(
+    control_dir: Path,
+    roots: Iterable[Path],
+    usd_cny_rate: float,
+) -> float:
+    """Report at least the settled persistent-ledger total when one exists."""
+
+    artifact_spend = discover_historical_spend(roots, usd_cny_rate)
+    ledger_spend = read_project_spent_rmb(control_dir)
+    return max(artifact_spend, ledger_spend or 0.0)
 
 
 def _campaign_root_sha256(output_root: Path) -> str:
@@ -2386,8 +2399,10 @@ def _run_batch_active_model(config: BatchConfig, *, client: Any = None) -> dict[
             **projection_summary,
             "status": "preflight" if launch_ready else "preflight_blocked",
             "launch_ready": launch_ready,
-            "historical_spent_rmb": discover_historical_spend(
-                historical_roots, config.usd_cny_rate
+            "historical_spent_rmb": authoritative_historical_spend(
+                config.control_dir,
+                historical_roots,
+                config.usd_cny_rate,
             ),
             "verified_resume_count": len(recoverable),
             "verified_resume_record_ids": [result["record_id"] for result in recoverable],

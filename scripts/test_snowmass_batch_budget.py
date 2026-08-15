@@ -101,6 +101,20 @@ class PersistentBudgetGuardTests(unittest.TestCase):
         self.assertAlmostEqual(first.snapshot()["project_spent_rmb"], 0.25)
         self.assertAlmostEqual(second.snapshot()["project_spent_rmb"], 0.25)
 
+    def test_read_project_spent_rmb_reports_authoritative_ledger_total(self) -> None:
+        module = load_module()
+        guard = self.guard(run_id="paid", historical=0.25)
+        reservation = guard.reserve("source", 4096)
+        guard.settle(
+            reservation,
+            {"input_tokens": 100, "cached_tokens": 0, "output_tokens": 50},
+        )
+
+        self.assertAlmostEqual(
+            module.read_project_spent_rmb(self.control),
+            guard.snapshot()["project_spent_rmb"],
+        )
+
     def test_two_guards_share_reservations_and_cannot_jointly_overspend(self) -> None:
         first = self.guard(run_id="shared", project=0.08, stage=0.08)
         second = self.guard(run_id="shared", project=0.08, stage=0.08)
