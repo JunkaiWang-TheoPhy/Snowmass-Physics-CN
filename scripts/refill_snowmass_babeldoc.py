@@ -333,6 +333,7 @@ def prepare_publication_translations(
     passthrough_chunk_ids = (
         figure_text_chunk_ids | table_text_chunk_ids | reference_chunk_ids
     )
+    body_exact_rules = constraint_compiler.body_exact_translation_rules(constraints)
     prepared_texts = [translation.translated_text for translation in translations]
     reference_entry_separator_insertions = 0
     for index, (chunk, translation) in enumerate(zip(chunks, translations, strict=True)):
@@ -345,7 +346,7 @@ def prepare_publication_translations(
         elif chunk_id in passthrough_chunk_ids:
             prepared_texts[index] = translation.source_text
     exact_occurrences = 0
-    for rule in constraints.get("exact_translations", []):
+    for rule in body_exact_rules:
         source = str(rule.get("source", "")).strip()
         target = str(rule.get("target", "")).strip()
         if not source or not target:
@@ -365,7 +366,7 @@ def prepare_publication_translations(
 
     exact_targets = {
         _normalized_phrase(str(rule.get("source", ""))): str(rule.get("target", "")).strip()
-        for rule in constraints.get("exact_translations", [])
+        for rule in body_exact_rules
         if str(rule.get("source", "")).strip() and str(rule.get("target", "")).strip()
     }
     repeated_abandon_groups: dict[str, list[int]] = {}
@@ -602,7 +603,7 @@ def _verbatim_header_translation(
         return None
     exact = {
         _normalized_phrase(str(rule.get("source", ""))): str(rule.get("target", "")).strip()
-        for rule in constraints.get("exact_translations", [])
+        for rule in constraint_compiler.body_exact_translation_rules(constraints)
     }
     matches = [
         {"source": item["source"], "target": exact[normalized]}
@@ -638,7 +639,7 @@ def _verbatim_section_heading_translations(
         return []
     return [
         {"source": str(rule["source"]).strip(), "target": str(rule["target"]).strip()}
-        for rule in constraints.get("exact_translations", [])
+        for rule in constraint_compiler.body_exact_translation_rules(constraints)
         if _normalized_phrase(str(rule.get("source", ""))).rstrip(":")
         in {"references", "bibliography"}
         and str(rule.get("target", "")).strip()

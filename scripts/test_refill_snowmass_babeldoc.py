@@ -83,6 +83,51 @@ class RefillSnowmassBabelDocTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def test_cover_title_exact_rule_is_not_required_in_body_chunks(self) -> None:
+        module = load_module()
+        chunk = {
+            "id": "chunk0001",
+            "order": 1,
+            "page_number": 1,
+            "paragraph_index": 1,
+            "layout_label": "title",
+            "source_file": "chunk0001.md",
+            "output_file": "output_chunk0001.md",
+        }
+        source = "Laser Manipulation of H{v1}Beams: a Snowmass 2022 White Paper{v2}\n"
+        translated = "H{v1}束的激光操控：Snowmass 2022 白皮书{v2}\n"
+        (self.article / "chunk0001.md").write_text(source, encoding="utf-8")
+        translations = [
+            module.BRIDGE.RefillTranslation(
+                page_number=1,
+                paragraph_index=1,
+                source_text=source,
+                translated_text=translated,
+            )
+        ]
+        constraints = {
+            "schema_version": 1,
+            "exact_translations": [
+                {
+                    "source": "Laser Manipulation of H- Beams",
+                    "target": "激光操控 H- 束",
+                    "scope": "cover_title",
+                }
+            ],
+        }
+
+        prepared, report = module.prepare_publication_translations(
+            self.article,
+            {"chunks": [chunk]},
+            translations,
+            constraints=constraints,
+            glossary=[],
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(prepared[0].translated_text, translated)
+        self.assertEqual(report["exact_translation_occurrences"], 0)
+
     def test_refills_completed_outputs_and_reuses_matching_checkpoint(self) -> None:
         module = load_module()
 

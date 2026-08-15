@@ -13,6 +13,7 @@ from typing import Any
 
 PLAN_FILE = "compiled_constraints.json"
 VERBATIM_POLICIES = {"verbatim_figure_text", "verbatim_table_text", "verbatim_source"}
+EXACT_TRANSLATION_SCOPES = {"all_occurrences", "cover_title"}
 
 
 def sha256(path: Path) -> str:
@@ -41,6 +42,19 @@ def _merge_exact_rules(baseline: list[dict[str, Any]], overrides: list[dict[str,
             positions[key] = len(merged)
             merged.append(replacement)
     return merged
+
+
+def body_exact_translation_rules(constraints: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return exact rules that apply to translated paper-body chunks."""
+
+    body_rules: list[dict[str, Any]] = []
+    for rule in constraints.get("exact_translations", []):
+        scope = str(rule.get("scope") or "all_occurrences")
+        if scope not in EXACT_TRANSLATION_SCOPES:
+            raise RuntimeError(f"unsupported exact translation scope: {scope}")
+        if scope == "all_occurrences":
+            body_rules.append(rule)
+    return body_rules
 
 
 def load_constraints(article_dir: Path, record_id: str, policy_path: Path) -> dict[str, Any]:
@@ -97,7 +111,7 @@ def compile_constraint_plan(
         raise RuntimeError("constraint record mismatch")
     directives: dict[str, dict[str, Any]] = {}
     hashes: dict[str, str] = {}
-    exact_rules = constraints.get("exact_translations", [])
+    exact_rules = body_exact_translation_rules(constraints)
     for chunk in manifest.get("chunks", []):
         chunk_id = str(chunk["id"])
         source_path = article_dir / str(chunk["source_file"])

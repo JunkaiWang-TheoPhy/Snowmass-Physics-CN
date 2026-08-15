@@ -744,6 +744,45 @@ class RefinedOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(mapping, {"header": "统一页眉"})
 
+    def test_hard_exact_translations_exclude_cover_only_rules(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            article = root / "article"
+            article.mkdir()
+            policy = root / "constraints.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "records": {
+                            "arxiv:allowed": {
+                                "exact_translations": [
+                                    {
+                                        "source": "Laser Manipulation of H- Beams",
+                                        "target": "激光操控 H- 束",
+                                        "scope": "cover_title",
+                                    },
+                                    {
+                                        "source": "References",
+                                        "target": "参考文献",
+                                        "scope": "all_occurrences",
+                                    },
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            mapping = module._hard_exact_translations(
+                article, "arxiv:allowed", policy_path=policy
+            )
+
+        self.assertNotIn("laser manipulation of h- beams", mapping)
+        self.assertEqual(mapping["references"], "参考文献")
+
     def test_hard_exact_translations_reject_factually_invalid_target(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

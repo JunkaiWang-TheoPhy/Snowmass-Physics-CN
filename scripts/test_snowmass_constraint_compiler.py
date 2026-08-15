@@ -13,6 +13,37 @@ import snowmass_constraint_compiler as compiler
 
 
 class SnowmassConstraintCompilerTests(unittest.TestCase):
+    def test_cover_title_exact_rule_is_not_a_body_chunk_directive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary)
+            (article / "chunk0001.md").write_text(
+                "Laser Manipulation of H- Beams\n", encoding="utf-8"
+            )
+            manifest = {
+                "record_id": "arxiv:test",
+                "chunks": [
+                    {
+                        "id": "chunk0001",
+                        "source_file": "chunk0001.md",
+                        "translation_policy": "translate",
+                    }
+                ],
+            }
+            constraints = {
+                "record_id": "arxiv:test",
+                "exact_translations": [
+                    {
+                        "source": "Laser Manipulation of H- Beams",
+                        "target": "激光操控 H- 束",
+                        "scope": "cover_title",
+                    }
+                ],
+            }
+
+            plan = compiler.compile_constraint_plan(article, manifest, constraints)
+
+            self.assertNotIn("chunk0001", plan["chunk_directives"])
+
     def test_compiles_exact_and_object_policies_into_chunk_directives(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             article = Path(temporary)

@@ -18,6 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_snowmass_translation as runner
+import snowmass_constraint_compiler as constraint_compiler
 import snowmass_style_batching as style_batching
 from snowmass_document_units import compare_numeric_literals
 from snowmass_reference_boundaries import reference_boundary
@@ -919,7 +920,9 @@ def _hard_exact_translations(
     for path, rules in rule_sets:
         if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
             raise RuntimeError(f"Exact translations must be a list of objects: {path}")
-        for rule in rules:
+        for rule in constraint_compiler.body_exact_translation_rules(
+            {"exact_translations": rules}
+        ):
             source_text = " ".join(str(rule.get("source", "")).split())
             source = source_text.casefold()
             target = str(rule.get("target", "")).strip()
