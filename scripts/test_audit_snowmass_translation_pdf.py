@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -22,7 +21,9 @@ class PackagedPdfAuditTests(unittest.TestCase):
 
             self.assertFalse(report["ok"])
             self.assertIsNone(report["pdf_sha256"])
-            self.assertTrue(any(item.startswith("unreadable_pdf:") for item in report["failures"]))
+            self.assertTrue(
+                any(item.startswith("unreadable_pdf:") for item in report["failures"])
+            )
 
     def _write_pdf(self, path: Path, pages: list[str]) -> None:
         document = fitz.open()
@@ -98,6 +99,13 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertFalse(report["ok"])
             self.assertIn("isolated_latin_edge_word:will:page_1", report["failures"])
 
+            protected = audit_pdf(
+                pdf,
+                ignored_text_regions={1: [(490.0, 680.0, 550.0, 730.0)]},
+            )
+            self.assertTrue(protected["ok"])
+            self.assertEqual(protected["isolated_latin_edge_words"], [])
+
     def test_malformed_pdf_returns_a_failed_report(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "broken.pdf"
@@ -108,7 +116,10 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertFalse(report["ok"])
             self.assertEqual(report["page_count"], None)
             self.assertTrue(
-                any(failure.startswith("unreadable_pdf:") for failure in report["failures"])
+                any(
+                    failure.startswith("unreadable_pdf:")
+                    for failure in report["failures"]
+                )
             )
 
 

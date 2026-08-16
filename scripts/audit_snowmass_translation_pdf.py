@@ -61,6 +61,8 @@ def audit_pdf(
     expected_pages: int | None = None,
     contact_sheet_path: str | Path | None = None,
     minimum_extractable_characters: int = 5,
+    ignored_text_regions: dict[int, list[tuple[float, float, float, float]]]
+    | None = None,
 ) -> dict[str, Any]:
     pdf_path = Path(pdf_path)
     failures: list[str] = []
@@ -68,6 +70,7 @@ def audit_pdf(
     residue: list[dict[str, Any]] = []
     low_text_pages: list[int] = []
     isolated_latin_edge_words: list[dict[str, Any]] = []
+    ignored_text_regions = ignored_text_regions or {}
     try:
         document = fitz.open(pdf_path)
     except (OSError, RuntimeError, ValueError) as error:
@@ -113,6 +116,15 @@ def audit_pdf(
                         and x0 >= bounds.x1 * 0.80
                         and y0 >= bounds.y1 * 0.65
                     ):
+                        center_x = (x0 + x1) / 2
+                        center_y = (y0 + y1) / 2
+                        if any(
+                            left <= center_x <= right and top <= center_y <= bottom
+                            for left, top, right, bottom in ignored_text_regions.get(
+                                page_number, []
+                            )
+                        ):
+                            continue
                         detail = {
                             "page": page_number,
                             "word": line_text,
@@ -150,6 +162,7 @@ def audit_pdf(
         "out_of_bounds": out_of_bounds,
         "isolated_latin_edge_words": isolated_latin_edge_words,
         "residue": residue,
+        "ignored_text_region_count": sum(map(len, ignored_text_regions.values())),
         "contact_sheet_path": (
             Path(contact_sheet_path).name if contact_sheet_path is not None else None
         ),
@@ -164,11 +177,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-pages", type=int)
     parser.add_argument("--contact-sheet", type=Path)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--protection-receipt", type=Path)
     arguments = parser.parse_args(argv)
+    ignored_text_regions: dict[int, list[tuple[float, float, float, float]]] = {}
+    if arguments.protection_receipt is not None:
+        protection = json.loads(
+            arguments.protection_receipt.read_text(encoding="utf-8")
+        )
+        if protection.get("verified") is not True:
+            raise SystemExit(
+                "Protection receipt must be verified before its regions can be ignored"
+            )
+        for region in protection.get("protected_regions", []):
+            page = int(region["output_page"])
+            ignored_text_regions.setdefault(page, []).append(
+                tuple(map(float, region["bbox"]))
+            )
     report = audit_pdf(
         arguments.pdf,
         expected_pages=arguments.expected_pages,
         contact_sheet_path=arguments.contact_sheet,
+        ignored_text_regions=ignored_text_regions,
     )
     rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if arguments.report is not None:
