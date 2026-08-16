@@ -40,6 +40,44 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertEqual(len(spans), 1)
             self.assertEqual(spans[0]["font"], "Times-Roman")
 
+    def test_fails_when_translated_numeric_citation_sequence_differs_from_source(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+            for path, text in (
+                (source, "Source body [1, 2]."),
+                (translated, "Translated body [1, 3]."),
+            ):
+                document = fitz.open()
+                page = document.new_page()
+                page.insert_text((72, 100), text)
+                document.save(path)
+                document.close()
+            ir.write_text(
+                '<document totalPages="1"><page pageNumber="0"/></document>',
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertFalse(receipt["verified"])
+            self.assertEqual(receipt["citation_conservation"][0]["source"], ["[1,2]"])
+            self.assertEqual(receipt["citation_conservation"][0]["output"], ["[1,3]"])
+            self.assertIn("citation_sequence_mismatch:output_page_1", receipt["failures"])
+
     def _write_lines(
         self,
         page: fitz.Page,
@@ -609,7 +647,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         )
         if translated:
             first.insert_text((72, 420), "偏袒", fontname="china-s")
-            first.insert_text((72, 460), "[3, 4, 5], ", fontname="helv")
+        first.insert_text((72, 460), "[3, 4, 5], ", fontname="helv")
         first.insert_text((300, 750), "1")
         second = doc.new_page(width=612, height=792)
         if translated:

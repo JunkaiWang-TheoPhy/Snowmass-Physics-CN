@@ -1442,10 +1442,42 @@ def _replace_output_text(page: fitz.Page, source_text: str, target_text: str) ->
     return len(patches)
 
 
-_NUMERIC_CITATION_SPAN = re.compile(
-    r"^\s*\[(?:\d+(?:\s*[-\u2013\u2014]\s*\d+)?)(?:\s*,\s*"
-    r"\d+(?:\s*[-\u2013\u2014]\s*\d+)?)*\]\s*[,.;:]?\s*$"
+_NUMERIC_CITATION_MARKER = re.compile(
+    r"\[(?:\d+(?:\s*[-\u2013\u2014]\s*\d+)?)(?:\s*,\s*"
+    r"\d+(?:\s*[-\u2013\u2014]\s*\d+)?)*\]"
 )
+_NUMERIC_CITATION_SPAN = re.compile(
+    _NUMERIC_CITATION_MARKER.pattern + r"\s*[,.;:]?\s*$"
+)
+
+
+def _numeric_citation_markers(
+    page: fitz.Page,
+    *,
+    excluded_rectangles: tuple[fitz.Rect, ...] = (),
+) -> list[str]:
+    markers: list[str] = []
+    for block in page.get_text("dict", sort=True).get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                rectangle = fitz.Rect(*span["bbox"])
+                center = fitz.Point(
+                    (rectangle.x0 + rectangle.x1) / 2,
+                    (rectangle.y0 + rectangle.y1) / 2,
+                )
+                if any(excluded.contains(center) for excluded in excluded_rectangles):
+                    continue
+                for match in _NUMERIC_CITATION_MARKER.finditer(
+                    str(span.get("text", ""))
+                ):
+                    markers.append(
+                        re.sub(r"\s+", "", match.group(0))
+                        .replace("\u2013", "-")
+                        .replace("\u2014", "-")
+                    )
+    return markers
 
 
 def _normalize_numeric_citation_glyphs(
@@ -1791,12 +1823,46 @@ def _protect_pdf_open_documents(
             translated[output_index], source_text, target_text
         )
 
+    citation_conservation: list[dict[str, object]] = []
+    for output_index, source_page_number in enumerate(selected_source_pages):
+        exclusions = tuple(
+            [
+                *raster_rectangles_by_output.get(output_index, []),
+                *identity_rectangles_by_output.get(output_index, []),
+                *reference_rectangles_by_output.get(output_index, []),
+            ]
+        )
+        source_markers = _numeric_citation_markers(
+            source[source_page_number - 1],
+            excluded_rectangles=exclusions,
+        )
+        output_markers = _numeric_citation_markers(
+            translated[output_index],
+            excluded_rectangles=exclusions,
+        )
+        citation_conservation.append(
+            {
+                "output_page": output_index + 1,
+                "source_page": source_page_number,
+                "source": source_markers,
+                "output": output_markers,
+                "source_sha256": _text_sha256("\n".join(source_markers)),
+                "output_sha256": _text_sha256("\n".join(output_markers)),
+                "matched": source_markers == output_markers,
+            }
+        )
+
     citation_glyph_receipts = _normalize_numeric_citation_glyphs(translated)
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     translated.save(output_pdf, garbage=4, deflate=True)
 
     failures: list[str] = []
+    failures.extend(
+        f"citation_sequence_mismatch:output_page_{item['output_page']}"
+        for item in citation_conservation
+        if item["matched"] is not True
+    )
     with fitz.open(output_pdf) as protected:
         for output_index, source_page_number, rectangle, mode, pixel_hash in protected_regions:
             if mode == "rasterized_source_clip":
@@ -1892,6 +1958,7 @@ def _protect_pdf_open_documents(
         "output_replacement_count": output_replacement_count,
         "normalized_citation_glyph_count": len(citation_glyph_receipts),
         "normalized_citation_glyphs": citation_glyph_receipts,
+        "citation_conservation": citation_conservation,
         "verbatim_text_count": verbatim_text_count,
         "protected_regions": [
             {
