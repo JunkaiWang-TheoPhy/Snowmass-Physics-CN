@@ -116,6 +116,49 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertIn("参考文献", rendered)
         self.assertNotIn("damaged heading", rendered)
 
+    def test_redaction_expands_to_a_target_block_overlapping_the_source_region(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import (
+            _expanded_redaction_rectangle,
+        )
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            page.insert_textbox(
+                fitz.Rect(50, 110, 290, 190),
+                "Translated reference text that wraps well below the source clip " * 3,
+                fontsize=10,
+            )
+            expanded = _expanded_redaction_rectangle(
+                page,
+                fitz.Rect(50, 100, 290, 125),
+            )
+        finally:
+            document.close()
+
+        self.assertGreater(expanded.y1, 160)
+
+    def test_reference_redaction_clears_reflow_to_the_end_of_its_column(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import (
+            _reference_redaction_rectangle,
+        )
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            redaction = _reference_redaction_rectangle(
+                page,
+                fitz.Rect(315, 90, 560, 180),
+            )
+        finally:
+            document.close()
+
+        self.assertGreaterEqual(redaction.y1, 740)
+        self.assertLess(redaction.x0, 315)
+        self.assertGreater(redaction.x1, 560)
+
     def test_reference_clip_uses_real_text_width_instead_of_fixed_margins(self) -> None:
         """Catch truncation when a paper's references extend left of 65 pt."""
 
@@ -185,6 +228,34 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
 
         right = max(clips[1], key=lambda rectangle: rectangle.x0)
         self.assertLessEqual(right.y0, 80.4)
+
+    def test_reference_clips_bridge_unmarked_continuations_between_entries(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            page.insert_text((52, 300), "References", fontsize=12)
+            page.insert_text((53, 325), "[1] A. Author. First line.", fontsize=9)
+            page.insert_text(
+                (53, 342),
+                "Continuation without its own reference marker.",
+                fontsize=9,
+            )
+            page.insert_text((53, 360), "[2] B. Author. Next entry.", fontsize=9)
+            page.insert_text(
+                (53, 378),
+                "Final continuation after the last numbered entry.",
+                fontsize=9,
+            )
+
+            clips = _reference_clips(document)
+        finally:
+            document.close()
+
+        self.assertEqual(len(clips[1]), 1)
+        self.assertLessEqual(clips[1][0].y0, 318.6)
+        self.assertGreaterEqual(clips[1][0].y1, 381.0)
 
     def _make_auto_discovery_fixture(
         self,
@@ -799,6 +870,41 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                     auto_header_min_recurrence=2,
                 )
 
+    def test_auto_header_resolves_only_near_duplicate_tied_variants(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, translated, ir = self._make_auto_discovery_fixture(
+                root,
+                header_variants=[
+                    "标准页眉。",
+                    "标准页眉",
+                    "标准页眉！",
+                ],
+            )
+            output = root / "near-duplicate-tie.pdf"
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1, 2, 3, 4),
+                ir_xml=ir,
+                auto_header=True,
+                auto_header_min_recurrence=2,
+            )
+
+            self.assertTrue(receipt["verified"])
+            self.assertEqual(
+                receipt["auto_header"]["canonical_target"],
+                "标准页眉",
+            )
+            with fitz.open(output) as document:
+                rendered = "".join(document[index].get_text() for index in range(1, 4))
+            self.assertEqual(rendered.count("标准页眉"), 3)
+            self.assertNotIn("标准页眉。", rendered)
+
     def test_two_page_paper_allows_front_matter_protection_without_header_vote(
         self,
     ) -> None:
@@ -888,25 +994,25 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             )
 
             self.assertTrue(receipt["verified"])
-            self.assertCountEqual(
-                [block["source_text"] for block in receipt["auto_front_matter"]["blocks"]],
-                [
-                    "Alex Sim",
-                    "Ezra Kissel and Chin Guok",
-                    "asim@lbl.gov",
-                    "{kissel,chin}@es.net",
-                ],
+            identity_blocks = receipt["auto_front_matter"]["blocks"]
+            self.assertEqual(len(identity_blocks), 2)
+            identity_text = "\n".join(
+                block["source_text"] for block in identity_blocks
             )
-            contact_blocks = [
-                block
-                for block in receipt["auto_front_matter"]["blocks"]
-                if "@" in block["source_text"]
-            ]
+            for expected in (
+                "Alex Sim",
+                "Lawrence Berkeley National Laboratory",
+                "asim@lbl.gov",
+                "Ezra Kissel and Chin Guok",
+                "Energy Sciences Network",
+                "{kissel,chin}@es.net",
+            ):
+                self.assertIn(expected, identity_text)
             self.assertTrue(
                 all(
                     block["bbox"][2] - block["bbox"][0] > 120
                     and block["bbox"][3] - block["bbox"][1] > 40
-                    for block in contact_blocks
+                    for block in identity_blocks
                 )
             )
             self.assertEqual(

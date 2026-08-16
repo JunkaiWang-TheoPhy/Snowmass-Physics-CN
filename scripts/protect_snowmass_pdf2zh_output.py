@@ -10,6 +10,7 @@ import re
 import unicodedata
 import xml.etree.ElementTree as ET
 from collections import Counter
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import cast
 
@@ -32,6 +33,25 @@ def _clean_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).replace("\x03", "")
     lines = [" ".join(line.split()) for line in normalized.splitlines()]
     return "\n".join(line for line in lines if line).strip()
+
+
+def _header_similarity_text(value: str) -> str:
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFKC", value).casefold()
+        if not character.isspace()
+        and not unicodedata.category(character).startswith("P")
+    )
+
+
+def _header_display_penalty(value: str) -> tuple[int, int]:
+    return (
+        sum(character.isspace() for character in value),
+        sum(
+            unicodedata.category(character).startswith("P")
+            for character in value
+        ),
+    )
 
 
 def _text_sha256(value: str) -> str:
@@ -120,6 +140,22 @@ def _coalesce_adjacent_text(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
     return merged
 
 
+def _coalesce_reference_columns(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
+    columns: list[fitz.Rect] = []
+    for rectangle in sorted(rectangles, key=lambda item: (item.x0, item.y0)):
+        for index, column in enumerate(columns):
+            horizontal_overlap = max(
+                0.0, min(column.x1, rectangle.x1) - max(column.x0, rectangle.x0)
+            )
+            smaller_width = min(column.width, rectangle.width)
+            if smaller_width and horizontal_overlap / smaller_width >= 0.5:
+                columns[index] = column | rectangle
+                break
+        else:
+            columns.append(rectangle)
+    return sorted(columns, key=lambda item: item.x0)
+
+
 def _reference_clips(source: fitz.Document) -> dict[int, list[fitz.Rect]]:
     clips: dict[int, list[fitz.Rect]] = {}
     in_references = False
@@ -138,6 +174,7 @@ def _reference_clips(source: fitz.Document) -> dict[int, list[fitz.Rect]]:
         if not in_references:
             continue
         page_clips: list[fitz.Rect] = []
+        all_text_rectangles: list[fitz.Rect] = []
         for block in page.get_text("dict", sort=True).get("blocks", []):
             if block.get("type") != 0:
                 continue
@@ -147,7 +184,9 @@ def _reference_clips(source: fitz.Document) -> dict[int, list[fitz.Rect]]:
                     str(span.get("text", "")) for span in line.get("spans", [])
                 ).strip()
                 if text:
-                    lines.append((fitz.Rect(*line["bbox"]), text))
+                    line_rectangle = fitz.Rect(*line["bbox"])
+                    lines.append((line_rectangle, text))
+                    all_text_rectangles.append(line_rectangle)
             starts = [
                 index
                 for index, (_, text) in enumerate(lines)
@@ -181,7 +220,33 @@ def _reference_clips(source: fitz.Document) -> dict[int, list[fitz.Rect]]:
             if heading is None:
                 in_references = False
             continue
-        clips[page_index + 1] = page_clips
+        columns = _coalesce_reference_columns(page_clips)
+        expanded_columns: list[fitz.Rect] = []
+        for column in columns:
+            expanded = fitz.Rect(column)
+            for line_rectangle in all_text_rectangles:
+                horizontal_overlap = max(
+                    0.0,
+                    min(expanded.x1, line_rectangle.x1)
+                    - max(expanded.x0, line_rectangle.x0),
+                )
+                smaller_width = min(expanded.width, line_rectangle.width)
+                if (
+                    line_rectangle.y0 >= column.y0 - 1.0
+                    and line_rectangle.y0 < page.rect.height * 0.94
+                    and smaller_width
+                    and horizontal_overlap / smaller_width >= 0.5
+                ):
+                    expanded |= line_rectangle
+            expanded_columns.append(
+                fitz.Rect(
+                    max(0.0, expanded.x0 - 2.0),
+                    expanded.y0,
+                    min(page.rect.width, expanded.x1 + 2.0),
+                    min(page.rect.height, expanded.y1 + 3.0),
+                )
+            )
+        clips[page_index + 1] = expanded_columns
     return clips
 
 
@@ -265,13 +330,21 @@ def _expanded_redaction_rectangle(
     patch = fitz.Rect(rectangle)
     for block in output_page.get_text("blocks", sort=True):
         block_rectangle = fitz.Rect(*block[:4])
-        center = (
-            (block_rectangle.x0 + block_rectangle.x1) / 2,
-            (block_rectangle.y0 + block_rectangle.y1) / 2,
-        )
-        if rectangle.contains(center):
+        if (block_rectangle & rectangle).get_area() > 0:
             patch |= block_rectangle
     return fitz.Rect(patch.x0 - 1, patch.y0 - 1, patch.x1 + 1, patch.y1 + 1)
+
+
+def _reference_redaction_rectangle(
+    output_page: fitz.Page, rectangle: fitz.Rect
+) -> fitz.Rect:
+    expanded = _expanded_redaction_rectangle(output_page, rectangle)
+    return fitz.Rect(
+        expanded.x0,
+        expanded.y0,
+        expanded.x1,
+        max(expanded.y1, output_page.rect.height * 0.94),
+    )
 
 
 def _has_embedded_raster_clip(
@@ -581,15 +654,44 @@ def _discover_running_headers(
                 str(entry["display_text"]),
             ),
         )
+        top_count = cast(int, sorted_candidates[0]["count"])
+        tied_candidates = [
+            candidate
+            for candidate in sorted_candidates
+            if cast(int, candidate["count"]) == top_count
+        ]
         tied = (
             len(sorted_candidates) > 1
-            and cast(int, sorted_candidates[0]["count"])
-            == cast(int, sorted_candidates[1]["count"])
+            and len(tied_candidates) > 1
         )
         if tied and len(source_rectangles) > 2:
-            raise RuntimeError(
-                "Ambiguous canonical running header translation candidates"
+            folded = [
+                _header_similarity_text(str(candidate["display_text"]))
+                for candidate in tied_candidates
+            ]
+            near_duplicates = all(
+                left
+                and right
+                and SequenceMatcher(None, left, right).ratio() >= 0.85
+                for index, left in enumerate(folded)
+                for right in folded[index + 1 :]
             )
+            if not near_duplicates:
+                raise RuntimeError(
+                    "Ambiguous canonical running header translation candidates"
+                )
+            tied_candidates.sort(
+                key=lambda candidate: (
+                    _header_display_penalty(str(candidate["display_text"])),
+                    min(cast(list[int], candidate["pages"])),
+                    str(candidate["display_text"]),
+                )
+            )
+            winner = tied_candidates[0]
+            sorted_candidates = [
+                winner,
+                *[candidate for candidate in sorted_candidates if candidate is not winner],
+            ]
         canonical_target = str(sorted_candidates[0]["display_text"])
         families.append(
             {
@@ -702,6 +804,87 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
         contact_line = dict(line)
         contact_line["rect"] = fitz.Rect(block_rectangle)
         contact_lines.append(contact_line)
+    if contact_lines:
+        author_columns = sorted(
+            author_lines,
+            key=lambda line: cast(fitz.Rect, line["rect"]).x0,
+        )
+        author_centers = [
+            (cast(fitz.Rect, line["rect"]).x0 + cast(fitz.Rect, line["rect"]).x1)
+            / 2
+            for line in author_columns
+        ]
+        boundaries = [
+            (left + right) / 2
+            for left, right in zip(author_centers, author_centers[1:])
+        ]
+        atomic_columns: list[dict[str, object]] = []
+        for index, author in enumerate(author_columns):
+            left_bound = boundaries[index - 1] if index else 0.0
+            right_bound = (
+                boundaries[index]
+                if index < len(boundaries)
+                else source_page.rect.width
+            )
+            author_rectangle = cast(fitz.Rect, author["rect"])
+            matching_contacts = [
+                line
+                for line in contact_lines
+                if left_bound
+                <= (
+                    cast(fitz.Rect, line["rect"]).x0
+                    + cast(fitz.Rect, line["rect"]).x1
+                )
+                / 2
+                < right_bound
+            ]
+            if not matching_contacts:
+                raise RuntimeError(
+                    "Unable to pair first-page author and contact columns"
+                )
+            column_bottom = max(
+                cast(fitz.Rect, line["rect"]).y1 for line in matching_contacts
+            )
+            column_lines = [
+                line
+                for line in lines
+                if author_rectangle.y0 - 2
+                <= cast(fitz.Rect, line["rect"]).y0
+                <= column_bottom
+                and left_bound
+                <= (
+                    cast(fitz.Rect, line["rect"]).x0
+                    + cast(fitz.Rect, line["rect"]).x1
+                )
+                / 2
+                < right_bound
+            ]
+            column_lines.sort(
+                key=lambda line: (
+                    cast(fitz.Rect, line["rect"]).y0,
+                    cast(fitz.Rect, line["rect"]).x0,
+                )
+            )
+            rectangle = fitz.Rect(cast(fitz.Rect, column_lines[0]["rect"]))
+            for line in column_lines[1:]:
+                rectangle |= cast(fitz.Rect, line["rect"])
+            rectangle = fitz.Rect(
+                max(0.0, rectangle.x0 - 2.0),
+                max(0.0, rectangle.y0 - 2.0),
+                min(source_page.rect.width, rectangle.x1 + 2.0),
+                min(source_page.rect.height, rectangle.y1 + 2.0),
+            )
+            source_text = "\n".join(str(line["text"]) for line in column_lines)
+            atomic_columns.append(
+                {
+                    "page": 1,
+                    "source_text": source_text,
+                    "source_text_sha256": _text_sha256(source_text),
+                    "bbox": [rectangle.x0, rectangle.y0, rectangle.x1, rectangle.y1],
+                    "rect": rectangle,
+                }
+            )
+        return atomic_columns
     discovered = sorted(
         {
             (
@@ -1006,12 +1189,7 @@ def _protect_pdf_open_documents(
             )
         for rectangle in reference_rectangles:
             output_page.add_redact_annot(
-                fitz.Rect(
-                    rectangle.x0 - 1.0,
-                    rectangle.y0 - 0.5,
-                    rectangle.x1 + 1.0,
-                    rectangle.y1 + 1.0,
-                ),
+                _reference_redaction_rectangle(output_page, rectangle),
                 fill=(1, 1, 1),
             )
         output_page.apply_redactions()
