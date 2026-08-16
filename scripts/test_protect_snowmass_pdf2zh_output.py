@@ -426,9 +426,17 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                 "以斯拉·基塞尔与钱国<br>"
                 "<span style='font-size: 10pt;'>能源科学网络</span><br>"
                 "<span style='font-size: 10pt;'>伯克利，加利福尼亚，美国</span><br>"
-                "<span style='font-size: 10pt;'>伯克利 {kissel,chin}@es.net</span>"
+                "<span style='font-size: 10pt;'>{kissel,chin}@es.net</span>"
                 "</div>"
             ),
+        )
+        self._write_lines(
+            first_translated,
+            350,
+            158,
+            ["伯克利 {kissel,chin}@es.net"],
+            fontname="china-s",
+            fontsize=10,
         )
         self._write_lines(
             first_translated,
@@ -818,7 +826,11 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                 if "@" in block["source_text"]
             ]
             self.assertTrue(
-                all(block["bbox"][2] - block["bbox"][0] > 120 for block in contact_blocks)
+                all(
+                    block["bbox"][2] - block["bbox"][0] > 120
+                    and block["bbox"][3] - block["bbox"][1] > 40
+                    for block in contact_blocks
+                )
             )
             self.assertEqual(
                 receipt["auto_header"]["source_text"], "Sim and Kissel, et al."
@@ -833,8 +845,8 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertNotIn("亚历克斯·西姆", first)
             self.assertNotIn("以斯拉·基塞尔", first)
             self.assertNotIn("伯克利 {kissel,chin}@es.net", first)
-            self.assertIn("劳伦斯伯克利国家实验室", first)
-            self.assertIn("能源科学网络", first)
+            self.assertNotIn("劳伦斯伯克利国家实验室", first)
+            self.assertNotIn("能源科学网络", first)
             self.assertNotIn("Lawrence Berkeley National Laboratory", first)
             self.assertNotIn("Energy Sciences Network", first)
             self.assertEqual(combined.count("规范页眉"), 3)

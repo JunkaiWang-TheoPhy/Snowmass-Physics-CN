@@ -681,12 +681,7 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
             continue
         block_rectangle = cast(fitz.Rect, line["block_rect"])
         contact_line = dict(line)
-        contact_line["rect"] = fitz.Rect(
-            block_rectangle.x0,
-            line_rectangle.y0,
-            block_rectangle.x1,
-            line_rectangle.y1,
-        )
+        contact_line["rect"] = fitz.Rect(block_rectangle)
         contact_lines.append(contact_line)
     discovered = sorted(
         {
