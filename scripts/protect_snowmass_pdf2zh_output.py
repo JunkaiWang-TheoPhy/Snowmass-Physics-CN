@@ -1442,6 +1442,77 @@ def _replace_output_text(page: fitz.Page, source_text: str, target_text: str) ->
     return len(patches)
 
 
+_NUMERIC_CITATION_SPAN = re.compile(
+    r"^\s*\[(?:\d+(?:\s*[-\u2013\u2014]\s*\d+)?)(?:\s*,\s*"
+    r"\d+(?:\s*[-\u2013\u2014]\s*\d+)?)*\]\s*[,.;:]?\s*$"
+)
+
+
+def _normalize_numeric_citation_glyphs(
+    document: fitz.Document,
+) -> list[dict[str, object]]:
+    """Redraw numeric citation spans without reusing unsafe subset fonts."""
+
+    receipts: list[dict[str, object]] = []
+    for page_index, page in enumerate(document):
+        candidates: list[dict[str, object]] = []
+        for block in page.get_text("dict", sort=True).get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                direction = tuple(line.get("dir", (1.0, 0.0)))
+                if abs(float(direction[0]) - 1.0) > 1e-3 or abs(
+                    float(direction[1])
+                ) > 1e-3:
+                    continue
+                for span in line.get("spans", []):
+                    text = str(span.get("text", ""))
+                    if not _NUMERIC_CITATION_SPAN.fullmatch(text):
+                        continue
+                    rectangle = fitz.Rect(*span["bbox"])
+                    if rectangle.is_empty or rectangle.is_infinite:
+                        raise RuntimeError("Numeric citation has an invalid bounding box")
+                    rgb = fitz.sRGB_to_rgb(int(span.get("color", 0)))
+                    candidates.append(
+                        {
+                            "text": text,
+                            "bbox": rectangle,
+                            "origin": fitz.Point(*span["origin"]),
+                            "font_size": float(span["size"]),
+                            "color": tuple(channel / 255 for channel in rgb),
+                        }
+                    )
+        if not candidates:
+            continue
+        for candidate in candidates:
+            page.add_redact_annot(
+                cast(fitz.Rect, candidate["bbox"]),
+                fill=False,
+            )
+        page.apply_redactions()
+        for candidate in candidates:
+            page.insert_text(
+                cast(fitz.Point, candidate["origin"]),
+                str(candidate["text"]),
+                fontsize=float(candidate["font_size"]),
+                fontname="tiro",
+                color=cast(tuple[float, float, float], candidate["color"]),
+                overlay=True,
+            )
+            rectangle = cast(fitz.Rect, candidate["bbox"])
+            receipts.append(
+                {
+                    "output_page": page_index + 1,
+                    "text": str(candidate["text"]),
+                    "text_sha256": _text_sha256(str(candidate["text"])),
+                    "bbox": [rectangle.x0, rectangle.y0, rectangle.x1, rectangle.y1],
+                    "font": "Times-Roman",
+                    "font_size": float(candidate["font_size"]),
+                }
+            )
+    return receipts
+
+
 def protect_pdf(
     *,
     source_pdf: Path,
@@ -1720,6 +1791,8 @@ def _protect_pdf_open_documents(
             translated[output_index], source_text, target_text
         )
 
+    citation_glyph_receipts = _normalize_numeric_citation_glyphs(translated)
+
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     translated.save(output_pdf, garbage=4, deflate=True)
 
@@ -1773,6 +1846,36 @@ def _protect_pdf_open_documents(
                 failures.append(
                     f"fixed_replacement_missing:output_page_{output_index + 1}"
                 )
+        for citation in citation_glyph_receipts:
+            output_index = int(citation["output_page"]) - 1
+            rectangle = fitz.Rect(*cast(list[float], citation["bbox"]))
+            clip = fitz.Rect(
+                rectangle.x0 - 2,
+                rectangle.y0 - 2,
+                rectangle.x1 + 2,
+                rectangle.y1 + 2,
+            )
+            matching_spans = [
+                span
+                for block in protected[output_index]
+                .get_text("dict", clip=clip, sort=True)
+                .get("blocks", [])
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+                if str(citation["text"]).strip() in str(span.get("text", ""))
+                and span.get("font") == citation["font"]
+            ]
+            if not matching_spans:
+                failures.append(
+                    f"safe_citation_glyph_missing:output_page_{output_index + 1}"
+                )
+                continue
+            pixels = protected[output_index].get_pixmap(
+                matrix=fitz.Matrix(2, 2),
+                clip=clip,
+                alpha=False,
+            ).samples
+            citation["rendered_clip_sha256"] = hashlib.sha256(pixels).hexdigest()
     receipt: dict[str, object] = {
         "schema_version": 2,
         "source_pdf_sha256": _sha256(source_pdf),
@@ -1787,6 +1890,8 @@ def _protect_pdf_open_documents(
         "canonical_header_count": header_count,
         "fixed_replacement_count": fixed_replacement_count,
         "output_replacement_count": output_replacement_count,
+        "normalized_citation_glyph_count": len(citation_glyph_receipts),
+        "normalized_citation_glyphs": citation_glyph_receipts,
         "verbatim_text_count": verbatim_text_count,
         "protected_regions": [
             {

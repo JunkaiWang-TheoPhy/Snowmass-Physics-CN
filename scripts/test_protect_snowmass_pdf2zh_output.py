@@ -12,6 +12,34 @@ import fitz
 
 
 class ProtectPdf2zhOutputTests(unittest.TestCase):
+    def test_redraws_numeric_citations_with_a_safe_standard_font(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import (
+            _normalize_numeric_citation_glyphs,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "citations.pdf"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((72, 100), "[3, 4, 5], ", fontname="helv")
+            receipts = _normalize_numeric_citation_glyphs(document)
+            document.save(output, garbage=4, deflate=True)
+            document.close()
+
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["text"], "[3, 4, 5], ")
+            self.assertEqual(receipts[0]["font"], "Times-Roman")
+            with fitz.open(output) as protected:
+                spans = [
+                    span
+                    for block in protected[0].get_text("dict")["blocks"]
+                    for line in block.get("lines", [])
+                    for span in line["spans"]
+                    if "[3, 4, 5]" in span["text"]
+                ]
+            self.assertEqual(len(spans), 1)
+            self.assertEqual(spans[0]["font"], "Times-Roman")
+
     def _write_lines(
         self,
         page: fitz.Page,
@@ -581,6 +609,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         )
         if translated:
             first.insert_text((72, 420), "偏袒", fontname="china-s")
+            first.insert_text((72, 460), "[3, 4, 5], ", fontname="helv")
         first.insert_text((300, 750), "1")
         second = doc.new_page(width=612, height=792)
         if translated:
@@ -641,6 +670,13 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertEqual(receipt["figure_region_count"], 1)
             self.assertEqual(receipt["table_region_count"], 1)
             self.assertEqual(receipt["reference_page_count"], 1)
+            self.assertEqual(receipt["normalized_citation_glyph_count"], 1)
+            self.assertEqual(
+                receipt["normalized_citation_glyphs"][0]["font"], "Times-Roman"
+            )
+            self.assertTrue(
+                receipt["normalized_citation_glyphs"][0]["rendered_clip_sha256"]
+            )
             raster_regions = [
                 region
                 for region in receipt["protected_regions"]
