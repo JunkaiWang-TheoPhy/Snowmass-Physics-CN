@@ -937,7 +937,7 @@ def _validate_paper_seal(
     evidence_hashes = seal.get("evidence_hashes")
     evidence_paths = {
         "finish": article / "run" / "finish.json",
-        "preflight": article / "run" / "preflight.json",
+        "preflight": Path(str(paper["preflight_path"])),
         "glossary": article / "run" / "locked-glossary.csv",
         "protection": article / "qc" / "protection.json",
         "semantic": article / "qc" / "semantic-report.json",

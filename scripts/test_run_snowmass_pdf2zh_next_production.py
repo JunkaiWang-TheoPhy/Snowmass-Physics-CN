@@ -133,7 +133,7 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         run.mkdir(parents=True, exist_ok=True)
         evidence_paths = {
             "finish": run / "finish.json",
-            "preflight": run / "preflight.json",
+            "preflight": Path(str(paper["preflight_path"])),
             "glossary": run / "locked-glossary.csv",
             "protection": qc / "protection.json",
             "semantic": qc / "semantic-report.json",
@@ -618,6 +618,10 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         deepseek_qc = Path(deepseek_paper["article_dir"]) / "qc"
         deepseek_qc.mkdir(parents=True, exist_ok=True)
         paper_seal = self._write_complete_paper_seal(deepseek_paper)
+        (Path(deepseek_paper["run_dir"]) / "preflight.json").write_text(
+            json.dumps({"status": "mutable-live-preflight"}),
+            encoding="utf-8",
+        )
         stage_seal = module.promote_stage(Path(deepseek_plan["plan_path"]))
         self.assertEqual(stage_seal["stage"], "deepseek_probe")
         self.assertEqual(
