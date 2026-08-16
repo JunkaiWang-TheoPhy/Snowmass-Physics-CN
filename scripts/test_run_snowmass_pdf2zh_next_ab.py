@@ -606,6 +606,121 @@ class SharedProjectReservationTests(unittest.TestCase):
             restarted.settle(0.1)
             self.assertAlmostEqual(module.read_project_commitment(control), 0.1)
 
+    def test_reconciles_dead_stage_from_hashed_request_ledger_conservatively(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            control = root / "control"
+            control.mkdir()
+            request_ledger = root / "api-cost-ledger.jsonl"
+            request_ledger.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {
+                            "kind": "reserve",
+                            "call_index": 1,
+                            "owner_pid": 999_999_999,
+                            "reserved_cost_rmb": 0.2,
+                        },
+                        {"kind": "settle", "call_index": 1, "cost_rmb": 0.03},
+                        {
+                            "kind": "reserve",
+                            "call_index": 2,
+                            "owner_pid": 999_999_999,
+                            "reserved_cost_rmb": 0.25,
+                        },
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (control / "budget_ledger.jsonl").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "kind": "reserve",
+                        "run_id": "dead-run",
+                        "reservation_id": "dead-reservation",
+                        "owner_pid": 999_999_999,
+                        "estimated_cost_rmb": 0.8,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            reservation = module.SharedProjectReservation(
+                control_dir=control,
+                run_id="dead-run",
+                project_max_cost_rmb=1,
+            )
+            receipt = reservation.reconcile_terminated(
+                request_ledger_path=request_ledger,
+                expected_request_ledger_sha256=module.sha256_file(request_ledger),
+            )
+            self.assertAlmostEqual(receipt["settled_cost_rmb"], 0.03)
+            self.assertAlmostEqual(receipt["unresolved_cost_rmb"], 0.25)
+            self.assertAlmostEqual(receipt["conservative_cost_rmb"], 0.28)
+            self.assertAlmostEqual(module.read_project_commitment(control), 0.28)
+            event = json.loads(
+                (control / "budget_ledger.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()[-1]
+            )
+            self.assertEqual(event["kind"], "settle")
+            self.assertEqual(
+                event["reconciliation"]["request_ledger_sha256"],
+                module.sha256_file(request_ledger),
+            )
+
+    def test_reconciliation_rejects_live_owner_and_hash_mismatch(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            request_ledger = root / "api-cost-ledger.jsonl"
+            request_ledger.write_text(
+                json.dumps(
+                    {
+                        "kind": "reserve",
+                        "call_index": 1,
+                        "owner_pid": os.getpid(),
+                        "reserved_cost_rmb": 0.2,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            for owner_pid, expected_hash, message in (
+                (os.getpid(), module.sha256_file(request_ledger), "live owner"),
+                (999_999_999, "0" * 64, "hash mismatch"),
+            ):
+                control = root / str(owner_pid)
+                control.mkdir()
+                (control / "budget_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "kind": "reserve",
+                            "run_id": "target",
+                            "reservation_id": "reservation",
+                            "owner_pid": owner_pid,
+                            "estimated_cost_rmb": 0.8,
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                reservation = module.SharedProjectReservation(
+                    control_dir=control,
+                    run_id="target",
+                    project_max_cost_rmb=1,
+                )
+                with self.assertRaisesRegex(RuntimeError, message):
+                    reservation.reconcile_terminated(
+                        request_ledger_path=request_ledger,
+                        expected_request_ledger_sha256=expected_hash,
+                    )
+
 
 @unittest.skipUnless(
     os.environ.get("SNOWMASS_RUN_PDF2ZH_INTEGRATION") == "1",

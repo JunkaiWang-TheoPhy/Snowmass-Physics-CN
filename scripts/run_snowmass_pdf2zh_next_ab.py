@@ -522,6 +522,88 @@ def read_project_commitment(control_dir: Path | None) -> float:
     )
 
 
+def summarize_terminated_request_ledger(
+    path: Path, *, expected_sha256: str
+) -> dict[str, Any]:
+    """Return a fail-closed conservative cost summary for one stopped API ledger."""
+    path = Path(path)
+    content = path.read_bytes()
+    actual_sha256 = hashlib.sha256(content).hexdigest()
+    if actual_sha256 != str(expected_sha256).strip().lower():
+        raise RuntimeError("request ledger hash mismatch")
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise RuntimeError("request ledger is not valid UTF-8") from error
+    active: dict[int, dict[str, Any]] = {}
+    seen_reservations: set[int] = set()
+    settled_cost = 0.0
+    uncertain_cost = 0.0
+    max_call_index = 0
+    event_count = 0
+    for line_number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        event_count += 1
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                f"malformed request ledger line {line_number}"
+            ) from error
+        if not isinstance(event, dict):
+            raise RuntimeError(f"invalid request ledger line {line_number}")
+        kind = str(event.get("kind") or "")
+        if kind not in {"reserve", "settle", "commit_uncertain", "recover_uncertain"}:
+            raise RuntimeError(f"unsupported request ledger event {kind!r}")
+        try:
+            call_index = int(event.get("call_index") or 0)
+        except (TypeError, ValueError) as error:
+            raise RuntimeError("invalid request ledger call index") from error
+        if call_index <= 0:
+            raise RuntimeError("invalid request ledger call index")
+        max_call_index = max(max_call_index, call_index)
+        if kind == "reserve":
+            if call_index in seen_reservations:
+                raise RuntimeError("duplicate request ledger reservation")
+            reserved = float(event.get("reserved_cost_rmb") or -1)
+            if not math.isfinite(reserved) or reserved < 0:
+                raise RuntimeError("invalid request ledger reservation cost")
+            seen_reservations.add(call_index)
+            active[call_index] = event
+            continue
+        reservation = active.pop(call_index, None)
+        if reservation is None:
+            raise RuntimeError("request ledger closes a missing reservation")
+        cost = float(event.get("cost_rmb") or 0)
+        reserved = float(reservation.get("reserved_cost_rmb") or 0)
+        if not math.isfinite(cost) or cost < 0 or cost > reserved + 1e-12:
+            raise RuntimeError("invalid request ledger closing cost")
+        if kind == "settle":
+            settled_cost += cost
+        else:
+            uncertain_cost += cost
+    if not seen_reservations or seen_reservations != set(range(1, max_call_index + 1)):
+        raise RuntimeError("request ledger call indices are not contiguous")
+    for reservation in active.values():
+        if pid_is_alive(reservation.get("owner_pid")):
+            raise RuntimeError("request ledger still has a live owner")
+    unresolved_cost = sum(
+        float(event.get("reserved_cost_rmb") or 0) for event in active.values()
+    )
+    return {
+        "request_ledger_path": path.name,
+        "request_ledger_sha256": actual_sha256,
+        "event_count": event_count,
+        "request_count": max_call_index,
+        "settled_cost_rmb": settled_cost,
+        "uncertain_cost_rmb": uncertain_cost,
+        "unresolved_request_count": len(active),
+        "unresolved_cost_rmb": unresolved_cost,
+        "conservative_cost_rmb": settled_cost + uncertain_cost + unresolved_cost,
+    }
+
+
 class SharedProjectReservation:
     """Reserve one stage maximum in the existing cross-paper project ledger."""
 
@@ -725,6 +807,62 @@ class SharedProjectReservation:
                 }
             )
         self.completed = True
+
+    def reconcile_terminated(
+        self,
+        *,
+        request_ledger_path: Path,
+        expected_request_ledger_sha256: str,
+    ) -> dict[str, Any]:
+        """Settle a dead stage from a content-addressed per-request ledger."""
+        request_ledger_path = Path(request_ledger_path)
+        request_lock = request_ledger_path.with_suffix(
+            request_ledger_path.suffix + ".lock"
+        )
+        request_lock.parent.mkdir(parents=True, exist_ok=True)
+        with request_lock.open("a+", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            summary = summarize_terminated_request_ledger(
+                request_ledger_path,
+                expected_sha256=expected_request_ledger_sha256,
+            )
+            actual = float(summary["conservative_cost_rmb"])
+            with self._locked():
+                _spent, active = self._state(self._events_locked())
+                same_run = [
+                    event
+                    for event in active.values()
+                    if str(event.get("run_id") or "") == self.run_id
+                ]
+                if len(same_run) != 1:
+                    raise RuntimeError(
+                        "terminated run must have exactly one active reservation"
+                    )
+                prior = same_run[0]
+                if pid_is_alive(prior.get("owner_pid")):
+                    raise RuntimeError("shared project reservation is still active")
+                maximum = float(prior.get("estimated_cost_rmb") or 0)
+                if actual > maximum + 1e-12:
+                    raise BudgetExceededError(
+                        "reconciled cost exceeds the shared project reservation"
+                    )
+                self.reservation_id = str(prior["reservation_id"])
+                self.reserved_cost_rmb = maximum
+                self._append_locked(
+                    {
+                        "schema_version": 1,
+                        "event_id": uuid.uuid4().hex,
+                        "kind": "settle",
+                        "run_id": self.run_id,
+                        "reservation_id": self.reservation_id,
+                        "cost_rmb": actual,
+                        "usage": {},
+                        "uncertainty_key": f"pdf2zh-next:{self.run_id}",
+                        "reconciliation": summary,
+                    }
+                )
+        self.completed = True
+        return summary
 
 
 def runtime_versions() -> dict[str, str]:
