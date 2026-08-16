@@ -140,6 +140,39 @@ def _coalesce_adjacent_text(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
     return merged
 
 
+def _coalesce_identity_regions(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
+    regions = [fitz.Rect(rectangle) for rectangle in rectangles]
+    changed = True
+    while changed:
+        changed = False
+        merged: list[fitz.Rect] = []
+        for rectangle in sorted(regions, key=lambda item: (item.y0, item.x0)):
+            for index, existing in enumerate(merged):
+                horizontal_overlap = max(
+                    0.0,
+                    min(existing.x1, rectangle.x1)
+                    - max(existing.x0, rectangle.x0),
+                )
+                smaller_width = min(existing.width, rectangle.width)
+                vertical_gap = max(
+                    0.0,
+                    rectangle.y0 - existing.y1,
+                    existing.y0 - rectangle.y1,
+                )
+                if (
+                    smaller_width
+                    and horizontal_overlap / smaller_width >= 0.2
+                    and vertical_gap <= 12.0
+                ):
+                    merged[index] = existing | rectangle
+                    changed = True
+                    break
+            else:
+                merged.append(rectangle)
+        regions = merged
+    return regions
+
+
 def _coalesce_reference_columns(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
     columns: list[fitz.Rect] = []
     for rectangle in sorted(rectangles, key=lambda item: (item.x0, item.y0)):
@@ -541,11 +574,16 @@ def _discover_running_headers(
         if source_page_number <= 1:
             continue
         page = source[source_page_number - 1]
-        top_limit = page.rect.height * 0.16
+        top_limit = page.rect.height * 0.10
+        maximum_header_height = page.rect.height * 0.022
         for block in _page_text_blocks(page):
             rectangle = cast(fitz.Rect, block["rect"])
             normalized = str(block["normalized"])
-            if rectangle.y0 >= top_limit or len(normalized) < 8:
+            if (
+                rectangle.y0 >= top_limit
+                or rectangle.height > maximum_header_height
+                or len(normalized) < 8
+            ):
                 continue
             entry = candidates.setdefault(
                 normalized,
@@ -580,6 +618,15 @@ def _discover_running_headers(
         }
         for normalized, entry in candidates.items()
         if len(cast(set[int], entry["pages"])) >= min_recurrence
+        and len(cast(list[tuple[int, fitz.Rect]], entry["rectangles"]))
+        == len(cast(set[int], entry["pages"]))
+        and all(
+            right - left <= 2
+            for left, right in zip(
+                sorted(cast(set[int], entry["pages"])),
+                sorted(cast(set[int], entry["pages"]))[1:],
+            )
+        )
     ]
     if not qualified:
         return []
@@ -594,22 +641,44 @@ def _discover_running_headers(
     for index, left in enumerate(qualified):
         left_pages = cast(set[int], left["pages"])
         for right in qualified[index + 1 :]:
-            if left_pages & cast(set[int], right["pages"]):
+            shared_pages = left_pages & cast(set[int], right["pages"])
+            if not shared_pages:
+                continue
+            left_rectangles = dict(
+                cast(list[tuple[int, fitz.Rect]], left["rectangles"])
+            )
+            right_rectangles = dict(
+                cast(list[tuple[int, fitz.Rect]], right["rectangles"])
+            )
+            compound_components = True
+            for page_number in shared_pages:
+                upper, lower = sorted(
+                    (left_rectangles[page_number], right_rectangles[page_number]),
+                    key=lambda rectangle: rectangle.y0,
+                )
+                horizontal_overlap = max(
+                    0.0,
+                    min(upper.x1, lower.x1) - max(upper.x0, lower.x0),
+                )
+                smaller_width = min(upper.width, lower.width)
+                vertical_gap = lower.y0 - upper.y1
+                if not (
+                    smaller_width
+                    and horizontal_overlap / smaller_width >= 0.8
+                    and 0.0 <= vertical_gap <= 5.0
+                ):
+                    compound_components = False
+                    break
+            if not compound_components:
                 raise RuntimeError("Ambiguous recurring source header candidates")
 
     families: list[dict[str, object]] = []
     for winner in qualified:
         source_text = str(winner["source_text"])
-        source_rectangles: list[tuple[int, fitz.Rect]] = []
-        for source_page_number in selected_source_pages:
-            if source_page_number <= 1:
-                continue
-            page = source[source_page_number - 1]
-            rectangle = _find_header_rect(page, source_text)
-            if rectangle is None:
-                rectangle = _source_text_rect(page, source_text)
-            if rectangle is not None:
-                source_rectangles.append((source_page_number, rectangle))
+        source_rectangles = sorted(
+            cast(list[tuple[int, fitz.Rect]], winner["rectangles"]),
+            key=lambda item: item[0],
+        )
         if len(source_rectangles) < min_recurrence:
             raise RuntimeError("Auto-discovered running header could not be re-located")
 
@@ -717,7 +786,9 @@ def _discover_running_headers(
     return families
 
 
-def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, object]]:
+def _discover_front_matter_lines_strict(
+    source_page: fitz.Page,
+) -> list[dict[str, object]]:
     page_width = source_page.rect.width
     lines = [
         line
@@ -731,7 +802,9 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
     abstract_candidates = [
         line
         for line in lines
-        if str(line["text"]).casefold().startswith("abstract")
+        if str(line["text"]).casefold().startswith(
+            ("abstract", "executive summary")
+        )
     ]
     abstract_top = (
         min(cast(fitz.Rect, line["rect"]).y0 for line in abstract_candidates)
@@ -742,7 +815,7 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
         line
         for line in lines
         if cast(fitz.Rect, line["rect"]).y0 < abstract_top
-        and cast(fitz.Rect, line["rect"]).width > page_width * 0.3
+        and cast(fitz.Rect, line["rect"]).width > page_width * 0.2
         and not _looks_like_date(str(line["text"]))
         and not _looks_like_affiliation(str(line["text"]))
         and not _looks_like_email(str(line["text"]))
@@ -758,19 +831,33 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
     front_matter_lines = [
         line
         for line in lines
-        if title_bottom + 5 < cast(fitz.Rect, line["rect"]).y0 < abstract_top
+        if title_bottom - 4 < cast(fitz.Rect, line["rect"]).y0 < abstract_top
         and not _looks_like_date(str(line["text"]))
         and not _looks_like_affiliation(str(line["text"]))
         and not _looks_like_email(str(line["text"]))
-        and not str(line["text"]).casefold().startswith("abstract")
+        and not str(line["text"]).casefold().startswith(
+            ("abstract", "executive summary")
+        )
+    ]
+    affiliation_lines = [
+        line
+        for line in lines
+        if title_bottom - 4 < cast(fitz.Rect, line["rect"]).y0 < abstract_top
+        and not _looks_like_date(str(line["text"]))
+        and not _looks_like_email(str(line["text"]))
+        and not str(line["text"]).casefold().startswith(
+            ("abstract", "executive summary")
+        )
+        and _looks_like_affiliation(str(line["text"]))
     ]
     candidate_lines = [
         line
         for line in lines
-        if title_bottom + 5 < cast(fitz.Rect, line["rect"]).y0 < abstract_top
+        if title_bottom - 4 < cast(fitz.Rect, line["rect"]).y0 < abstract_top
         and not _looks_like_date(str(line["text"]))
-        and not _looks_like_email(str(line["text"]))
-        and not str(line["text"]).casefold().startswith("abstract")
+        and not str(line["text"]).casefold().startswith(
+            ("abstract", "executive summary")
+        )
         and _looks_like_author_line(str(line["text"]))
     ]
     if not candidate_lines:
@@ -785,6 +872,28 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
     if not author_lines:
         raise RuntimeError("Unable to identify first-page author-name lines")
 
+    short_adjacent_affiliations = [
+        line
+        for line in lines
+        if title_bottom - 4 < cast(fitz.Rect, line["rect"]).y0 < abstract_top
+        and str(line["text"]).count(",") >= 2
+        and len(_clean_text(str(line["text"])).split()) <= 12
+        and cast(float, line["max_size"]) < author_font - 0.6
+        and any(
+            -2.0
+            <= cast(fitz.Rect, line["rect"]).y0
+            - cast(fitz.Rect, author["rect"]).y1
+            <= 35.0
+            for author in author_lines
+        )
+    ]
+    affiliation_lines = list(
+        {
+            tuple(round(value, 3) for value in cast(fitz.Rect, line["rect"])): line
+            for line in [*affiliation_lines, *short_adjacent_affiliations]
+        }.values()
+    )
+
     group_lines = [
         line
         for line in front_matter_lines
@@ -798,7 +907,7 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
     for line in lines:
         line_rectangle = cast(fitz.Rect, line["rect"])
         if not (
-            title_bottom + 5 < line_rectangle.y0 < abstract_top
+            title_bottom - 4 < line_rectangle.y0 < abstract_top
             and _looks_like_email(str(line["text"]))
         ):
             continue
@@ -807,8 +916,12 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
         contact_line["rect"] = fitz.Rect(block_rectangle)
         contact_lines.append(contact_line)
     if contact_lines:
+        unique_contacts = {
+            tuple(round(value, 3) for value in cast(fitz.Rect, line["rect"])): line
+            for line in contact_lines
+        }
         contact_columns = sorted(
-            contact_lines,
+            unique_contacts.values(),
             key=lambda line: cast(fitz.Rect, line["rect"]).x0,
         )
         contact_centers = [
@@ -867,6 +980,10 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
                     cast(fitz.Rect, line["rect"]).x0,
                 )
             )
+            if not column_lines:
+                raise RuntimeError(
+                    "Unable to collect first-page identity column lines"
+                )
             rectangle = fitz.Rect(cast(fitz.Rect, column_lines[0]["rect"]))
             for line in column_lines[1:]:
                 rectangle |= cast(fitz.Rect, line["rect"])
@@ -896,7 +1013,12 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
                 cast(fitz.Rect, line["rect"]).y1,
                 str(line["text"]),
             ): line
-            for line in [*author_lines, *group_lines, *contact_lines]
+            for line in [
+                *author_lines,
+                *affiliation_lines,
+                *group_lines,
+                *contact_lines,
+            ]
         }.values(),
         key=lambda line: (
             cast(fitz.Rect, line["rect"]).y0,
@@ -918,6 +1040,304 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
         }
         for line in discovered
     ]
+
+
+def _looks_like_confident_identity_seed(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return False
+    if _looks_like_email(cleaned) or _looks_like_group_line(cleaned):
+        return True
+    if not _looks_like_author_line(cleaned):
+        return False
+    initials = re.findall(r"(?<![A-Za-z])[A-Z](?:\.[A-Z])?\.", cleaned)
+    comma_count = cleaned.count(",")
+    middle_dot_count = cleaned.count("·")
+    return bool(initials) or comma_count >= 2 or middle_dot_count >= 1
+
+
+def _front_matter_fallback_blocks(source_page: fitz.Page) -> list[dict[str, object]]:
+    page_width = source_page.rect.width
+    lines = [
+        line
+        for line in _page_text_lines(source_page)
+        if cast(fitz.Rect, line["rect"]).x0 > page_width * 0.03
+        and cast(fitz.Rect, line["rect"]).x1 < page_width * 0.97
+    ]
+    lines_by_block: dict[tuple[float, float, float, float], list[dict[str, object]]] = {}
+    for line in lines:
+        block_key = tuple(
+            round(value, 3) for value in cast(fitz.Rect, line["block_rect"])
+        )
+        lines_by_block.setdefault(block_key, []).append(line)
+
+    def block_text(line: dict[str, object]) -> str:
+        return _clean_text(
+            source_page.get_text(
+                clip=cast(fitz.Rect, line["block_rect"]),
+                sort=True,
+            )
+        )
+
+    def is_group_label(text: str) -> bool:
+        cleaned = _clean_text(text)
+        return bool(
+            _looks_like_group_line(cleaned)
+            and re.search(
+                r"\b(?:collaborations?|consortium|working groups?|interest group|"
+                r"topical group|team)\d*(?:\s+[A-Z0-9][A-Z0-9-]*)?$",
+                cleaned,
+                re.IGNORECASE,
+            )
+        )
+
+    def is_seed(line: dict[str, object]) -> bool:
+        text = _clean_text(str(line["text"]))
+        folded = text.casefold()
+        entire_block = block_text(line)
+        entire_folded = entire_block.casefold()
+        if any(
+            marker in folded or marker in entire_folded
+            for marker in (
+                "copyright",
+                "for the benefit of",
+                "keywords",
+                "abstract",
+                "introduction",
+            )
+        ):
+            return False
+        if is_group_label(text):
+            return len(text.split()) <= 16 and len(entire_block.split()) <= 40
+        if _looks_like_group_line(text):
+            return False
+        if _looks_like_email(text):
+            return len(entire_block.split()) <= 160
+        if not _looks_like_confident_identity_seed(text):
+            return False
+        block_key = tuple(
+            round(value, 3) for value in cast(fitz.Rect, line["block_rect"])
+        )
+        block_lines = lines_by_block[block_key]
+        strong_line_count = sum(
+            1
+            for member in block_lines
+            if not _looks_like_group_line(str(member["text"]))
+            and not _looks_like_email(str(member["text"]))
+            and _looks_like_confident_identity_seed(str(member["text"]))
+        )
+        return (
+            len(entire_block.split()) <= 80
+            or strong_line_count / len(block_lines) >= 0.4
+        )
+
+    seed_lines = [line for line in lines if is_seed(line)]
+    abstract_tops = [
+        cast(fitz.Rect, line["rect"]).y0
+        for line in lines
+        if str(line["text"])
+        .casefold()
+        .startswith(("abstract", "executive summary"))
+    ]
+    if abstract_tops:
+        abstract_top = min(abstract_tops)
+        below_abstract = [
+            line
+            for line in seed_lines
+            if cast(fitz.Rect, line["rect"]).y0 > abstract_top
+            and not _looks_like_email(str(line["text"]))
+            and not is_group_label(str(line["text"]))
+        ]
+        dense_author_rectangles: list[fitz.Rect] = []
+        for line in below_abstract:
+            block_key = tuple(
+                round(value, 3)
+                for value in cast(fitz.Rect, line["block_rect"])
+            )
+            block_lines = lines_by_block[block_key]
+            strong_lines = [
+                member
+                for member in block_lines
+                if not _looks_like_group_line(str(member["text"]))
+                and not _looks_like_email(str(member["text"]))
+                and _looks_like_confident_identity_seed(str(member["text"]))
+            ]
+            block_source = block_text(line)
+            if (
+                len(block_lines) >= 2
+                and len(strong_lines) / len(block_lines) >= 0.5
+                and (
+                    block_source.count(",") >= 2
+                    or len(
+                        re.findall(
+                            r"(?<![A-Za-z])[A-Z](?:\.[A-Z])?\.",
+                            block_source,
+                        )
+                    )
+                    >= 2
+                )
+            ):
+                dense_author_rectangles.append(
+                    cast(fitz.Rect, line["block_rect"])
+                )
+
+        filtered_seed_lines: list[dict[str, object]] = []
+        for line in seed_lines:
+            line_rectangle = cast(fitz.Rect, line["block_rect"])
+            if cast(fitz.Rect, line["rect"]).y0 <= abstract_top:
+                filtered_seed_lines.append(line)
+                continue
+            if _looks_like_email(str(line["text"])) or is_group_label(
+                str(line["text"])
+            ):
+                filtered_seed_lines.append(line)
+                continue
+            for dense_rectangle in dense_author_rectangles:
+                horizontal_overlap = max(
+                    0.0,
+                    min(line_rectangle.x1, dense_rectangle.x1)
+                    - max(line_rectangle.x0, dense_rectangle.x0),
+                )
+                smaller_width = min(line_rectangle.width, dense_rectangle.width)
+                vertical_gap = max(
+                    0.0,
+                    line_rectangle.y0 - dense_rectangle.y1,
+                    dense_rectangle.y0 - line_rectangle.y1,
+                )
+                if (
+                    smaller_width
+                    and horizontal_overlap / smaller_width >= 0.35
+                    and vertical_gap <= 60.0
+                ):
+                    filtered_seed_lines.append(line)
+                    break
+        seed_lines = filtered_seed_lines
+    if not seed_lines:
+        return []
+
+    selected_block_rectangles: set[tuple[float, float, float, float]] = set()
+    seed_rectangles: list[fitz.Rect] = []
+    for line in seed_lines:
+        text = str(line["text"])
+        group_label = is_group_label(text) and not _looks_like_email(text)
+        rectangle = (
+            cast(fitz.Rect, line["rect"])
+            if group_label
+            else cast(fitz.Rect, line["block_rect"])
+        )
+        selected_block_rectangles.add(
+            tuple(round(value, 3) for value in rectangle)
+        )
+        seed_rectangles.append(rectangle)
+        if group_label:
+            for sibling in lines:
+                sibling_rectangle = cast(fitz.Rect, sibling["rect"])
+                if (
+                    -3.0
+                    <= sibling_rectangle.y0 - cast(fitz.Rect, line["rect"]).y1
+                    <= 25.0
+                    and re.fullmatch(
+                        r"[A-Z]{1,4}\d+[A-Z0-9-]*(?:\s*,\s*"
+                        r"[A-Z]{1,4}\d+[A-Z0-9-]*)+",
+                        _clean_text(str(sibling["text"])),
+                    )
+                ):
+                    selected_block_rectangles.add(
+                        tuple(round(value, 3) for value in sibling_rectangle)
+                    )
+    for line in lines:
+        if not _looks_like_affiliation(str(line["text"])):
+            continue
+        block_rectangle = cast(fitz.Rect, line["block_rect"])
+        affiliation_text = block_text(line)
+        if (
+            _looks_like_date(str(line["text"]))
+            or len(affiliation_text.split()) > 60
+            or not re.search(
+                r"(?:university|universit[ée]|laborator(?:y|ies)|institute|"
+                r"institution|department|centre|center|college|collaboration)\b",
+                str(line["text"]),
+                re.IGNORECASE,
+            )
+        ):
+            continue
+        for seed_rectangle in seed_rectangles:
+            horizontal_overlap = max(
+                0.0,
+                min(block_rectangle.x1, seed_rectangle.x1)
+                - max(block_rectangle.x0, seed_rectangle.x0),
+            )
+            smaller_width = min(block_rectangle.width, seed_rectangle.width)
+            vertical_gap = max(
+                0.0,
+                block_rectangle.y0 - seed_rectangle.y1,
+            )
+            if (
+                block_rectangle.y0 >= seed_rectangle.y0
+                and smaller_width
+                and horizontal_overlap / smaller_width >= 0.35
+                and vertical_gap <= 100.0
+            ):
+                selected_block_rectangles.add(
+                    tuple(round(value, 3) for value in block_rectangle)
+                )
+                break
+
+    blocks: list[dict[str, object]] = []
+    for coordinates in sorted(
+        selected_block_rectangles,
+        key=lambda item: (item[1], item[0]),
+    ):
+        rectangle = fitz.Rect(coordinates)
+        containment_rectangle = fitz.Rect(
+            rectangle.x0 - 0.1,
+            rectangle.y0 - 0.1,
+            rectangle.x1 + 0.1,
+            rectangle.y1 + 0.1,
+        )
+        matching_lines = [
+            line
+            for line in lines
+            if containment_rectangle.contains(cast(fitz.Rect, line["rect"]).tl)
+            and containment_rectangle.contains(cast(fitz.Rect, line["rect"]).br)
+        ]
+        matching_lines.sort(
+            key=lambda line: (
+                cast(fitz.Rect, line["rect"]).y0,
+                cast(fitz.Rect, line["rect"]).x0,
+            )
+        )
+        source_text = "\n".join(
+            _clean_text(str(line["text"])) for line in matching_lines
+        ).strip()
+        if not source_text:
+            continue
+        blocks.append(
+            {
+                "page": 1,
+                "source_text": source_text,
+                "source_text_sha256": _text_sha256(source_text),
+                "bbox": [rectangle.x0, rectangle.y0, rectangle.x1, rectangle.y1],
+                "rect": rectangle,
+            }
+        )
+    return blocks
+
+
+def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, object]]:
+    try:
+        return _discover_front_matter_lines_strict(source_page)
+    except RuntimeError as error:
+        if str(error) not in {
+            "Unable to auto-discover first-page front matter lines",
+            "Unable to identify the first-page title region",
+            "Unable to identify first-page author-name candidates",
+            "Unable to identify first-page author-name lines",
+            "Unable to pair first-page author and contact columns",
+            "Unable to collect first-page identity column lines",
+        }:
+            raise
+        return _front_matter_fallback_blocks(source_page)
 
 
 def _replace_fixed_text(
@@ -1135,6 +1555,7 @@ def _protect_pdf_open_documents(
         kind_counts["reference"] += 1
     verbatim_text_count = 0
     verbatim_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
+    identity_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
     for source_page_number, source_text in verbatim_texts:
         output_index = page_map.get(source_page_number)
         if output_index is None:
@@ -1154,7 +1575,7 @@ def _protect_pdf_open_documents(
             output_index = page_map.get(int(block["page"]))
             if output_index is None:
                 continue
-            verbatim_rectangles_by_output.setdefault(output_index, []).append(
+            identity_rectangles_by_output.setdefault(output_index, []).append(
                 cast(fitz.Rect, block["rect"])
             )
             verbatim_text_count += 1
@@ -1170,10 +1591,16 @@ def _protect_pdf_open_documents(
         raster_rectangles_by_output.setdefault(output_index, []).extend(
             _coalesce_adjacent_text(rectangles)
         )
+    for output_index, rectangles in identity_rectangles_by_output.items():
+        identity_rectangles_by_output[output_index] = _coalesce_identity_regions(
+            rectangles
+        )
 
     protected_regions: list[tuple[int, int, fitz.Rect, str, str | None]] = []
     all_output_indices = sorted(
-        set(raster_rectangles_by_output) | set(reference_rectangles_by_output)
+        set(raster_rectangles_by_output)
+        | set(identity_rectangles_by_output)
+        | set(reference_rectangles_by_output)
     )
     for output_index in all_output_indices:
         source_page_number = selected_source_pages[output_index]
@@ -1181,6 +1608,7 @@ def _protect_pdf_open_documents(
         raster_rectangles = _coalesce(
             raster_rectangles_by_output.get(output_index, [])
         )
+        identity_rectangles = identity_rectangles_by_output.get(output_index, [])
         reference_rectangles = _coalesce(
             reference_rectangles_by_output.get(output_index, [])
         )
@@ -1189,13 +1617,19 @@ def _protect_pdf_open_documents(
                 _expanded_redaction_rectangle(output_page, rectangle),
                 fill=(1, 1, 1),
             )
+        for rectangle in identity_rectangles:
+            output_page.add_redact_annot(rectangle, fill=(1, 1, 1))
         for rectangle in reference_rectangles:
             output_page.add_redact_annot(
                 _reference_redaction_rectangle(output_page, rectangle),
                 fill=(1, 1, 1),
             )
         output_page.apply_redactions()
-        for rectangle in [*raster_rectangles, *reference_rectangles]:
+        for rectangle in [
+            *raster_rectangles,
+            *identity_rectangles,
+            *reference_rectangles,
+        ]:
             pixel_hash = _insert_rasterized_source_clip(
                 output_page,
                 source[source_page_number - 1],

@@ -730,12 +730,14 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertIn("source_text_sha256", auto_header)
 
             auto_front_matter = receipt["auto_front_matter"]
-            self.assertEqual(len(auto_front_matter["blocks"]), 2)
+            self.assertEqual(len(auto_front_matter["blocks"]), 4)
             self.assertEqual(
                 [block["source_text"] for block in auto_front_matter["blocks"]],
                 [
                     "Alice Author1, Bob Builder2",
                     "for the Example Topical Group",
+                    "1Institute One, City",
+                    "2Institute Two, City",
                 ],
             )
             for block in auto_front_matter["blocks"]:
@@ -754,7 +756,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertNotIn("for the Example Topical Group", first)
             self.assertNotIn("艾丽斯作者", first)
             self.assertNotIn("代表示例专题组", first)
-            self.assertIn("研究所一", first)
+            self.assertNotIn("研究所一", first)
             self.assertIn("2022年9月13日", first)
 
     def test_auto_header_fails_closed_when_multiple_source_banners_recur(self) -> None:
@@ -780,6 +782,91 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                     auto_header=True,
                     auto_header_min_recurrence=2,
                 )
+
+    def test_running_header_discovery_ignores_repeated_plot_labels_below_margin(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_running_headers
+
+        document = fitz.open()
+        try:
+            document.new_page(width=612, height=792)
+            for _ in range(3):
+                page = document.new_page(width=612, height=792)
+                page.insert_text((72, 45), "SECTION RUNNING HEADER", fontsize=8)
+                page.insert_text((180, 100), "REPEATED PLOT LABEL", fontsize=9)
+
+            headers = _discover_running_headers(
+                document,
+                document,
+                (1, 2, 3, 4),
+                {page: page - 1 for page in range(1, 5)},
+                min_recurrence=3,
+            )
+        finally:
+            document.close()
+
+        self.assertEqual(len(headers), 1)
+        self.assertEqual(headers[0]["source_text"], "SECTION RUNNING HEADER")
+
+    def test_running_header_discovery_ignores_sparse_top_figure_labels(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_running_headers
+
+        document = fitz.open()
+        try:
+            for page_number in range(1, 9):
+                page = document.new_page(width=612, height=792)
+                if page_number in {2, 5, 8}:
+                    page.insert_text((110, 25), "SURVEY FIGURE QUESTION", fontsize=8)
+
+            headers = _discover_running_headers(
+                document,
+                document,
+                tuple(range(1, 9)),
+                {page: page - 1 for page in range(1, 9)},
+                min_recurrence=3,
+            )
+        finally:
+            document.close()
+
+        self.assertEqual(headers, [])
+
+    def test_running_header_discovery_accepts_two_line_header_components(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_running_headers
+
+        document = fitz.open()
+        try:
+            document.new_page(width=612, height=792)
+            for index in range(4):
+                page = document.new_page(width=612, height=792)
+                page.insert_text(
+                    (90, 45),
+                    "SNOWMASS FRONTIER WHITE PAPER",
+                    fontsize=8,
+                )
+                if index < 3:
+                    page.insert_text((150, 60), "RUNNING SUBTITLE", fontsize=8)
+
+            headers = _discover_running_headers(
+                document,
+                document,
+                (1, 2, 3, 4, 5),
+                {page: page - 1 for page in range(1, 6)},
+                min_recurrence=3,
+            )
+        finally:
+            document.close()
+
+        self.assertEqual(len(headers), 2)
+        source_texts = {header["source_text"] for header in headers}
+        self.assertIn("SNOWMASS FRONTIER WHITE PAPER", source_texts)
+        self.assertIn("RUNNING SUBTITLE", source_texts)
+        occurrence_counts = {
+            header["source_text"]: header["source_occurrence_count"]
+            for header in headers
+        }
+        self.assertEqual(occurrence_counts["SNOWMASS FRONTIER WHITE PAPER"], 4)
+        self.assertEqual(occurrence_counts["RUNNING SUBTITLE"], 3)
 
     def test_auto_header_canonicalizes_disjoint_alternating_header_families(
         self,
@@ -927,6 +1014,358 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertEqual(len(discovered), 1)
         self.assertIn("C. Backhouse", discovered[0]["source_text"])
         self.assertIn("c.backhouse@example.org", discovered[0]["source_text"])
+
+    def test_auto_front_matter_strict_path_keeps_separate_affiliation_lines(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(
+                page,
+                90,
+                100,
+                ["A Wide Scientific Title for Detector Research"],
+                fontsize=18,
+            )
+            self._write_lines(page, 150, 150, ["A. Author, B. Builder"], fontsize=12)
+            self._write_lines(
+                page,
+                120,
+                175,
+                ["Department of Physics, Example University"],
+                fontsize=10,
+            )
+            self._write_lines(page, 270, 230, ["Abstract", "Body"], fontsize=11)
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        identity_text = "\n".join(block["source_text"] for block in discovered)
+        self.assertIn("A. Author", identity_text)
+        self.assertIn("Department of Physics", identity_text)
+
+    def test_auto_front_matter_keeps_short_institution_address(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(
+                page,
+                90,
+                100,
+                ["A Wide Scientific Title for Collider Research"],
+                fontsize=18,
+            )
+            self._write_lines(page, 150, 150, ["A. Author, B. Builder"], fontsize=12)
+            self._write_lines(
+                page,
+                190,
+                175,
+                ["CERN, Geneva, Switzerland"],
+                fontsize=10,
+            )
+            self._write_lines(page, 270, 230, ["Abstract", "Body"], fontsize=11)
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        identity_text = "\n".join(block["source_text"] for block in discovered)
+        self.assertIn("A. Author", identity_text)
+        self.assertIn("CERN, Geneva, Switzerland", identity_text)
+
+    def test_auto_front_matter_accepts_tightly_stacked_author_affiliation(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(
+                page,
+                121,
+                70,
+                ["A Cost-Effective Upgrade Path for the Fermilab Accelerator Complex"],
+                fontsize=14,
+            )
+            self._write_lines(
+                page,
+                168,
+                87,
+                ["S. Nagaitsev and V. Lebedev, Fermilab, Batavia, IL 60510, USA"],
+                fontsize=11,
+            )
+            self._write_lines(page, 86, 131, ["Abstract", "Body"], fontsize=12)
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        self.assertEqual(len(discovered), 1)
+        self.assertIn("S. Nagaitsev", discovered[0]["source_text"])
+
+    def test_auto_front_matter_uses_executive_summary_as_identity_boundary(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(
+                page,
+                72,
+                77,
+                [
+                    "Application-driven engagement with universities, synergies",
+                    "with other funding agencies",
+                ],
+                fontsize=20,
+            )
+            self._write_lines(
+                page,
+                72,
+                144,
+                [
+                    "Jim Hoff (jimhoff@fnal.gov)",
+                    "Seda Memik (seda@northwestern.edu)",
+                ],
+                fontsize=11,
+            )
+            self._write_lines(page, 72, 188, ["Executive Summary", "Body"], fontsize=16)
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        identity_text = "\n".join(block["source_text"] for block in discovered)
+        self.assertIn("Jim Hoff", identity_text)
+        self.assertIn("Seda Memik", identity_text)
+        self.assertNotIn("Executive Summary", identity_text)
+
+    def test_auto_front_matter_accepts_a_narrow_title(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(page, 216, 136, ["Particle Flow Calorimetry"], fontsize=16)
+            self._write_lines(
+                page,
+                216,
+                196,
+                ["Randal Ruchti, Katja Kruger"],
+                fontsize=11,
+            )
+            self._write_lines(
+                page,
+                144,
+                228,
+                ["Department of Physics, University of Notre Dame"],
+                fontsize=11,
+            )
+            self._write_lines(page, 283, 313, ["ABSTRACT", "Body"], fontsize=11)
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        identity_text = "\n".join(block["source_text"] for block in discovered)
+        self.assertIn("Randal Ruchti", identity_text)
+        self.assertIn("Department of Physics", identity_text)
+
+    def test_auto_front_matter_accepts_collaboration_only_identity(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(
+                page,
+                105,
+                130,
+                ["Research and Development for Future LHCb Physics"],
+                fontsize=24,
+            )
+            self._write_lines(
+                page,
+                250,
+                240,
+                ["LHCb collaboration4", "EF4,AF2,CF7"],
+                fontsize=12,
+            )
+            self._write_lines(
+                page,
+                100,
+                340,
+                [
+                    "Abstract",
+                    "The LHCb collaboration develops detectors and studies particle decays.",
+                    "This body paragraph must remain outside the protected identity region.",
+                ],
+                fontsize=11,
+            )
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        identity_text = "\n".join(block["source_text"] for block in discovered)
+        self.assertIn("LHCb collaboration4", identity_text)
+        self.assertIn("EF4,AF2,CF7", identity_text)
+        self.assertNotIn("Research and Development", identity_text)
+        self.assertNotIn("develops detectors", identity_text)
+
+    def test_auto_front_matter_finds_author_list_after_abstract(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(
+                page,
+                100,
+                100,
+                ["Key directions for superconducting radio frequency cavities"],
+                fontsize=17,
+            )
+            self._write_lines(page, 275, 180, ["ABSTRACT", "Ordinary abstract prose."], fontsize=11)
+            self._write_lines(
+                page,
+                120,
+                500,
+                [
+                    "S. Belomestnykh and S. Posen",
+                    "D. Bafia, S. Balachandran, M. Bertucci, A. Burrill",
+                ],
+                fontsize=11,
+            )
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        identity_text = "\n".join(block["source_text"] for block in discovered)
+        self.assertIn("S. Belomestnykh", identity_text)
+        self.assertIn("D. Bafia", identity_text)
+        self.assertNotIn("Ordinary abstract prose", identity_text)
+
+    def test_auto_front_matter_rejects_isolated_author_like_body_prose(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(page, 100, 100, ["A Wide Scientific Paper Title"], fontsize=17)
+            self._write_lines(page, 275, 180, ["ABSTRACT", "Ordinary abstract prose."], fontsize=11)
+            self._write_lines(
+                page,
+                90,
+                500,
+                [
+                    "S. Example and J. Sample demonstrate the calibration strategy used below."
+                ],
+                fontsize=11,
+            )
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        identity_text = "\n".join(block["source_text"] for block in discovered)
+        self.assertNotIn("calibration strategy", identity_text)
+
+    def test_front_matter_redaction_preserves_translated_title_and_abstract(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+
+            source_document = fitz.open()
+            source_page = source_document.new_page(width=612, height=792)
+            self._write_lines(source_page, 100, 100, ["A Wide Scientific Paper Title"], fontsize=18)
+            self._write_lines(source_page, 150, 150, ["A. Author, B. Builder"], fontsize=12)
+            self._write_lines(
+                source_page,
+                120,
+                175,
+                ["Department of Physics, Example University"],
+                fontsize=10,
+            )
+            self._write_lines(source_page, 270, 230, ["Abstract", "Source body"], fontsize=11)
+            source_document.save(source)
+            source_document.close()
+
+            translated_document = fitz.open()
+            translated_page = translated_document.new_page(width=612, height=792)
+            translated_page.insert_textbox(
+                fitz.Rect(90, 80, 520, 260),
+                "TRANSLATED TITLE\n\n\nTRANSLATED AUTHORS\n"
+                "TRANSLATED AFFILIATIONS\n\nABSTRACT\nTRANSLATED ABSTRACT BODY",
+                fontsize=12,
+            )
+            translated_document.save(translated)
+            translated_document.close()
+            ir.write_text("<document />", encoding="utf-8")
+
+            protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+                auto_header=True,
+                auto_front_matter=True,
+            )
+
+            with fitz.open(output) as protected:
+                rendered = protected[0].get_text(sort=True)
+
+        self.assertIn("TRANSLATED TITLE", rendered)
+        self.assertIn("TRANSLATED ABSTRACT BODY", rendered)
+        self.assertNotIn("TRANSLATED AUTHORS", rendered)
+
+    def test_auto_front_matter_allows_a_first_page_without_identity_text(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(page, 170, 150, ["The Forward Physics Facility"], fontsize=21)
+            self._write_lines(
+                page,
+                72,
+                240,
+                ["Ordinary body prose begins immediately below the title."],
+                fontsize=11,
+            )
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        self.assertEqual(discovered, [])
+
+    def test_auto_front_matter_fallback_does_not_mask_unknown_runtime_errors(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            with mock.patch(
+                "scripts.protect_snowmass_pdf2zh_output."
+                "_discover_front_matter_lines_strict",
+                side_effect=RuntimeError("unexpected protection failure"),
+            ), self.assertRaisesRegex(RuntimeError, "unexpected protection failure"):
+                _discover_front_matter_lines(page)
+        finally:
+            document.close()
 
     def test_auto_header_fails_closed_on_ambiguous_majority_vote(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf
@@ -1089,7 +1528,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
             self.assertTrue(receipt["verified"])
             self.assertEqual(receipt["auto_header"]["canonical_target"], "标准页眉")
-            self.assertEqual(len(receipt["auto_front_matter"]["blocks"]), 2)
+            self.assertEqual(len(receipt["auto_front_matter"]["blocks"]), 4)
 
     def test_auto_front_matter_restores_authors_and_contact_lines_in_dual_columns(
         self,
