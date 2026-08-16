@@ -344,9 +344,16 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         planned_paper = plan["papers"][0]
         article_dir = Path(planned_paper["article_dir"])
         rendered = article_dir / "run" / "rendered"
+        self.assertEqual(
+            Path(planned_paper["preflight_path"]).name,
+            "planned-preflight.json",
+        )
 
         def paid_runner(config):
             rendered.mkdir(parents=True, exist_ok=True)
+            (config.output_root / "preflight.json").write_text(
+                json.dumps({"status": "live-preflight"}), encoding="utf-8"
+            )
             mono = rendered / "translated.pdf"
             mono.write_bytes(b"translated")
             finish = {

@@ -496,7 +496,7 @@ def plan_stage(
                 f"paper projection exceeds stage budget allocation: {record_id}"
             )
         run_dir.mkdir(parents=True, exist_ok=True)
-        preflight_path = run_dir / "preflight.json"
+        preflight_path = run_dir / "planned-preflight.json"
         _atomic_json(preflight_path, preflight)
         projection_cost += projected_cost
         projection_requests += projected_requests
