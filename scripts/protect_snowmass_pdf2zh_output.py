@@ -1449,7 +1449,7 @@ _NUMERIC_CITATION_MARKER = re.compile(
 _NUMERIC_CITATION_SPAN = re.compile(
     _NUMERIC_CITATION_MARKER.pattern + r"\s*[,.;:]?\s*$"
 )
-_TOC_SUBSECTION_ID = re.compile(r"^\d+(?:\.\d+)+$")
+_TOC_SECTION_PREFIX = re.compile(r"^\s*(\d+(?:\.\d+)*)(?=[^\d.]|$)")
 
 
 def _visual_text_rows(page: fitz.Page) -> list[list[dict[str, object]]]:
@@ -1478,7 +1478,7 @@ def _visual_text_rows(page: fitz.Page) -> list[list[dict[str, object]]]:
 
 
 def _numbered_toc_rows(page: fitz.Page) -> list[dict[str, object]]:
-    """Return source subsection rows only when the page is an explicit contents page."""
+    """Return numbered rows only when the page is an explicit contents page."""
 
     if not any(
         _clean_text(str(line["text"])).casefold()
@@ -1488,21 +1488,31 @@ def _numbered_toc_rows(page: fitz.Page) -> list[dict[str, object]]:
         return []
     entries: list[dict[str, object]] = []
     for row in _visual_text_rows(page):
-        first_text = _clean_text(str(row[0]["text"]))
+        row_text = " ".join(_clean_text(str(item["text"])) for item in row)
+        section_match = _TOC_SECTION_PREFIX.match(row_text)
         last_text = _clean_text(str(row[-1]["text"]))
         if (
-            not _TOC_SUBSECTION_ID.fullmatch(first_text)
+            section_match is None
             or not last_text.isdigit()
             or cast(fitz.Rect, row[-1]["rect"]).x0 < page.rect.width * 0.70
         ):
+            continue
+        section_id = section_match.group(1)
+        source_title = row_text[section_match.end() :].strip()
+        source_title = re.sub(
+            rf"[.·…\s]*{re.escape(last_text)}\s*$", "", source_title
+        ).strip(" .·…")
+        if not source_title:
             continue
         rectangle = fitz.Rect(cast(fitz.Rect, row[0]["rect"]))
         for item in row[1:]:
             rectangle |= cast(fitz.Rect, item["rect"])
         entries.append(
             {
-                "section_id": first_text,
+                "section_id": section_id,
                 "destination": last_text,
+                "source_title": source_title,
+                "source_title_sha256": _text_sha256(_normalize(source_title)),
                 "rect": rectangle,
                 "destination_rect": fitz.Rect(cast(fitz.Rect, row[-1]["rect"])),
                 "font_size": max(float(item["max_size"]) for item in row),
@@ -1511,30 +1521,82 @@ def _numbered_toc_rows(page: fitz.Page) -> list[dict[str, object]]:
     return entries
 
 
+def _toc_text(value: str) -> str:
+    return re.sub(r"\s+", " ", _clean_text(value).replace("\x03", " ")).strip()
+
+
+def _toc_id_matches(
+    value: str,
+    section_id: str,
+    *,
+    allow_fused_left: bool = False,
+) -> list[re.Match[str]]:
+    left_boundary = "" if allow_fused_left else r"(?<![\d.])"
+    return list(
+        re.finditer(
+            rf"{left_boundary}{re.escape(section_id)}(?![\d.])",
+            _toc_text(value),
+        )
+    )
+
+
+def _strip_toc_segment(segment: str, destination: str) -> str | None:
+    match = re.search(
+        rf"[.·…\s]*{re.escape(destination)}\s*$",
+        segment,
+    )
+    if match is None:
+        return None
+    title = segment[: match.start()].strip(" .·…")
+    return title or None
+
+
 def _toc_title_segments(
     text: str,
     entries: list[dict[str, object]],
 ) -> list[tuple[dict[str, object], str]]:
-    clean = _clean_text(text).replace("\x03", "")
-    positions: list[tuple[int, dict[str, object]]] = []
-    cursor = 0
-    for entry in entries:
-        position = clean.find(str(entry["section_id"]), cursor)
-        if position < 0:
-            return []
-        positions.append((position, entry))
-        cursor = position + len(str(entry["section_id"]))
-    result: list[tuple[dict[str, object], str]] = []
-    for index, (position, entry) in enumerate(positions):
-        start = position + len(str(entry["section_id"]))
-        end = positions[index + 1][0] if index + 1 < len(positions) else len(clean)
-        segment = clean[start:end].strip()
-        destination = re.escape(str(entry["destination"]))
-        segment = re.sub(rf"[.·…\s]*{destination}\s*$", "", segment).strip(" .·…")
-        if not segment:
-            return []
-        result.append((entry, segment))
-    return result
+    clean = _toc_text(text)
+    candidates = [
+        _toc_id_matches(
+            clean,
+            str(entry["section_id"]),
+            allow_fused_left=index > 0,
+        )
+        for index, entry in enumerate(entries)
+    ]
+    if any(not matches for matches in candidates):
+        return []
+    solutions: list[list[tuple[dict[str, object], str]]] = []
+
+    def search(index: int, chosen: list[re.Match[str]]) -> None:
+        if len(solutions) > 1:
+            return
+        if index == len(entries):
+            parsed: list[tuple[dict[str, object], str]] = []
+            for item_index, (entry, match) in enumerate(
+                zip(entries, chosen, strict=True)
+            ):
+                end = (
+                    chosen[item_index + 1].start()
+                    if item_index + 1 < len(chosen)
+                    else len(clean)
+                )
+                title = _strip_toc_segment(
+                    clean[match.end() : end], str(entry["destination"])
+                )
+                if title is None:
+                    return
+                parsed.append((entry, title))
+            solutions.append(parsed)
+            return
+        minimum = chosen[-1].end() if chosen else 0
+        for match in candidates[index]:
+            if match.start() < minimum:
+                continue
+            search(index + 1, [*chosen, match])
+
+    search(0, [])
+    return solutions[0] if len(solutions) == 1 else []
 
 
 def _insert_segmented_toc_line(
@@ -1590,26 +1652,53 @@ def _insert_segmented_toc_line(
 def _repair_merged_toc_rows(
     source_page: fitz.Page,
     output_page: fitz.Page,
-) -> list[dict[str, object]]:
+) -> tuple[list[dict[str, object]], int]:
     """Split a BabelDOC paragraph that collapsed adjacent numbered TOC rows."""
 
     source_entries = _numbered_toc_rows(source_page)
     if len(source_entries) < 2:
-        return []
+        return [], 0
     repaired: list[dict[str, object]] = []
+    group_count = 0
     for line in _page_text_lines(output_page):
         text = str(line["text"])
-        contained = [
-            entry
-            for entry in source_entries
-            if str(entry["section_id"]) in text.replace("\x03", "")
-        ]
-        if len(contained) < 2:
+        line_rectangle = cast(fitz.Rect, line["rect"])
+        line_section = _TOC_SECTION_PREFIX.match(_toc_text(text))
+        if line_section is None:
             continue
-        segments = _toc_title_segments(text, contained)
-        if len(segments) != len(contained):
-            raise RuntimeError("Merged TOC rows could not be split deterministically")
-        patch = fitz.Rect(cast(fitz.Rect, line["rect"]))
+        candidate_groups: list[
+            tuple[list[dict[str, object]], list[tuple[dict[str, object], str]]]
+        ] = []
+        for start in range(len(source_entries)):
+            source_rectangle = cast(fitz.Rect, source_entries[start]["rect"])
+            if (
+                line_section.group(1) != str(source_entries[start]["section_id"])
+                or abs(line_rectangle.x0 - source_rectangle.x0) > 24.0
+                or abs(line_rectangle.y0 - source_rectangle.y0) > 8.0
+            ):
+                continue
+            if not _toc_id_matches(
+                text, str(source_entries[start]["section_id"])
+            ):
+                continue
+            for end in range(start + 1, len(source_entries) + 1):
+                entries = source_entries[start:end]
+                segments = _toc_title_segments(text, entries)
+                if len(segments) == len(entries):
+                    candidate_groups.append((entries, segments))
+        if not candidate_groups:
+            continue
+        longest_size = max(len(candidate[0]) for candidate in candidate_groups)
+        longest_groups = [
+            candidate
+            for candidate in candidate_groups
+            if len(candidate[0]) == longest_size
+        ]
+        if len(longest_groups) != 1:
+            continue
+        contained, segments = longest_groups[0]
+        group_count += 1
+        patch = fitz.Rect(line_rectangle)
         for entry in contained:
             patch |= cast(fitz.Rect, entry["rect"])
         patch = fitz.Rect(
@@ -1650,6 +1739,7 @@ def _repair_merged_toc_rows(
                     "section_id": str(entry["section_id"]),
                     "destination": str(entry["destination"]),
                     "title": title,
+                    "title_sha256": _text_sha256(_normalize(title)),
                     "font_size": inserted_font_size,
                     "source_bbox": list(row_rectangle),
                     "source_text_sha256": _text_sha256(
@@ -1657,7 +1747,7 @@ def _repair_merged_toc_rows(
                     ),
                 }
             )
-    return repaired
+    return repaired, group_count
 
 
 def _toc_topology_conservation(
@@ -1666,35 +1756,56 @@ def _toc_topology_conservation(
     *,
     output_page_number: int,
     source_page_number: int,
+    expected_titles: dict[str, str] | None = None,
 ) -> list[dict[str, object]]:
     results: list[dict[str, object]] = []
-    output_rows = _visual_text_rows(output_page)
+    expected_titles = expected_titles or {}
+    output_rows: list[dict[str, object]] = []
+    for row in _visual_text_rows(output_page):
+        text = " ".join(_clean_text(str(item["text"])) for item in row)
+        section_match = _TOC_SECTION_PREFIX.match(text)
+        destination = _clean_text(str(row[-1]["text"]))
+        destination_rectangle = cast(fitz.Rect, row[-1]["rect"])
+        if (
+            section_match is None
+            or not destination.isdigit()
+            or destination_rectangle.x0 < output_page.rect.width * 0.70
+        ):
+            continue
+        title = _strip_toc_segment(
+            text[section_match.end() :], destination
+        )
+        output_rows.append(
+            {
+                "section_id": section_match.group(1),
+                "destination": destination,
+                "title": title,
+                "title_sha256": (
+                    _text_sha256(_normalize(title)) if title is not None else None
+                ),
+                "y": min(cast(fitz.Rect, item["rect"]).y0 for item in row),
+            }
+        )
     for entry in _numbered_toc_rows(source_page):
         section_id = str(entry["section_id"])
         matches = [
             row
             for row in output_rows
-            if any(section_id in str(item["text"]).replace("\x03", "") for item in row)
+            if row["section_id"] == section_id
         ]
         source_rectangle = cast(fitz.Rect, entry["rect"])
-        output_y = (
-            min(cast(fitz.Rect, item["rect"]).y0 for item in matches[0])
-            if len(matches) == 1
-            else None
-        )
+        output_y = matches[0]["y"] if len(matches) == 1 else None
+        output_title = matches[0]["title"] if len(matches) == 1 else None
+        expected_title = expected_titles.get(section_id)
         matched = (
             output_y is not None
             and abs(output_y - source_rectangle.y0) <= 8.0
-            and sum(
-                1
-                for source_entry in _numbered_toc_rows(source_page)
-                if any(
-                    str(source_entry["section_id"])
-                    in str(item["text"]).replace("\x03", "")
-                    for item in matches[0]
-                )
+            and matches[0]["destination"] == str(entry["destination"])
+            and output_title is not None
+            and (
+                expected_title is None
+                or _normalize(str(output_title)) == _normalize(expected_title)
             )
-            == 1
         )
         results.append(
             {
@@ -1702,8 +1813,19 @@ def _toc_topology_conservation(
                 "source_page": source_page_number,
                 "section_id": section_id,
                 "destination": str(entry["destination"]),
+                "source_title": str(entry["source_title"]),
+                "source_title_sha256": str(entry["source_title_sha256"]),
                 "source_y": source_rectangle.y0,
                 "output_y": output_y,
+                "output_title": output_title,
+                "output_title_sha256": (
+                    matches[0]["title_sha256"] if len(matches) == 1 else None
+                ),
+                "expected_repaired_title_sha256": (
+                    _text_sha256(_normalize(expected_title))
+                    if expected_title is not None
+                    else None
+                ),
                 "matched": matched,
             }
         )
@@ -2085,27 +2207,24 @@ def _protect_pdf_open_documents(
     repaired_toc_rows: list[dict[str, object]] = []
     repaired_toc_group_count = 0
     for output_index, source_page_number in enumerate(selected_source_pages):
-        repaired = _repair_merged_toc_rows(
+        repaired, group_count = _repair_merged_toc_rows(
             source[source_page_number - 1],
             translated[output_index],
         )
         if repaired:
-            repaired_toc_group_count += 1
+            repaired_toc_group_count += group_count
             for item in repaired:
                 item["output_page"] = output_index + 1
                 item["source_page"] = source_page_number
             repaired_toc_rows.extend(repaired)
 
-    toc_topology: list[dict[str, object]] = []
-    for output_index, source_page_number in enumerate(selected_source_pages):
-        toc_topology.extend(
-            _toc_topology_conservation(
-                source[source_page_number - 1],
-                translated[output_index],
-                output_page_number=output_index + 1,
-                source_page_number=source_page_number,
-            )
-        )
+    toc_expected_titles_by_output: dict[int, dict[str, str]] = {}
+    for output_index, _source_page_number in enumerate(selected_source_pages):
+        toc_expected_titles_by_output[output_index] = {
+            str(item["section_id"]): str(item["title"])
+            for item in repaired_toc_rows
+            if item["output_page"] == output_index + 1
+        }
 
     citation_conservation: list[dict[str, object]] = []
     for output_index, source_page_number in enumerate(selected_source_pages):
@@ -2147,12 +2266,23 @@ def _protect_pdf_open_documents(
         for item in citation_conservation
         if item["matched"] is not True
     )
-    failures.extend(
-        f"toc_topology_mismatch:output_page_{item['output_page']}:{item['section_id']}"
-        for item in toc_topology
-        if item["matched"] is not True
-    )
+    toc_topology: list[dict[str, object]] = []
     with fitz.open(output_pdf) as protected:
+        for output_index, source_page_number in enumerate(selected_source_pages):
+            toc_topology.extend(
+                _toc_topology_conservation(
+                    source[source_page_number - 1],
+                    protected[output_index],
+                    output_page_number=output_index + 1,
+                    source_page_number=source_page_number,
+                    expected_titles=toc_expected_titles_by_output[output_index],
+                )
+            )
+        failures.extend(
+            f"toc_topology_mismatch:output_page_{item['output_page']}:{item['section_id']}"
+            for item in toc_topology
+            if item["matched"] is not True
+        )
         for output_index, source_page_number, rectangle, mode, pixel_hash in protected_regions:
             if mode == "rasterized_source_clip":
                 if pixel_hash is None or not _has_embedded_raster_clip(

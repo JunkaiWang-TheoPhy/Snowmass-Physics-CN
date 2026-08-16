@@ -12,6 +12,52 @@ import fitz
 
 
 class ProtectPdf2zhOutputTests(unittest.TestCase):
+    def _make_toc_fixture(
+        self,
+        root: Path,
+        *,
+        source_rows: list[tuple[str, str, str, bool]],
+        translated_lines: list[tuple[float, str] | tuple[float, float, str]],
+    ) -> tuple[Path, Path, Path, Path]:
+        source = root / "source.pdf"
+        translated = root / "translated.pdf"
+        output = root / "protected.pdf"
+        ir = root / "ir.xml"
+
+        source_document = fitz.open()
+        source_page = source_document.new_page(width=612, height=792)
+        source_page.insert_text((90, 100), "Contents", fontsize=14)
+        for index, (section, title, destination, fused) in enumerate(source_rows):
+            y = 150 + index * 22
+            if fused:
+                source_page.insert_text((106, y), f"{section}{title}", fontsize=10)
+            else:
+                source_page.insert_text((106, y), section, fontsize=10)
+                source_page.insert_text((132, y), title, fontsize=10)
+            source_page.insert_text((516, y), destination, fontsize=10)
+        source_document.save(source)
+        source_document.close()
+
+        translated_document = fitz.open()
+        translated_page = translated_document.new_page(width=612, height=792)
+        translated_page.insert_text((90, 100), "目录", fontname="china-s", fontsize=14)
+        for item in translated_lines:
+            if len(item) == 2:
+                y, text = item
+                x = 106.0
+            else:
+                x, y, text = item
+            translated_page.insert_text(
+                (x, y), text, fontname="china-s", fontsize=10
+            )
+        translated_document.save(translated)
+        translated_document.close()
+        ir.write_text(
+            '<document totalPages="1"><page pageNumber="0"/></document>',
+            encoding="utf-8",
+        )
+        return source, translated, output, ir
+
     def test_repairs_merged_numbered_toc_rows_and_records_topology(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf
 
@@ -67,6 +113,17 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                 ["3.1", "3.2", "3.3"],
             )
             self.assertTrue(all(item["matched"] for item in receipt["toc_topology"]))
+            self.assertEqual(
+                [item["source_title"] for item in receipt["toc_topology"]],
+                [
+                    "Meetings with CAD Companies",
+                    "DARPA Conversations",
+                    "ICPT Engagement",
+                ],
+            )
+            self.assertTrue(
+                all(item["source_title_sha256"] for item in receipt["toc_topology"])
+            )
             with fitz.open(output) as protected:
                 section_rows = {}
                 for line in protected[0].get_text("dict", sort=True)["blocks"]:
@@ -78,6 +135,300 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                             if section in text:
                                 section_rows[section] = round(visual_line["bbox"][1], 1)
             self.assertEqual(len(set(section_rows.values())), 3)
+
+    def test_repairs_toc_rows_fused_directly_after_previous_destination(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("3.1", "Alpha", "4", False),
+                    ("3.2", "Beta", "5", False),
+                    ("3.3", "Gamma", "5", False),
+                ],
+                translated_lines=[(150, "3.1甲.43.2乙.53.3丙.5")],
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 1)
+            self.assertEqual(
+                [item["section_id"] for item in receipt["repaired_toc_rows"]],
+                ["3.1", "3.2", "3.3"],
+            )
+
+    def test_toc_ids_use_exact_tokens_not_prefix_substrings(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("1.1", "Alpha", "4", False),
+                    ("11.1", "Beta", "5", False),
+                ],
+                translated_lines=[
+                    (150, "1.1 阿尔法"),
+                    (516, 150, "4"),
+                    (172, "11.1 贝塔"),
+                    (516, 172, "5"),
+                ],
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 0)
+            self.assertEqual(
+                [item["section_id"] for item in receipt["toc_topology"]],
+                ["1.1", "11.1"],
+            )
+
+    def test_fused_double_digit_toc_id_is_still_modeled(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("1.1", "Alpha", "4", False),
+                    ("11.1", "Beta", "5", True),
+                ],
+                translated_lines=[(150, "1.1 阿尔法 4 11.1 贝塔 5")],
+            )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(
+                [item["section_id"] for item in receipt["toc_topology"]],
+                ["1.1", "11.1"],
+            )
+
+    def test_repairs_merged_top_level_toc_rows(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("1", "Introduction", "2", False),
+                    ("2", "Methods", "3", False),
+                    ("3", "Results", "7", False),
+                ],
+                translated_lines=[(150, "1 引言 2 2 方法 3 3 结果 7")],
+            )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 1)
+            self.assertEqual(
+                [item["section_id"] for item in receipt["toc_topology"]],
+                ["1", "2", "3"],
+            )
+
+    def test_repairs_individually_fused_top_level_toc_rows(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("1", "Introduction", "2", False),
+                    ("2", "Methods", "3", False),
+                ],
+                translated_lines=[
+                    (150, "1引言2"),
+                    (172, "2方法3"),
+                ],
+            )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 2)
+            self.assertEqual(
+                [item["section_id"] for item in receipt["repaired_toc_rows"]],
+                ["1", "2"],
+            )
+
+    def test_does_not_repair_body_number_sequence_far_below_toc_row(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("1", "Introduction", "2", False),
+                    ("2", "Methods", "3", False),
+                ],
+                translated_lines=[
+                    (150, "1 引言"),
+                    (516, 150, "2"),
+                    (172, "2 方法"),
+                    (516, 172, "3"),
+                    (400, "1正文中的普通数字2"),
+                ],
+            )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 0)
+            with fitz.open(output) as protected:
+                self.assertIn("正文中的普通数字", protected[0].get_text())
+
+    def test_does_not_repair_same_band_numeric_text_outside_toc_margin(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("1", "Introduction", "2", False),
+                    ("2", "Methods", "3", False),
+                ],
+                translated_lines=[
+                    (300, 150, "1共有2"),
+                    (300, 172, "2共有3"),
+                ],
+            )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertFalse(receipt["verified"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 0)
+            with fitz.open(output) as protected:
+                self.assertIn("共有", protected[0].get_text())
+
+    def test_does_not_repair_same_band_text_that_does_not_start_with_section(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("1", "Introduction", "2", False),
+                    ("2", "Methods", "3", False),
+                ],
+                translated_lines=[
+                    (150, "附注1共有2"),
+                    (172, "附注2共有3"),
+                ],
+            )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertFalse(receipt["verified"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 0)
+
+    def test_toc_verification_rejects_wrong_destination(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("3.1", "Alpha", "4", False),
+                    ("3.2", "Beta", "5", False),
+                ],
+                translated_lines=[
+                    (150, "3.1 阿尔法 999"),
+                    (172, "3.2 贝塔 998"),
+                ],
+            )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertFalse(receipt["verified"])
+            self.assertTrue(
+                all(not item["matched"] for item in receipt["toc_topology"])
+            )
+            self.assertEqual(
+                receipt["failures"],
+                [
+                    "toc_topology_mismatch:output_page_1:3.1",
+                    "toc_topology_mismatch:output_page_1:3.2",
+                ],
+            )
+
+    def test_counts_each_merged_toc_group_on_one_page(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("3.1", "Alpha", "4", False),
+                    ("3.2", "Beta", "5", False),
+                    ("4.1", "Gamma", "6", False),
+                    ("4.2", "Delta", "7", False),
+                ],
+                translated_lines=[
+                    (150, "3.1 阿尔法 4 3.2 贝塔 5"),
+                    (194, "4.1 伽马 6 4.2 德尔塔 7"),
+                ],
+            )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 2)
 
     def test_extracts_numeric_citation_split_across_font_spans(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _numeric_citation_markers
