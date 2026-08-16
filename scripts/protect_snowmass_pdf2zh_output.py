@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 from pathlib import Path
 import re
+from typing import cast
 import unicodedata
 import xml.etree.ElementTree as ET
 
@@ -24,6 +26,16 @@ def _sha256(path: Path) -> str:
 
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value)).replace("\x03", "")
+
+
+def _clean_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).replace("\x03", "")
+    lines = [" ".join(line.split()) for line in normalized.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
+def _text_sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _box(element: ET.Element) -> tuple[float, float, float, float] | None:
@@ -193,6 +205,398 @@ def _source_text_rect(page: fitz.Page, text: str) -> fitz.Rect | None:
     return None
 
 
+def _page_text_blocks(page: fitz.Page) -> list[dict[str, object]]:
+    blocks: list[dict[str, object]] = []
+    for block in page.get_text("dict").get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        lines: list[str] = []
+        sizes: list[float] = []
+        for line in block.get("lines", []):
+            spans = line.get("spans", [])
+            line_text = _clean_text("".join(str(span.get("text", "")) for span in spans))
+            if line_text:
+                lines.append(line_text)
+            for span in spans:
+                text = str(span.get("text", ""))
+                if text.strip():
+                    sizes.append(float(span.get("size", 0.0)))
+        text = "\n".join(lines)
+        if not text:
+            continue
+        rectangle = fitz.Rect(*block["bbox"])
+        blocks.append(
+            {
+                "rect": rectangle,
+                "text": text,
+                "normalized": _normalize(text),
+                "max_size": max(sizes, default=0.0),
+                "avg_size": (sum(sizes) / len(sizes)) if sizes else 0.0,
+            }
+        )
+    return sorted(
+        blocks,
+        key=lambda item: (
+            cast(fitz.Rect, item["rect"]).y0,
+            cast(fitz.Rect, item["rect"]).x0,
+        ),
+    )
+
+
+def _page_text_lines(page: fitz.Page) -> list[dict[str, object]]:
+    lines: list[dict[str, object]] = []
+    for block in page.get_text("dict").get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        block_rectangle = fitz.Rect(*block["bbox"])
+        for line in block.get("lines", []):
+            spans = [
+                span for span in line.get("spans", []) if str(span.get("text", "")).strip()
+            ]
+            if not spans:
+                continue
+            text = _clean_text("".join(str(span.get("text", "")) for span in spans))
+            if not text:
+                continue
+            sizes = [float(span.get("size", 0.0)) for span in spans]
+            lines.append(
+                {
+                    "rect": fitz.Rect(*line["bbox"]),
+                    "block_rect": block_rectangle,
+                    "text": text,
+                    "normalized": _normalize(text),
+                    "max_size": max(sizes, default=0.0),
+                }
+            )
+    return sorted(
+        lines,
+        key=lambda item: (
+            cast(fitz.Rect, item["rect"]).y0,
+            cast(fitz.Rect, item["rect"]).x0,
+        ),
+    )
+
+
+def _looks_like_date(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\b",
+            text,
+        )
+        and re.search(r"\b\d{4}\b", text)
+    )
+
+
+def _looks_like_email(text: str) -> bool:
+    return "@" in text
+
+
+def _looks_like_affiliation(text: str) -> bool:
+    folded = _clean_text(text).casefold()
+    markers = (
+        "university",
+        "institute",
+        "laboratory",
+        "department",
+        "school",
+        "college",
+        "center",
+        "centre",
+        "observatory",
+        "usa",
+    )
+    return bool(re.match(r"^\d+\s*[A-Za-z(]", text)) or any(
+        marker in folded for marker in markers
+    )
+
+
+def _looks_like_group_line(text: str) -> bool:
+    folded = _clean_text(text).casefold()
+    return any(
+        marker in folded
+        for marker in ("group", "collaboration", "consortium", "for the ")
+    )
+
+
+def _looks_like_author_line(text: str) -> bool:
+    cleaned = _clean_text(text)
+    folded = cleaned.casefold()
+    if not cleaned or _looks_like_group_line(cleaned):
+        return False
+    if any(
+        marker in folded
+        for marker in (
+            "arxiv",
+            "preprint",
+            "report",
+            "submitted",
+            "proceedings",
+            "white paper",
+        )
+    ):
+        return False
+    if cleaned.isupper():
+        return False
+    name_tokens = re.findall(
+        r"(?:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]*|[A-Z]\.)"
+        r"(?:\d+(?:,\d+)*)?",
+        cleaned,
+    )
+    if len(name_tokens) < 2:
+        return False
+    separators = bool(re.search(r",|\band\b|&", cleaned, re.IGNORECASE))
+    return separators or len(name_tokens) <= 6
+
+
+def _discover_running_header(
+    source: fitz.Document,
+    translated: fitz.Document,
+    selected_source_pages: tuple[int, ...],
+    page_map: dict[int, int],
+    *,
+    min_recurrence: int,
+) -> dict[str, object]:
+    candidates: dict[str, dict[str, object]] = {}
+    for source_page_number in selected_source_pages:
+        if source_page_number <= 1:
+            continue
+        page = source[source_page_number - 1]
+        top_limit = page.rect.height * 0.16
+        for block in _page_text_blocks(page):
+            rectangle = cast(fitz.Rect, block["rect"])
+            normalized = str(block["normalized"])
+            if rectangle.y0 >= top_limit or len(normalized) < 8:
+                continue
+            entry = candidates.setdefault(
+                normalized,
+                {
+                    "source_text": str(block["text"]),
+                    "pages": set(),
+                    "rectangles": [],
+                    "average_y0": 0.0,
+                    "average_x0": 0.0,
+                },
+            )
+            cast(set[int], entry["pages"]).add(source_page_number)
+            cast(list[tuple[int, fitz.Rect]], entry["rectangles"]).append(
+                (source_page_number, rectangle)
+            )
+
+    qualified = [
+        {
+            **entry,
+            "page_count": len(cast(set[int], entry["pages"])),
+            "average_y0": sum(
+                rectangle.y0
+                for _, rectangle in cast(list[tuple[int, fitz.Rect]], entry["rectangles"])
+            )
+            / len(cast(list[tuple[int, fitz.Rect]], entry["rectangles"])),
+            "average_x0": sum(
+                rectangle.x0
+                for _, rectangle in cast(list[tuple[int, fitz.Rect]], entry["rectangles"])
+            )
+            / len(cast(list[tuple[int, fitz.Rect]], entry["rectangles"])),
+            "normalized": normalized,
+        }
+        for normalized, entry in candidates.items()
+        if len(cast(set[int], entry["pages"])) >= min_recurrence
+    ]
+    if not qualified:
+        raise RuntimeError(
+            "Unable to auto-discover a recurring running header from source pages"
+        )
+    if len(qualified) != 1:
+        raise RuntimeError("Ambiguous recurring source header candidates")
+
+    qualified.sort(
+        key=lambda entry: (
+            -cast(int, entry["page_count"]),
+            cast(float, entry["average_y0"]),
+            cast(float, entry["average_x0"]),
+            str(entry["source_text"]),
+        )
+    )
+    winner = qualified[0]
+    source_text = str(winner["source_text"])
+    source_rectangles: list[tuple[int, fitz.Rect]] = []
+    for source_page_number in selected_source_pages:
+        if source_page_number <= 1:
+            continue
+        page = source[source_page_number - 1]
+        rectangle = _find_header_rect(page, source_text)
+        if rectangle is None:
+            rectangle = _source_text_rect(page, source_text)
+        if rectangle is None:
+            continue
+        source_rectangles.append((source_page_number, rectangle))
+    if len(source_rectangles) < min_recurrence:
+        raise RuntimeError("Auto-discovered running header could not be re-located")
+
+    translated_candidates: dict[str, dict[str, object]] = {}
+    for source_page_number, rectangle in source_rectangles:
+        output_index = page_map[source_page_number]
+        candidate = _clean_text(
+            translated[output_index].get_text(clip=rectangle, sort=True)
+        )
+        normalized = _normalize(candidate)
+        if not normalized:
+            raise RuntimeError(
+                f"Translated running header was empty on output page {output_index + 1}"
+            )
+        entry = translated_candidates.setdefault(
+            normalized,
+            {"count": 0, "display_counts": Counter(), "pages": []},
+        )
+        entry["count"] = int(entry["count"]) + 1
+        cast(Counter[str], entry["display_counts"])[candidate] += 1
+        cast(list[int], entry["pages"]).append(output_index + 1)
+
+    sorted_candidates = sorted(
+        (
+            {
+                "normalized_text": normalized,
+                "display_text": sorted(
+                    cast(Counter[str], entry["display_counts"]).items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[0][0],
+                "count": int(entry["count"]),
+                "pages": sorted(cast(list[int], entry["pages"])),
+            }
+            for normalized, entry in translated_candidates.items()
+        ),
+        key=lambda entry: (-cast(int, entry["count"]), str(entry["display_text"])),
+    )
+    if len(sorted_candidates) > 1 and cast(int, sorted_candidates[0]["count"]) == cast(
+        int, sorted_candidates[1]["count"]
+    ):
+        raise RuntimeError(
+            "Ambiguous canonical running header translation candidates"
+        )
+    canonical_target = str(sorted_candidates[0]["display_text"])
+    return {
+        "source_text": source_text,
+        "source_text_sha256": _text_sha256(source_text),
+        "source_occurrence_count": len(source_rectangles),
+        "recurrence_threshold": min_recurrence,
+        "rectangles": [
+            {
+                "page": source_page_number,
+                "bbox": [rectangle.x0, rectangle.y0, rectangle.x1, rectangle.y1],
+            }
+            for source_page_number, rectangle in source_rectangles
+        ],
+        "translated_candidates": sorted_candidates,
+        "canonical_target": canonical_target,
+        "canonical_target_sha256": _text_sha256(canonical_target),
+    }
+
+
+def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, object]]:
+    page_width = source_page.rect.width
+    lines = [
+        line
+        for line in _page_text_lines(source_page)
+        if cast(fitz.Rect, line["rect"]).x0 > page_width * 0.08
+        and cast(fitz.Rect, line["rect"]).y0 < source_page.rect.height * 0.6
+    ]
+    if not lines:
+        raise RuntimeError("Unable to auto-discover first-page front matter lines")
+
+    abstract_candidates = [
+        line
+        for line in lines
+        if str(line["text"]).casefold().startswith("abstract")
+    ]
+    abstract_top = (
+        min(cast(fitz.Rect, line["rect"]).y0 for line in abstract_candidates)
+        if abstract_candidates
+        else source_page.rect.height * 0.5
+    )
+    title_candidates = [
+        line
+        for line in lines
+        if cast(fitz.Rect, line["rect"]).y0 < abstract_top
+        and cast(fitz.Rect, line["rect"]).width > page_width * 0.3
+        and not _looks_like_date(str(line["text"]))
+        and not _looks_like_affiliation(str(line["text"]))
+        and not _looks_like_email(str(line["text"]))
+    ]
+    if not title_candidates:
+        raise RuntimeError("Unable to identify the first-page title region")
+    title_font = max(cast(float, line["max_size"]) for line in title_candidates)
+    title_lines = [
+        line for line in title_candidates if cast(float, line["max_size"]) >= title_font - 1.0
+    ]
+    title_bottom = max(cast(fitz.Rect, line["rect"]).y1 for line in title_lines)
+
+    front_matter_lines = [
+        line
+        for line in lines
+        if title_bottom + 5 < cast(fitz.Rect, line["rect"]).y0 < abstract_top
+        and not _looks_like_date(str(line["text"]))
+        and not _looks_like_affiliation(str(line["text"]))
+        and not _looks_like_email(str(line["text"]))
+        and not str(line["text"]).casefold().startswith("abstract")
+    ]
+    candidate_lines = [
+        line
+        for line in front_matter_lines
+        if _looks_like_author_line(str(line["text"]))
+    ]
+    if not candidate_lines:
+        raise RuntimeError("Unable to identify first-page author-name candidates")
+
+    author_font = max(cast(float, line["max_size"]) for line in candidate_lines)
+    author_lines = [
+        line
+        for line in candidate_lines
+        if cast(float, line["max_size"]) >= author_font - 0.6
+    ]
+    if not author_lines:
+        raise RuntimeError("Unable to identify first-page author-name lines")
+
+    group_lines = [
+        line
+        for line in front_matter_lines
+        if _looks_like_group_line(str(line["text"]))
+        and any(
+            -2.0 <= cast(fitz.Rect, line["rect"]).y0 - cast(fitz.Rect, author["rect"]).y1 <= 18.0
+            for author in author_lines
+        )
+    ]
+    discovered = sorted(
+        {
+            (
+                cast(fitz.Rect, line["rect"]).x0,
+                cast(fitz.Rect, line["rect"]).y0,
+                cast(fitz.Rect, line["rect"]).x1,
+                cast(fitz.Rect, line["rect"]).y1,
+                str(line["text"]),
+            ): line
+            for line in [*author_lines, *group_lines]
+        }.values(),
+        key=lambda line: (
+            cast(fitz.Rect, line["rect"]).y0,
+            cast(fitz.Rect, line["rect"]).x0,
+        ),
+    )
+    return [
+        {
+            "page": 1,
+            "source_text": str(line["text"]),
+            "source_text_sha256": _text_sha256(str(line["text"])),
+            "bbox": [
+                cast(fitz.Rect, line["rect"]).x0,
+                cast(fitz.Rect, line["rect"]).y0,
+                cast(fitz.Rect, line["rect"]).x1,
+                cast(fitz.Rect, line["rect"]).y1,
+            ],
+            "rect": cast(fitz.Rect, line["rect"]),
+        }
+        for line in discovered
+    ]
+
+
 def _replace_fixed_text(
     page: fitz.Page,
     source_rectangle: fitz.Rect,
@@ -302,8 +706,11 @@ def protect_pdf(
     output_pdf: Path,
     selected_source_pages: tuple[int, ...],
     ir_xml: Path,
-    source_header: str,
-    target_header: str,
+    source_header: str | None = None,
+    target_header: str | None = None,
+    auto_header: bool = False,
+    auto_front_matter: bool = False,
+    auto_header_min_recurrence: int = 3,
     fixed_replacements: tuple[tuple[int, str, str], ...] = (),
     left_fixed_replacements: tuple[tuple[int, str, str], ...] = (),
     verbatim_texts: tuple[tuple[int, str], ...] = (),
@@ -323,6 +730,28 @@ def protect_pdf(
         source.close()
         translated.close()
         raise RuntimeError("Translated page count does not match selected source pages")
+    if auto_header_min_recurrence < 2:
+        source.close()
+        translated.close()
+        raise RuntimeError("Auto header recurrence threshold must be at least 2")
+
+    auto_header_receipt: dict[str, object] | None = None
+    resolved_source_header = source_header
+    resolved_target_header = target_header
+    if auto_header:
+        auto_header_receipt = _discover_running_header(
+            source,
+            translated,
+            selected_source_pages,
+            page_map,
+            min_recurrence=auto_header_min_recurrence,
+        )
+        resolved_source_header = str(auto_header_receipt["source_text"])
+        resolved_target_header = str(auto_header_receipt["canonical_target"])
+    elif not resolved_source_header or not resolved_target_header:
+        source.close()
+        translated.close()
+        raise RuntimeError("Explicit source and target headers are required")
 
     rectangles_by_output: dict[int, list[fitz.Rect]] = {}
     kind_counts = {"figure": 0, "table": 0, "reference": 0}
@@ -354,6 +783,26 @@ def protect_pdf(
             )
         verbatim_rectangles_by_output.setdefault(output_index, []).append(rectangle)
         verbatim_text_count += 1
+    auto_front_matter_receipt: dict[str, object] | None = None
+    if auto_front_matter:
+        discovered_blocks = _discover_front_matter_lines(source[0])
+        auto_front_matter_receipt = {"blocks": []}
+        for block in discovered_blocks:
+            output_index = page_map.get(int(block["page"]))
+            if output_index is None:
+                continue
+            verbatim_rectangles_by_output.setdefault(output_index, []).append(
+                cast(fitz.Rect, block["rect"])
+            )
+            verbatim_text_count += 1
+            cast(list[dict[str, object]], auto_front_matter_receipt["blocks"]).append(
+                {
+                    "page": int(block["page"]),
+                    "source_text": str(block["source_text"]),
+                    "source_text_sha256": str(block["source_text_sha256"]),
+                    "bbox": list(cast(list[float], block["bbox"])),
+                }
+            )
     for output_index, rectangles in verbatim_rectangles_by_output.items():
         rectangles_by_output.setdefault(output_index, []).extend(
             _coalesce_adjacent_text(rectangles)
@@ -379,10 +828,13 @@ def protect_pdf(
 
     header_count = 0
     for output_index, source_page_number in enumerate(selected_source_pages):
-        source_rect = _find_header_rect(source[source_page_number - 1], source_header)
+        source_rect = _find_header_rect(
+            source[source_page_number - 1],
+            str(resolved_source_header),
+        )
         if source_rect is None:
             continue
-        _insert_header(translated[output_index], source_rect, target_header)
+        _insert_header(translated[output_index], source_rect, str(resolved_target_header))
         header_count += 1
 
     fixed_replacement_count = 0
@@ -448,9 +900,16 @@ def protect_pdf(
                     f"protected_region_mismatch:output_page_{output_index + 1}"
                 )
         for output_index, source_page_number in enumerate(selected_source_pages):
-            if _find_header_rect(source[source_page_number - 1], source_header) is None:
+            if (
+                _find_header_rect(
+                    source[source_page_number - 1],
+                    str(resolved_source_header),
+                )
+                is None
+            ):
                 continue
-            if target_header not in protected[output_index].get_text():
+            rendered = _normalize(protected[output_index].get_text())
+            if _normalize(str(resolved_target_header)) not in rendered:
                 failures.append(
                     f"canonical_header_missing:output_page_{output_index + 1}"
                 )
@@ -470,9 +929,10 @@ def protect_pdf(
                 )
     source.close()
     receipt: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_pdf_sha256": _sha256(source_pdf),
         "translated_pdf_sha256": _sha256(translated_pdf),
+        "ir_xml_sha256": _sha256(ir_xml),
         "output_pdf_sha256": _sha256(output_pdf),
         "selected_source_pages": list(selected_source_pages),
         "figure_region_count": kind_counts["figure"],
@@ -493,6 +953,10 @@ def protect_pdf(
         "failures": failures,
         "verified": not failures,
     }
+    if auto_header_receipt is not None:
+        receipt["auto_header"] = auto_header_receipt
+    if auto_front_matter_receipt is not None:
+        receipt["auto_front_matter"] = auto_front_matter_receipt
     return receipt
 
 
@@ -503,8 +967,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-pdf", type=Path, required=True)
     parser.add_argument("--selected-source-pages", required=True)
     parser.add_argument("--ir-xml", type=Path, required=True)
-    parser.add_argument("--source-header", required=True)
-    parser.add_argument("--target-header", required=True)
+    parser.add_argument("--source-header")
+    parser.add_argument("--target-header")
+    parser.add_argument("--auto-header", action="store_true")
+    parser.add_argument("--auto-front-matter", action="store_true")
+    parser.add_argument(
+        "--auto-header-min-recurrence",
+        type=int,
+        default=3,
+    )
     parser.add_argument(
         "--fixed-replacement",
         nargs=3,
@@ -535,6 +1006,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.auto_header:
+        if args.source_header or args.target_header:
+            parser.error(
+                "--auto-header cannot be combined with --source-header/--target-header"
+            )
+    elif not args.source_header or not args.target_header:
+        parser.error(
+            "the following arguments are required without --auto-header: "
+            "--source-header, --target-header"
+        )
     selected = tuple(
         int(value) for value in args.selected_source_pages.split(",") if value.strip()
     )
@@ -546,6 +1027,9 @@ def main(argv: list[str] | None = None) -> int:
         ir_xml=args.ir_xml,
         source_header=args.source_header,
         target_header=args.target_header,
+        auto_header=args.auto_header,
+        auto_front_matter=args.auto_front_matter,
+        auto_header_min_recurrence=args.auto_header_min_recurrence,
         fixed_replacements=tuple(
             (int(source_page), source, target)
             for source_page, source, target in args.fixed_replacement
