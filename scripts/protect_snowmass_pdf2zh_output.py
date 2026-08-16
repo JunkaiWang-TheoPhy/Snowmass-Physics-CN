@@ -671,6 +671,23 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
             for author in author_lines
         )
     ]
+    contact_lines: list[dict[str, object]] = []
+    for line in lines:
+        line_rectangle = cast(fitz.Rect, line["rect"])
+        if not (
+            title_bottom + 5 < line_rectangle.y0 < abstract_top
+            and _looks_like_email(str(line["text"]))
+        ):
+            continue
+        block_rectangle = cast(fitz.Rect, line["block_rect"])
+        contact_line = dict(line)
+        contact_line["rect"] = fitz.Rect(
+            block_rectangle.x0,
+            line_rectangle.y0,
+            block_rectangle.x1,
+            line_rectangle.y1,
+        )
+        contact_lines.append(contact_line)
     discovered = sorted(
         {
             (
@@ -680,7 +697,7 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
                 cast(fitz.Rect, line["rect"]).y1,
                 str(line["text"]),
             ): line
-            for line in [*author_lines, *group_lines]
+            for line in [*author_lines, *group_lines, *contact_lines]
         }.values(),
         key=lambda line: (
             cast(fitz.Rect, line["rect"]).y0,

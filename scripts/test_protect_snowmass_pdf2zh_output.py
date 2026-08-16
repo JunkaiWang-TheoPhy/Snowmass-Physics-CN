@@ -426,7 +426,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                 "以斯拉·基塞尔与钱国<br>"
                 "<span style='font-size: 10pt;'>能源科学网络</span><br>"
                 "<span style='font-size: 10pt;'>伯克利，加利福尼亚，美国</span><br>"
-                "<span style='font-size: 10pt;'>{kissel,chin}@es.net</span>"
+                "<span style='font-size: 10pt;'>伯克利 {kissel,chin}@es.net</span>"
                 "</div>"
             ),
         )
@@ -778,7 +778,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertEqual(receipt["auto_header"]["canonical_target"], "标准页眉")
             self.assertEqual(len(receipt["auto_front_matter"]["blocks"]), 2)
 
-    def test_auto_front_matter_restores_only_author_lines_in_dual_column_blocks(
+    def test_auto_front_matter_restores_authors_and_contact_lines_in_dual_columns(
         self,
     ) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf
@@ -803,9 +803,22 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             )
 
             self.assertTrue(receipt["verified"])
-            self.assertEqual(
+            self.assertCountEqual(
                 [block["source_text"] for block in receipt["auto_front_matter"]["blocks"]],
-                ["Alex Sim", "Ezra Kissel and Chin Guok"],
+                [
+                    "Alex Sim",
+                    "Ezra Kissel and Chin Guok",
+                    "asim@lbl.gov",
+                    "{kissel,chin}@es.net",
+                ],
+            )
+            contact_blocks = [
+                block
+                for block in receipt["auto_front_matter"]["blocks"]
+                if "@" in block["source_text"]
+            ]
+            self.assertTrue(
+                all(block["bbox"][2] - block["bbox"][0] > 120 for block in contact_blocks)
             )
             self.assertEqual(
                 receipt["auto_header"]["source_text"], "Sim and Kissel, et al."
@@ -819,6 +832,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertNotIn("Ezra Kissel and Chin Guok", first)
             self.assertNotIn("亚历克斯·西姆", first)
             self.assertNotIn("以斯拉·基塞尔", first)
+            self.assertNotIn("伯克利 {kissel,chin}@es.net", first)
             self.assertIn("劳伦斯伯克利国家实验室", first)
             self.assertIn("能源科学网络", first)
             self.assertNotIn("Lawrence Berkeley National Laboratory", first)
