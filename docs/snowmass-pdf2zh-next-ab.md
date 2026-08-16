@@ -107,3 +107,15 @@ protection, geometry, and visual evidence is retained under
 `output/snowmass2021/pdf2zh_next_ab_v3/papers/arxiv_2203.07506/`. The selected
 page A/B permits the next full-paper `deepseek_probe`; it does not by itself
 permit `pilot5`.
+
+Before a full-paper run, persist the same pinned upstream layout evidence with:
+
+```bash
+/Users/Zhuanz/.local/share/snowmass-tools/pdf2zh-next-2.9.0/bin/python \
+  scripts/extract_snowmass_pdf2zh_ir.py SOURCE.pdf OUTPUT_IR_DIRECTORY
+```
+
+This is a zero-paid `debug=false` parse. It runs BabelDOC's native parser,
+layout parser, paragraph finder, and formula/style pass, then serializes the
+official `Document` through `XMLConverter`. The protection stage consumes this
+fresh XML; a prior legacy-run IR is not acceptable production evidence.
