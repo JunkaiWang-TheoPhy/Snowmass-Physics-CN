@@ -12,6 +12,73 @@ import fitz
 
 
 class ProtectPdf2zhOutputTests(unittest.TestCase):
+    def test_repairs_merged_numbered_toc_rows_and_records_topology(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+
+            source_document = fitz.open()
+            source_page = source_document.new_page(width=612, height=792)
+            source_page.insert_text((90, 100), "Contents", fontsize=14)
+            for y, section, title, destination in (
+                (150, "3.1", "Meetings with CAD Companies", "4"),
+                (172, "3.2", "DARPA Conversations", "5"),
+                (194, "3.3", "ICPT Engagement", "5"),
+            ):
+                source_page.insert_text((106, y), section, fontsize=10)
+                source_page.insert_text((132, y), title, fontsize=10)
+                source_page.insert_text((516, y), destination, fontsize=10)
+            source_document.save(source)
+            source_document.close()
+
+            translated_document = fitz.open()
+            translated_page = translated_document.new_page(width=612, height=792)
+            translated_page.insert_text((90, 100), "目录", fontname="china-s", fontsize=14)
+            translated_page.insert_text(
+                (106, 150),
+                "3.1 与CAD公司的会议.4 3.2 DARPA对话.5 3.3 ICPT合作.5",
+                fontname="china-s",
+                fontsize=10,
+            )
+            translated_document.save(translated)
+            translated_document.close()
+            ir.write_text(
+                '<document totalPages="1"><page pageNumber="0"/></document>',
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(receipt["repaired_toc_group_count"], 1)
+            self.assertEqual(
+                [item["section_id"] for item in receipt["toc_topology"]],
+                ["3.1", "3.2", "3.3"],
+            )
+            self.assertTrue(all(item["matched"] for item in receipt["toc_topology"]))
+            with fitz.open(output) as protected:
+                section_rows = {}
+                for line in protected[0].get_text("dict", sort=True)["blocks"]:
+                    for visual_line in line.get("lines", []):
+                        text = "".join(
+                            span.get("text", "") for span in visual_line.get("spans", [])
+                        )
+                        for section in ("3.1", "3.2", "3.3"):
+                            if section in text:
+                                section_rows[section] = round(visual_line["bbox"][1], 1)
+            self.assertEqual(len(set(section_rows.values())), 3)
+
     def test_extracts_numeric_citation_split_across_font_spans(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _numeric_citation_markers
 
