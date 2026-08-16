@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import csv
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import fitz
 
@@ -50,3 +50,64 @@ class Pdf2zhSemanticAuditTests(unittest.TestCase):
             self.assertIn("untranslated_glossary:relics:page_1", report["failures"])
             self.assertIn("forbidden:偏袒:page_1", report["failures"])
             self.assertEqual(len(report["findings"]), 2)
+
+    def test_phrase_allowance_does_not_whitelist_the_term_globally(self) -> None:
+        from scripts.audit_snowmass_pdf2zh_semantics import audit_semantics
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pdf = root / "paper.pdf"
+            glossary = root / "glossary.csv"
+            protection = root / "protection.json"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((72, 100), "Simons Observatory and another observatory")
+            document.save(pdf)
+            document.close()
+            with glossary.open("w", encoding="utf-8", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=["source", "target"])
+                writer.writeheader()
+                writer.writerow({"source": "observatory", "target": "天文台"})
+            protection.write_text(
+                json.dumps({"verified": True, "protected_regions": []}),
+                encoding="utf-8",
+            )
+
+            report = audit_semantics(
+                pdf,
+                glossary_csv=glossary,
+                protection_receipt=protection,
+                allowed_untranslated_phrases=("Simons Observatory",),
+            )
+
+            self.assertFalse(report["ok"])
+            self.assertEqual(len(report["findings"]), 1)
+            self.assertEqual(report["findings"][0]["term"], "observatory")
+
+    def test_phrase_allowance_tolerates_pdf_line_breaks(self) -> None:
+        from scripts.audit_snowmass_pdf2zh_semantics import audit_semantics
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pdf = root / "paper.pdf"
+            glossary = root / "glossary.csv"
+            protection = root / "protection.json"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_textbox((72, 72, 300, 150), "Simons\nObservatory")
+            document.save(pdf)
+            document.close()
+            glossary.write_text("source,target\nobservatory,天文台\n", encoding="utf-8")
+            protection.write_text(
+                json.dumps({"verified": True, "protected_regions": []}),
+                encoding="utf-8",
+            )
+
+            report = audit_semantics(
+                pdf,
+                glossary_csv=glossary,
+                protection_receipt=protection,
+                allowed_untranslated_phrases=("Simons Observatory",),
+            )
+
+            self.assertTrue(report["ok"])

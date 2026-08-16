@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tempfile
-from pathlib import Path
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import fitz
 
@@ -422,6 +424,15 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertEqual(receipt["figure_region_count"], 1)
             self.assertEqual(receipt["table_region_count"], 1)
             self.assertEqual(receipt["reference_page_count"], 1)
+            raster_regions = [
+                region
+                for region in receipt["protected_regions"]
+                if region["render_mode"] == "rasterized_source_clip"
+            ]
+            self.assertGreaterEqual(len(raster_regions), 3)
+            self.assertTrue(
+                all(region["source_clip_pixel_sha256"] for region in raster_regions)
+            )
             with fitz.open(output) as document:
                 first = document[0].get_text()
                 second = document[1].get_text()
@@ -430,17 +441,25 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertNotIn("WRONG HEADER", first + second)
             self.assertIn("固定首页文字", first)
             self.assertNotIn("WRONG FRONTMATTER", first)
-            self.assertIn("AUTHOR SOURCE", first)
+            self.assertNotIn("AUTHOR SOURCE", first)
             self.assertNotIn("translated author", first)
-            self.assertIn("TABLE SOURCE", first)
+            self.assertNotIn("TABLE SOURCE", first)
             self.assertNotIn("translated table", first)
-            self.assertIn("FIGURE SOURCE", first)
+            self.assertNotIn("FIGURE SOURCE", first)
             self.assertNotIn("translated figure", first)
             self.assertIn("偏置", first)
             self.assertNotIn("偏袒", first)
             self.assertIn("参考文献", second)
             self.assertIn("[1] A. Author. Original title.", second)
             self.assertNotIn("中文标题", second)
+            extracted = subprocess.run(
+                ["pdftotext", "-layout", str(output), "-"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            self.assertNotIn("SOURCE HEADER", extracted)
+            self.assertNotIn("SOURCE FRONTMATTER", extracted)
 
     def test_auto_mode_discovers_header_restores_front_matter_and_records_receipt(
         self,
@@ -506,8 +525,8 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             combined = second + third + fourth
             self.assertEqual(combined.count("标准页眉"), 3)
             self.assertNotIn("另一种页眉", combined)
-            self.assertIn("Alice Author1, Bob Builder2", first)
-            self.assertIn("for the Example Topical Group", first)
+            self.assertNotIn("Alice Author1, Bob Builder2", first)
+            self.assertNotIn("for the Example Topical Group", first)
             self.assertNotIn("艾丽斯作者", first)
             self.assertNotIn("代表示例专题组", first)
             self.assertIn("研究所一", first)
@@ -656,8 +675,8 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                 first = document[0].get_text()
                 combined = document[1].get_text() + document[2].get_text() + document[3].get_text()
 
-            self.assertIn("Alex Sim", first)
-            self.assertIn("Ezra Kissel and Chin Guok", first)
+            self.assertNotIn("Alex Sim", first)
+            self.assertNotIn("Ezra Kissel and Chin Guok", first)
             self.assertNotIn("亚历克斯·西姆", first)
             self.assertNotIn("以斯拉·基塞尔", first)
             self.assertIn("劳伦斯伯克利国家实验室", first)
@@ -666,6 +685,39 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertNotIn("Energy Sciences Network", first)
             self.assertEqual(combined.count("规范页眉"), 3)
             self.assertNotIn("变体页眉", combined)
+
+    def test_closes_documents_when_validation_raises(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, translated, ir = self._make_auto_discovery_fixture(
+                root, header_variants=["统一页眉", "统一页眉", "统一页眉"]
+            )
+            real_open = fitz.open
+            opened: list[fitz.Document] = []
+
+            def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+                document = real_open(*args, **kwargs)
+                opened.append(document)
+                return document
+
+            with mock.patch(
+                "scripts.protect_snowmass_pdf2zh_output.fitz.open",
+                side_effect=tracking_open,
+            ), self.assertRaisesRegex(RuntimeError, "threshold"):
+                protect_pdf(
+                    source_pdf=source,
+                    translated_pdf=translated,
+                    output_pdf=root / "unused.pdf",
+                    selected_source_pages=(1, 2, 3, 4),
+                    ir_xml=ir,
+                    auto_header=True,
+                    auto_header_min_recurrence=1,
+                )
+
+            self.assertEqual(len(opened), 2)
+            self.assertTrue(all(document.is_closed for document in opened))
 
 
 if __name__ == "__main__":

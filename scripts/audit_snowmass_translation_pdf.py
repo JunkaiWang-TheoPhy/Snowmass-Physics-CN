@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import re
+import shutil
+import subprocess
+from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import fitz
@@ -30,6 +33,31 @@ _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _MIXED_FRAGMENT_RE = re.compile(
     r"(?:[\u3400-\u9fff]\s+[a-z]{2,}\b|\b[a-z]{2,}\s+[\u3400-\u9fff])"
 )
+_ENGLISH_PROSE_RE = re.compile(
+    r"\b[a-z]{2,}\b(?:[^A-Za-z]+[a-z]{2,}\b){3,}"
+)
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+
+def secondary_extractor_identity() -> dict[str, str]:
+    """Return the exact Poppler extractor identity used by structural QC."""
+
+    executable = shutil.which("pdftotext")
+    if executable is None:
+        raise RuntimeError("secondary PDF text extractor is unavailable")
+    try:
+        result = subprocess.run(
+            [executable, "-v"], capture_output=True, text=True, check=False
+        )
+    except OSError as error:
+        raise RuntimeError("secondary PDF text extractor is unavailable") from error
+    version_output = (result.stderr or result.stdout).splitlines()
+    if result.returncode != 0 or not version_output:
+        raise RuntimeError("secondary PDF text extractor version is unavailable")
+    return {
+        "executable": str(Path(executable).resolve()),
+        "version": version_output[0].strip(),
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -60,6 +88,25 @@ def _render_contact_sheet(document: fitz.Document, output: Path) -> None:
     sheet.save(output, quality=90)
 
 
+def _secondary_page_texts(pdf_path: Path) -> list[str]:
+    identity = secondary_extractor_identity()
+    try:
+        result = subprocess.run(
+            [identity["executable"], "-layout", str(pdf_path), "-"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        raise RuntimeError("secondary PDF text extractor is unavailable") from error
+    if result.returncode != 0:
+        raise RuntimeError("secondary PDF text extractor failed")
+    pages = result.stdout.split("\f")
+    if pages and not pages[-1].strip():
+        pages.pop()
+    return pages
+
+
 def audit_pdf(
     pdf_path: str | Path,
     *,
@@ -68,6 +115,7 @@ def audit_pdf(
     minimum_extractable_characters: int = 5,
     ignored_text_regions: dict[int, list[tuple[float, float, float, float]]]
     | None = None,
+    protection_receipt_sha256: str | None = None,
 ) -> dict[str, Any]:
     pdf_path = Path(pdf_path)
     failures: list[str] = []
@@ -76,6 +124,11 @@ def audit_pdf(
     low_text_pages: list[int] = []
     isolated_latin_edge_words: list[dict[str, Any]] = []
     mixed_script_bottom_fragments: list[dict[str, Any]] = []
+    english_prose_residue: list[dict[str, Any]] = []
+    secondary_text_layer_excess: list[dict[str, Any]] = []
+    secondary_only_latin_tokens: list[dict[str, Any]] = []
+    secondary_extractor: dict[str, str] | None = None
+    primary_page_text_lengths: list[int] = []
     ignored_text_regions = ignored_text_regions or {}
     try:
         document = fitz.open(pdf_path)
@@ -89,7 +142,11 @@ def audit_pdf(
             "low_text_pages": [],
             "out_of_bounds": [],
             "residue": [],
+            "english_prose_residue": [],
+            "secondary_text_layer_excess": [],
             "contact_sheet_path": None,
+            "contact_sheet_sha256": None,
+            "protection_receipt_sha256": protection_receipt_sha256,
             "failures": [f"unreadable_pdf:{type(error).__name__}"],
             "ok": False,
         }
@@ -100,6 +157,7 @@ def audit_pdf(
         for page_number, page in enumerate(document, 1):
             text = page.get_text("text")
             extractable = len(re.sub(r"\s+", "", text))
+            primary_page_text_lengths.append(extractable)
             if extractable < minimum_extractable_characters:
                 low_text_pages.append(page_number)
                 failures.append(f"low_text_page:{page_number}")
@@ -113,12 +171,26 @@ def audit_pdf(
             blocks = page.get_text("blocks")
             for block in blocks:
                 x0, y0, x1, y1, block_text = block[:5]
+                prose_text = _URL_RE.sub(" ", str(block_text))
                 center_x = (x0 + x1) / 2
                 center_y = (y0 + y1) / 2
                 ignored = any(
                     left <= center_x <= right and top <= center_y <= bottom
                     for left, top, right, bottom in ignored_text_regions.get(page_number, [])
                 )
+                if (
+                    not ignored
+                    and (page_number > 1 or y0 >= bounds.y1 * 0.35)
+                    and _ENGLISH_PROSE_RE.search(prose_text)
+                ):
+                    english_prose_residue.append(
+                        {
+                            "page": page_number,
+                            "bbox": [x0, y0, x1, y1],
+                            "text": re.sub(r"\s+", " ", str(block_text)).strip()[:240],
+                        }
+                    )
+                    failures.append(f"english_prose_residue:page_{page_number}")
                 if (
                     not ignored
                     and y0 >= bounds.y1 * 0.82
@@ -189,6 +261,48 @@ def audit_pdf(
                     failures.append(f"out_of_bounds_text:page_{page_number}")
         if contact_sheet_path is not None:
             _render_contact_sheet(document, Path(contact_sheet_path))
+        try:
+            secondary_extractor = secondary_extractor_identity()
+            secondary_pages = _secondary_page_texts(pdf_path)
+        except RuntimeError as error:
+            failures.append(str(error).replace(" ", "_"))
+            secondary_pages = []
+        if secondary_pages and len(secondary_pages) != page_count:
+            failures.append(
+                f"secondary_page_count_mismatch:{len(secondary_pages)}!={page_count}"
+            )
+        for page_number, secondary_text in enumerate(secondary_pages, 1):
+            primary_length = primary_page_text_lengths[page_number - 1]
+            secondary_length = len(re.sub(r"\s+", "", secondary_text))
+            character_surplus = secondary_length - primary_length
+            primary_tokens = Counter(
+                token.casefold()
+                for token in re.findall(r"[A-Za-z]{2,}", document[page_number - 1].get_text())
+            )
+            secondary_tokens = Counter(
+                token.casefold()
+                for token in re.findall(r"[A-Za-z]{2,}", secondary_text)
+            )
+            extra_tokens = list((secondary_tokens - primary_tokens).elements())
+            if extra_tokens:
+                secondary_only_latin_tokens.append(
+                    {
+                        "page": page_number,
+                        "count": len(extra_tokens),
+                        "sample": extra_tokens[:20],
+                    }
+                )
+            if len(extra_tokens) >= 4 and character_surplus >= 15:
+                secondary_text_layer_excess.append(
+                    {
+                        "page": page_number,
+                        "primary_characters": primary_length,
+                        "secondary_characters": secondary_length,
+                        "secondary_character_surplus": character_surplus,
+                        "secondary_only_latin_token_count": len(extra_tokens),
+                    }
+                )
+                failures.append(f"secondary_text_layer_excess:page_{page_number}")
     finally:
         document.close()
     return {
@@ -201,11 +315,21 @@ def audit_pdf(
         "out_of_bounds": out_of_bounds,
         "isolated_latin_edge_words": isolated_latin_edge_words,
         "mixed_script_bottom_fragments": mixed_script_bottom_fragments,
+        "english_prose_residue": english_prose_residue,
+        "secondary_text_layer_excess": secondary_text_layer_excess,
+        "secondary_only_latin_tokens": secondary_only_latin_tokens,
+        "secondary_extractor": secondary_extractor,
         "residue": residue,
         "ignored_text_region_count": sum(map(len, ignored_text_regions.values())),
         "contact_sheet_path": (
             Path(contact_sheet_path).name if contact_sheet_path is not None else None
         ),
+        "contact_sheet_sha256": (
+            _sha256(Path(contact_sheet_path))
+            if contact_sheet_path is not None and Path(contact_sheet_path).is_file()
+            else None
+        ),
+        "protection_receipt_sha256": protection_receipt_sha256,
         "failures": list(dict.fromkeys(failures)),
         "ok": not failures,
     }
@@ -220,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--protection-receipt", type=Path)
     arguments = parser.parse_args(argv)
     ignored_text_regions: dict[int, list[tuple[float, float, float, float]]] = {}
+    protection_receipt_sha256: str | None = None
     if arguments.protection_receipt is not None:
         protection = json.loads(
             arguments.protection_receipt.read_text(encoding="utf-8")
@@ -228,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 "Protection receipt must be verified before its regions can be ignored"
             )
+        protection_receipt_sha256 = _sha256(arguments.protection_receipt)
         for region in protection.get("protected_regions", []):
             page = int(region["output_page"])
             ignored_text_regions.setdefault(page, []).append(
@@ -238,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         expected_pages=arguments.expected_pages,
         contact_sheet_path=arguments.contact_sheet,
         ignored_text_regions=ignored_text_regions,
+        protection_receipt_sha256=protection_receipt_sha256,
     )
     rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if arguments.report is not None:

@@ -3,16 +3,27 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import hashlib
 import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import fitz
 
-from scripts.audit_snowmass_translation_pdf import audit_pdf
+from scripts.audit_snowmass_translation_pdf import (
+    audit_pdf,
+    secondary_extractor_identity,
+)
 
 
 class PackagedPdfAuditTests(unittest.TestCase):
+    def test_secondary_extractor_identity_is_explicit(self) -> None:
+        identity = secondary_extractor_identity()
+
+        self.assertTrue(Path(identity["executable"]).is_file())
+        self.assertIn("pdftotext version", identity["version"])
+
     def test_missing_pdf_returns_structured_failure_instead_of_raising(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             missing = Path(temporary) / "missing.pdf"
@@ -46,12 +57,23 @@ class PackagedPdfAuditTests(unittest.TestCase):
             sheet = root / "contact.jpg"
             self._write_pdf(pdf, ["中文学术译文第一页", "References\n[1] Example"])
 
-            report = audit_pdf(pdf, expected_pages=2, contact_sheet_path=sheet)
+            report = audit_pdf(
+                pdf,
+                expected_pages=2,
+                contact_sheet_path=sheet,
+                protection_receipt_sha256="a" * 64,
+            )
 
             self.assertTrue(report["ok"])
             self.assertEqual(report["page_count"], 2)
             self.assertEqual(report["failures"], [])
+            self.assertEqual(report["secondary_extractor"], secondary_extractor_identity())
+            self.assertEqual(report["protection_receipt_sha256"], "a" * 64)
             self.assertTrue(sheet.is_file())
+            self.assertEqual(
+                report["contact_sheet_sha256"],
+                hashlib.sha256(sheet.read_bytes()).hexdigest(),
+            )
 
     def test_residue_and_model_meta_response_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -141,6 +163,71 @@ class PackagedPdfAuditTests(unittest.TestCase):
 
             self.assertFalse(report["ok"])
             self.assertIn("mixed_script_bottom_fragment:page_1", report["failures"])
+
+    def test_rejects_long_english_prose_residue_inside_chinese_body(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "fragment.pdf"
+            document = fitz.open()
+            page = document.new_page(width=595, height=842)
+            page.insert_textbox(
+                (72, 360, 520, 520),
+                "这是中文正文 provide compelling science reach on their own 并继续中文。",
+                fontname="china-s",
+                fontsize=12,
+            )
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("english_prose_residue:page_1", report["failures"])
+
+    def test_rejects_english_only_prose_block_after_first_page(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "fragment.pdf"
+            document = fitz.open()
+            first = document.new_page(width=595, height=842)
+            first.insert_text((72, 100), "中文首页", fontname="china-s")
+            second = document.new_page(width=595, height=842)
+            second.insert_text(
+                (72, 180), "While high redshift spectroscopic surveys provide compelling science"
+            )
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("english_prose_residue:page_2", report["failures"])
+
+    def test_rejects_excess_hidden_text_seen_by_secondary_extractor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "hidden.pdf"
+            self._write_pdf(pdf, ["这是可见的中文正文，长度正常。"])
+
+            with mock.patch(
+                "scripts.audit_snowmass_translation_pdf._secondary_page_texts",
+                return_value=["hidden english duplicate layer " * 80],
+            ):
+                report = audit_pdf(pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("secondary_text_layer_excess:page_1", report["failures"])
+
+    def test_rejects_small_secondary_only_english_layer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "hidden.pdf"
+            self._write_pdf(pdf, ["这是可见的中文正文，长度正常。"])
+
+            with mock.patch(
+                "scripts.audit_snowmass_translation_pdf._secondary_page_texts",
+                return_value=["quiet hidden english text layer residue"],
+            ):
+                report = audit_pdf(pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("secondary_text_layer_excess:page_1", report["failures"])
 
     def test_rejects_standalone_punctuation_fragment_near_page_bottom(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

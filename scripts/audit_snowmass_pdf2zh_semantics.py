@@ -7,12 +7,11 @@ import argparse
 import csv
 import hashlib
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 import fitz
-
 
 DEFAULT_FORBIDDEN = ("偏袒", "天文物體")
 
@@ -44,6 +43,7 @@ def audit_semantics(
     protection_receipt: Path,
     forbidden: tuple[str, ...] = DEFAULT_FORBIDDEN,
     allowed_untranslated: tuple[str, ...] = (),
+    allowed_untranslated_phrases: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     ignored = _ignored_regions(protection_receipt)
     with glossary_csv.open(encoding="utf-8", newline="") as stream:
@@ -68,13 +68,39 @@ def audit_semantics(
                 if any(region.contains(center) for region in ignored.get(page_number, [])):
                     continue
                 text = str(block[4]).replace("\x03", " ")
+                allowed_ranges = [
+                    match.span()
+                    for phrase in allowed_untranslated_phrases
+                    if phrase
+                    for match in re.finditer(
+                        r"\s+".join(re.escape(part) for part in phrase.split()),
+                        text,
+                        re.IGNORECASE,
+                    )
+                ]
                 checks = [("forbidden", value) for value in forbidden]
                 checks.extend(("untranslated_glossary", value) for value in source_terms)
                 for kind, value in checks:
                     if not value:
                         continue
                     flags = re.IGNORECASE if re.search(r"[A-Za-z]", value) else 0
-                    if re.search(rf"(?<![A-Za-z]){re.escape(value)}(?![A-Za-z])", text, flags):
+                    matches = list(
+                        re.finditer(
+                            rf"(?<![A-Za-z]){re.escape(value)}(?![A-Za-z])",
+                            text,
+                            flags,
+                        )
+                    )
+                    if kind == "untranslated_glossary":
+                        matches = [
+                            match
+                            for match in matches
+                            if not any(
+                                start <= match.start() and match.end() <= end
+                                for start, end in allowed_ranges
+                            )
+                        ]
+                    if matches:
                         findings.append(
                             {
                                 "page": page_number,
@@ -93,6 +119,7 @@ def audit_semantics(
         "checked_glossary_terms": len(source_terms),
         "forbidden_terms": list(forbidden),
         "allowed_untranslated_terms": list(allowed_untranslated),
+        "allowed_untranslated_phrases": list(allowed_untranslated_phrases),
         "findings": findings,
         "failures": list(dict.fromkeys(failures)),
         "ok": not failures,
@@ -106,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--protection-receipt", type=Path, required=True)
     parser.add_argument("--forbidden", action="append", default=[])
     parser.add_argument("--allow-untranslated", action="append", default=[])
+    parser.add_argument("--allow-untranslated-phrase", action="append", default=[])
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args(argv)
     report = audit_semantics(
@@ -114,6 +142,9 @@ def main(argv: list[str] | None = None) -> int:
         protection_receipt=args.protection_receipt,
         forbidden=tuple(dict.fromkeys((*DEFAULT_FORBIDDEN, *args.forbidden))),
         allowed_untranslated=tuple(dict.fromkeys(args.allow_untranslated)),
+        allowed_untranslated_phrases=tuple(
+            dict.fromkeys(args.allow_untranslated_phrase)
+        ),
     )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(

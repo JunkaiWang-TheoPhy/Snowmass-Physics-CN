@@ -4,14 +4,14 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import hashlib
 import json
-from pathlib import Path
 import re
-from typing import cast
 import unicodedata
 import xml.etree.ElementTree as ET
+from collections import Counter
+from pathlib import Path
+from typing import cast
 
 import fitz
 
@@ -189,6 +189,63 @@ def _insert_header(page: fitz.Page, rectangle: fitz.Rect, text: str) -> None:
         if result >= 0:
             return
     raise RuntimeError("Canonical running header does not fit its source rectangle")
+
+
+def _insert_rasterized_source_clip(
+    output_page: fitz.Page,
+    source_page: fitz.Page,
+    rectangle: fitz.Rect,
+    *,
+    dpi: int = 216,
+) -> str:
+    matrix = fitz.Matrix(dpi / 72, dpi / 72)
+    pixmap = source_page.get_pixmap(matrix=matrix, clip=rectangle, alpha=False)
+    output_page.insert_image(
+        rectangle,
+        pixmap=pixmap,
+        keep_proportion=False,
+        overlay=True,
+    )
+    return hashlib.sha256(pixmap.samples).hexdigest()
+
+
+def _expanded_redaction_rectangle(
+    output_page: fitz.Page, rectangle: fitz.Rect
+) -> fitz.Rect:
+    patch = fitz.Rect(rectangle)
+    for block in output_page.get_text("blocks", sort=True):
+        block_rectangle = fitz.Rect(*block[:4])
+        center = (
+            (block_rectangle.x0 + block_rectangle.x1) / 2,
+            (block_rectangle.y0 + block_rectangle.y1) / 2,
+        )
+        if rectangle.contains(center):
+            patch |= block_rectangle
+    return fitz.Rect(patch.x0 - 1, patch.y0 - 1, patch.x1 + 1, patch.y1 + 1)
+
+
+def _has_embedded_raster_clip(
+    output_page: fitz.Page,
+    rectangle: fitz.Rect,
+    expected_pixel_sha256: str,
+) -> bool:
+    """Verify the saved page embeds the exact source raster at the intended bbox."""
+
+    document = output_page.parent
+    for image in output_page.get_image_info(xrefs=True):
+        xref = int(image.get("xref") or 0)
+        if xref <= 0:
+            continue
+        image_rectangle = fitz.Rect(image["bbox"])
+        if any(
+            abs(left - right) > 0.05
+            for left, right in zip(image_rectangle, rectangle)
+        ):
+            continue
+        pixmap = fitz.Pixmap(document, xref)
+        if hashlib.sha256(pixmap.samples).hexdigest() == expected_pixel_sha256:
+            return True
+    return False
 
 
 def _source_text_rect(page: fitz.Page, text: str) -> fitz.Rect | None:
@@ -716,6 +773,48 @@ def protect_pdf(
     verbatim_texts: tuple[tuple[int, str], ...] = (),
     output_replacements: tuple[tuple[int, str, str], ...] = (),
 ) -> dict[str, object]:
+    """Restore protected regions while closing both documents on every path."""
+
+    with fitz.open(source_pdf) as source, fitz.open(translated_pdf) as translated:
+        return _protect_pdf_open_documents(
+            source_pdf=source_pdf,
+            translated_pdf=translated_pdf,
+            output_pdf=output_pdf,
+            selected_source_pages=selected_source_pages,
+            ir_xml=ir_xml,
+            source=source,
+            translated=translated,
+            source_header=source_header,
+            target_header=target_header,
+            auto_header=auto_header,
+            auto_front_matter=auto_front_matter,
+            auto_header_min_recurrence=auto_header_min_recurrence,
+            fixed_replacements=fixed_replacements,
+            left_fixed_replacements=left_fixed_replacements,
+            verbatim_texts=verbatim_texts,
+            output_replacements=output_replacements,
+        )
+
+
+def _protect_pdf_open_documents(
+    *,
+    source_pdf: Path,
+    translated_pdf: Path,
+    output_pdf: Path,
+    selected_source_pages: tuple[int, ...],
+    ir_xml: Path,
+    source: fitz.Document,
+    translated: fitz.Document,
+    source_header: str | None = None,
+    target_header: str | None = None,
+    auto_header: bool = False,
+    auto_front_matter: bool = False,
+    auto_header_min_recurrence: int = 3,
+    fixed_replacements: tuple[tuple[int, str, str], ...] = (),
+    left_fixed_replacements: tuple[tuple[int, str, str], ...] = (),
+    verbatim_texts: tuple[tuple[int, str], ...] = (),
+    output_replacements: tuple[tuple[int, str, str], ...] = (),
+) -> dict[str, object]:
     """Restore figure/table/reference regions and enforce one canonical header."""
 
     figures, tables = _ir_regions(ir_xml)
@@ -723,16 +822,10 @@ def protect_pdf(
         source_page: output_index
         for output_index, source_page in enumerate(selected_source_pages)
     }
-    source = fitz.open(source_pdf)
     reference_clips = _reference_clips(source)
-    translated = fitz.open(translated_pdf)
     if len(translated) != len(selected_source_pages):
-        source.close()
-        translated.close()
         raise RuntimeError("Translated page count does not match selected source pages")
     if auto_header_min_recurrence < 2:
-        source.close()
-        translated.close()
         raise RuntimeError("Auto header recurrence threshold must be at least 2")
 
     auto_header_receipt: dict[str, object] | None = None
@@ -749,18 +842,17 @@ def protect_pdf(
         resolved_source_header = str(auto_header_receipt["source_text"])
         resolved_target_header = str(auto_header_receipt["canonical_target"])
     elif not resolved_source_header or not resolved_target_header:
-        source.close()
-        translated.close()
         raise RuntimeError("Explicit source and target headers are required")
 
-    rectangles_by_output: dict[int, list[fitz.Rect]] = {}
+    raster_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
+    vector_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
     kind_counts = {"figure": 0, "table": 0, "reference": 0}
     for kind, regions in (("figure", figures), ("table", tables)):
         for source_page_number, box in regions:
             output_index = page_map.get(source_page_number)
             if output_index is None:
                 continue
-            rectangles_by_output.setdefault(output_index, []).append(
+            raster_rectangles_by_output.setdefault(output_index, []).append(
                 _top_rect(source[source_page_number - 1], box)
             )
             kind_counts[kind] += 1
@@ -768,7 +860,7 @@ def protect_pdf(
         output_index = page_map.get(source_page_number)
         if output_index is None:
             continue
-        rectangles_by_output.setdefault(output_index, []).append(clip)
+        vector_rectangles_by_output.setdefault(output_index, []).append(clip)
         kind_counts["reference"] += 1
     verbatim_text_count = 0
     verbatim_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
@@ -804,18 +896,47 @@ def protect_pdf(
                 }
             )
     for output_index, rectangles in verbatim_rectangles_by_output.items():
-        rectangles_by_output.setdefault(output_index, []).extend(
+        raster_rectangles_by_output.setdefault(output_index, []).extend(
             _coalesce_adjacent_text(rectangles)
         )
 
-    protected_regions: list[tuple[int, int, fitz.Rect]] = []
-    for output_index, rectangles in rectangles_by_output.items():
+    protected_regions: list[tuple[int, int, fitz.Rect, str, str | None]] = []
+    all_output_indices = sorted(
+        set(raster_rectangles_by_output) | set(vector_rectangles_by_output)
+    )
+    for output_index in all_output_indices:
         source_page_number = selected_source_pages[output_index]
         output_page = translated[output_index]
-        for rectangle in _coalesce(rectangles):
+        raster_rectangles = _coalesce(
+            raster_rectangles_by_output.get(output_index, [])
+        )
+        vector_rectangles = _coalesce(
+            vector_rectangles_by_output.get(output_index, [])
+        )
+        for rectangle in raster_rectangles:
+            output_page.add_redact_annot(
+                _expanded_redaction_rectangle(output_page, rectangle),
+                fill=(1, 1, 1),
+            )
+        for rectangle in vector_rectangles:
             output_page.add_redact_annot(rectangle, fill=(1, 1, 1))
         output_page.apply_redactions()
-        for rectangle in _coalesce(rectangles):
+        for rectangle in raster_rectangles:
+            pixel_hash = _insert_rasterized_source_clip(
+                output_page,
+                source[source_page_number - 1],
+                rectangle,
+            )
+            protected_regions.append(
+                (
+                    output_index,
+                    source_page_number,
+                    rectangle,
+                    "rasterized_source_clip",
+                    pixel_hash,
+                )
+            )
+        for rectangle in vector_rectangles:
             output_page.show_pdf_page(
                 rectangle,
                 source,
@@ -824,7 +945,15 @@ def protect_pdf(
                 keep_proportion=False,
                 overlay=True,
             )
-            protected_regions.append((output_index, source_page_number, rectangle))
+            protected_regions.append(
+                (
+                    output_index,
+                    source_page_number,
+                    rectangle,
+                    "vector_source_clip",
+                    None,
+                )
+            )
 
     header_count = 0
     for output_index, source_page_number in enumerate(selected_source_pages):
@@ -884,21 +1013,28 @@ def protect_pdf(
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     translated.save(output_pdf, garbage=4, deflate=True)
-    translated.close()
 
     failures: list[str] = []
     with fitz.open(output_pdf) as protected:
-        for output_index, source_page_number, rectangle in protected_regions:
-            expected = _normalize(
-                source[source_page_number - 1].get_text(clip=rectangle, sort=True)
-            )
-            actual = _normalize(
-                protected[output_index].get_text(clip=rectangle, sort=True)
-            )
-            if not expected or expected != actual:
-                failures.append(
-                    f"protected_region_mismatch:output_page_{output_index + 1}"
+        for output_index, source_page_number, rectangle, mode, pixel_hash in protected_regions:
+            if mode == "rasterized_source_clip":
+                if pixel_hash is None or not _has_embedded_raster_clip(
+                    protected[output_index], rectangle, pixel_hash
+                ):
+                    failures.append(
+                        f"protected_raster_mismatch:output_page_{output_index + 1}"
+                    )
+            else:
+                expected = _normalize(
+                    source[source_page_number - 1].get_text(clip=rectangle, sort=True)
                 )
+                actual = _normalize(
+                    protected[output_index].get_text(clip=rectangle, sort=True)
+                )
+                if not expected or expected != actual:
+                    failures.append(
+                        f"protected_region_mismatch:output_page_{output_index + 1}"
+                    )
         for output_index, source_page_number in enumerate(selected_source_pages):
             if (
                 _find_header_rect(
@@ -927,7 +1063,6 @@ def protect_pdf(
                 failures.append(
                     f"fixed_replacement_missing:output_page_{output_index + 1}"
                 )
-    source.close()
     receipt: dict[str, object] = {
         "schema_version": 2,
         "source_pdf_sha256": _sha256(source_pdf),
@@ -947,8 +1082,10 @@ def protect_pdf(
                 "output_page": output_index + 1,
                 "source_page": source_page_number,
                 "bbox": [rectangle.x0, rectangle.y0, rectangle.x1, rectangle.y1],
+                "render_mode": mode,
+                "source_clip_pixel_sha256": pixel_hash,
             }
-            for output_index, source_page_number, rectangle in protected_regions
+            for output_index, source_page_number, rectangle, mode, pixel_hash in protected_regions
         ],
         "failures": failures,
         "verified": not failures,
