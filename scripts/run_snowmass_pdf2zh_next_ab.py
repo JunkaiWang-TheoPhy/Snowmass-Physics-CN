@@ -331,6 +331,7 @@ Translate faithfully and concisely; use natural, publication-quality Chinese aca
 Apply the supplied glossary as a hard terminology constraint.
 Preserve every number, unit, equation, symbol, citation marker, URL, DOI, proper name, acronym,
 and rich-text or formula placeholder exactly. Never add facts, explanations, notes, or headings.
+Keep all citation markers in their exact source order; do not reorder clauses across them.
 Text belonging to figures, plots, legends, axes, annotations, and tables must remain verbatim in
 the source language. Bibliographic entries and their numbering must remain verbatim; translate
 only ordinary prose and the References heading when it is presented as an independent heading.

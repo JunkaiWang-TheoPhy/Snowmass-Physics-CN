@@ -73,6 +73,16 @@ def load_module():
     return module
 
 
+class TranslationPromptContractTests(unittest.TestCase):
+    def test_requires_citation_markers_to_keep_source_order(self) -> None:
+        module = load_module()
+
+        self.assertIn(
+            "citation markers in their exact source order",
+            module.SYSTEM_PROMPT,
+        )
+
+
 class RightsGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
