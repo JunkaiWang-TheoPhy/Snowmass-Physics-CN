@@ -107,6 +107,33 @@ def _secondary_page_texts(pdf_path: Path) -> list[str]:
     return pages
 
 
+def _covered_area(
+    rectangles: list[tuple[float, float, float, float]], bounds: fitz.Rect
+) -> float:
+    clipped = [fitz.Rect(*rectangle) & bounds for rectangle in rectangles]
+    clipped = [rectangle for rectangle in clipped if not rectangle.is_empty]
+    x_values = sorted({value for rectangle in clipped for value in (rectangle.x0, rectangle.x1)})
+    area = 0.0
+    for left, right in zip(x_values, x_values[1:]):
+        intervals = sorted(
+            (rectangle.y0, rectangle.y1)
+            for rectangle in clipped
+            if rectangle.x0 < right and rectangle.x1 > left
+        )
+        covered_height = 0.0
+        if intervals:
+            current_top, current_bottom = intervals[0]
+            for top, bottom in intervals[1:]:
+                if top <= current_bottom:
+                    current_bottom = max(current_bottom, bottom)
+                else:
+                    covered_height += current_bottom - current_top
+                    current_top, current_bottom = top, bottom
+            covered_height += current_bottom - current_top
+        area += (right - left) * covered_height
+    return area
+
+
 def audit_pdf(
     pdf_path: str | Path,
     *,
@@ -158,7 +185,16 @@ def audit_pdf(
             text = page.get_text("text")
             extractable = len(re.sub(r"\s+", "", text))
             primary_page_text_lengths.append(extractable)
-            if extractable < minimum_extractable_characters:
+            protected_coverage = (
+                _covered_area(ignored_text_regions.get(page_number, []), page.rect)
+                / page.rect.get_area()
+                if page.rect.get_area()
+                else 0.0
+            )
+            if (
+                extractable < minimum_extractable_characters
+                and protected_coverage < 0.5
+            ):
                 low_text_pages.append(page_number)
                 failures.append(f"low_text_page:{page_number}")
             if contains_model_meta_response(text):

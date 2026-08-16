@@ -100,6 +100,22 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertIn("page_count_mismatch:2!=3", report["failures"])
             self.assertIn("low_text_page:1", report["failures"])
 
+    def test_low_text_page_is_allowed_when_most_of_it_is_a_protected_raster(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "protected-reference-page.pdf"
+            self._write_pdf(pdf, [""])
+
+            report = audit_pdf(
+                pdf,
+                expected_pages=1,
+                ignored_text_regions={1: [(50.0, 50.0, 550.0, 750.0)]},
+            )
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["low_text_pages"], [])
+
     def test_rejects_isolated_latin_word_at_right_page_edge(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "paper.pdf"

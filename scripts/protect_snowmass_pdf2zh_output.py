@@ -582,9 +582,7 @@ def _discover_running_headers(
         if len(cast(set[int], entry["pages"])) >= min_recurrence
     ]
     if not qualified:
-        raise RuntimeError(
-            "Unable to auto-discover a recurring running header from source pages"
-        )
+        return []
     qualified.sort(
         key=lambda entry: (
             -cast(int, entry["page_count"]),
@@ -768,8 +766,12 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
     ]
     candidate_lines = [
         line
-        for line in front_matter_lines
-        if _looks_like_author_line(str(line["text"]))
+        for line in lines
+        if title_bottom + 5 < cast(fitz.Rect, line["rect"]).y0 < abstract_top
+        and not _looks_like_date(str(line["text"]))
+        and not _looks_like_email(str(line["text"]))
+        and not str(line["text"]).casefold().startswith("abstract")
+        and _looks_like_author_line(str(line["text"]))
     ]
     if not candidate_lines:
         raise RuntimeError("Unable to identify first-page author-name candidates")
@@ -805,31 +807,30 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
         contact_line["rect"] = fitz.Rect(block_rectangle)
         contact_lines.append(contact_line)
     if contact_lines:
-        author_columns = sorted(
-            author_lines,
+        contact_columns = sorted(
+            contact_lines,
             key=lambda line: cast(fitz.Rect, line["rect"]).x0,
         )
-        author_centers = [
+        contact_centers = [
             (cast(fitz.Rect, line["rect"]).x0 + cast(fitz.Rect, line["rect"]).x1)
             / 2
-            for line in author_columns
+            for line in contact_columns
         ]
         boundaries = [
             (left + right) / 2
-            for left, right in zip(author_centers, author_centers[1:])
+            for left, right in zip(contact_centers, contact_centers[1:])
         ]
         atomic_columns: list[dict[str, object]] = []
-        for index, author in enumerate(author_columns):
+        for index, contact in enumerate(contact_columns):
             left_bound = boundaries[index - 1] if index else 0.0
             right_bound = (
                 boundaries[index]
                 if index < len(boundaries)
                 else source_page.rect.width
             )
-            author_rectangle = cast(fitz.Rect, author["rect"])
-            matching_contacts = [
+            matching_authors = [
                 line
-                for line in contact_lines
+                for line in author_lines
                 if left_bound
                 <= (
                     cast(fitz.Rect, line["rect"]).x0
@@ -838,17 +839,18 @@ def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, objec
                 / 2
                 < right_bound
             ]
-            if not matching_contacts:
+            if not matching_authors:
                 raise RuntimeError(
                     "Unable to pair first-page author and contact columns"
                 )
-            column_bottom = max(
-                cast(fitz.Rect, line["rect"]).y1 for line in matching_contacts
+            column_top = min(
+                cast(fitz.Rect, line["rect"]).y0 for line in matching_authors
             )
+            column_bottom = cast(fitz.Rect, contact["rect"]).y1
             column_lines = [
                 line
                 for line in lines
-                if author_rectangle.y0 - 2
+                if column_top - 2
                 <= cast(fitz.Rect, line["rect"]).y0
                 <= column_bottom
                 and left_bound
@@ -1366,8 +1368,9 @@ def _protect_pdf_open_documents(
         "verified": not failures,
     }
     if auto_header_receipts is not None:
-        receipt["auto_header"] = auto_header_receipts[0]
         receipt["auto_headers"] = auto_header_receipts
+        if auto_header_receipts:
+            receipt["auto_header"] = auto_header_receipts[0]
     if auto_front_matter_receipt is not None:
         receipt["auto_front_matter"] = auto_front_matter_receipt
     return receipt

@@ -848,6 +848,86 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             ["Alice Author, Bob Builder"],
         )
 
+    def test_auto_front_matter_groups_wrapped_authors_into_one_contact_column(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(
+                page,
+                80,
+                100,
+                ["Synthetic Paper Title for a Major Scientific Study"],
+                fontsize=18,
+            )
+            self._write_lines(
+                page,
+                125,
+                150,
+                [
+                    "Alice Author, Bob Builder, Carol Contributor,",
+                    "David Developer, Erin Expert",
+                ],
+                fontsize=12,
+            )
+            self._write_lines(
+                page,
+                180,
+                185,
+                ["Example National Laboratory", "authors@example.org"],
+                fontsize=10,
+            )
+            self._write_lines(page, 72, 250, ["Abstract", "Body"], fontsize=11)
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        self.assertEqual(len(discovered), 1)
+        self.assertIn("Alice Author", discovered[0]["source_text"])
+        self.assertIn("David Developer", discovered[0]["source_text"])
+        self.assertIn("Example National Laboratory", discovered[0]["source_text"])
+        self.assertIn("authors@example.org", discovered[0]["source_text"])
+
+    def test_auto_front_matter_accepts_an_author_affiliation_combined_line(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            self._write_lines(
+                page,
+                100,
+                100,
+                ["A Wide Scientific Title for Neutrino Analysis"],
+                fontsize=18,
+            )
+            self._write_lines(
+                page,
+                180,
+                150,
+                [
+                    "C. Backhouse - University College London",
+                    "c.backhouse@example.org",
+                ],
+                fontsize=12,
+            )
+            self._write_lines(page, 260, 190, ["25 March 2022"], fontsize=12)
+            self._write_lines(page, 72, 230, ["Ordinary body prose starts here."], fontsize=10)
+
+            discovered = _discover_front_matter_lines(page)
+        finally:
+            document.close()
+
+        self.assertEqual(len(discovered), 1)
+        self.assertIn("C. Backhouse", discovered[0]["source_text"])
+        self.assertIn("c.backhouse@example.org", discovered[0]["source_text"])
+
     def test_auto_header_fails_closed_on_ambiguous_majority_vote(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf
 
@@ -928,6 +1008,48 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             )
 
             self.assertTrue(receipt["verified"])
+            self.assertEqual(receipt["canonical_header_count"], 0)
+
+    def test_auto_header_allows_a_multi_page_source_with_no_running_header(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source-without-header.pdf"
+            translated = root / "translated-without-header.pdf"
+            ir = root / "without-header.xml"
+            for path, prefix in ((source, "Source"), (translated, "译文")):
+                document = fitz.open()
+                for page_number in range(1, 4):
+                    page = document.new_page(width=612, height=792)
+                    page.insert_text(
+                        (72, 180),
+                        f"{prefix} body page {page_number}",
+                        fontname="helv" if path == source else "china-s",
+                    )
+                document.save(path)
+                document.close()
+            ir.write_text(
+                "<?xml version='1.0'?><document totalPages='3'>"
+                "<page pageNumber='0'/><page pageNumber='1'/><page pageNumber='2'/>"
+                "</document>",
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=root / "protected.pdf",
+                selected_source_pages=(1, 2, 3),
+                ir_xml=ir,
+                auto_header=True,
+                auto_header_min_recurrence=2,
+            )
+
+            self.assertTrue(receipt["verified"])
+            self.assertEqual(receipt["auto_headers"], [])
             self.assertEqual(receipt["canonical_header_count"], 0)
 
     def test_main_accepts_auto_flags_without_explicit_headers(self) -> None:
