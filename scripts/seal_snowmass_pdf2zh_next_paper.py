@@ -270,7 +270,7 @@ def prepare_paper_qc(
     protected_pdf = protected_dir / f"{raw_pdf.stem}.protected.pdf"
     qc_dir = article / "qc"
     protection_path = qc_dir / "protection.json"
-    recurrence = min(3, len(selected_source_pages) - 1)
+    recurrence = min(2, len(selected_source_pages) - 1)
     if recurrence < 2:
         raise RuntimeError("too few pages to auto-discover a running header safely")
     protection_receipt = protect_pdf(

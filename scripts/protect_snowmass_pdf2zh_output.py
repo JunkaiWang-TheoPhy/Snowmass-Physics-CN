@@ -455,14 +455,14 @@ def _looks_like_author_line(text: str) -> bool:
     return separators or len(name_tokens) <= 6
 
 
-def _discover_running_header(
+def _discover_running_headers(
     source: fitz.Document,
     translated: fitz.Document,
     selected_source_pages: tuple[int, ...],
     page_map: dict[int, int],
     *,
     min_recurrence: int,
-) -> dict[str, object]:
+) -> list[dict[str, object]]:
     candidates: dict[str, dict[str, object]] = {}
     for source_page_number in selected_source_pages:
         if source_page_number <= 1:
@@ -512,9 +512,6 @@ def _discover_running_header(
         raise RuntimeError(
             "Unable to auto-discover a recurring running header from source pages"
         )
-    if len(qualified) != 1:
-        raise RuntimeError("Ambiguous recurring source header candidates")
-
     qualified.sort(
         key=lambda entry: (
             -cast(int, entry["page_count"]),
@@ -523,79 +520,101 @@ def _discover_running_header(
             str(entry["source_text"]),
         )
     )
-    winner = qualified[0]
-    source_text = str(winner["source_text"])
-    source_rectangles: list[tuple[int, fitz.Rect]] = []
-    for source_page_number in selected_source_pages:
-        if source_page_number <= 1:
-            continue
-        page = source[source_page_number - 1]
-        rectangle = _find_header_rect(page, source_text)
-        if rectangle is None:
-            rectangle = _source_text_rect(page, source_text)
-        if rectangle is None:
-            continue
-        source_rectangles.append((source_page_number, rectangle))
-    if len(source_rectangles) < min_recurrence:
-        raise RuntimeError("Auto-discovered running header could not be re-located")
+    for index, left in enumerate(qualified):
+        left_pages = cast(set[int], left["pages"])
+        for right in qualified[index + 1 :]:
+            if left_pages & cast(set[int], right["pages"]):
+                raise RuntimeError("Ambiguous recurring source header candidates")
 
-    translated_candidates: dict[str, dict[str, object]] = {}
-    for source_page_number, rectangle in source_rectangles:
-        output_index = page_map[source_page_number]
-        candidate = _clean_text(
-            translated[output_index].get_text(clip=rectangle, sort=True)
-        )
-        normalized = _normalize(candidate)
-        if not normalized:
-            raise RuntimeError(
-                f"Translated running header was empty on output page {output_index + 1}"
+    families: list[dict[str, object]] = []
+    for winner in qualified:
+        source_text = str(winner["source_text"])
+        source_rectangles: list[tuple[int, fitz.Rect]] = []
+        for source_page_number in selected_source_pages:
+            if source_page_number <= 1:
+                continue
+            page = source[source_page_number - 1]
+            rectangle = _find_header_rect(page, source_text)
+            if rectangle is None:
+                rectangle = _source_text_rect(page, source_text)
+            if rectangle is not None:
+                source_rectangles.append((source_page_number, rectangle))
+        if len(source_rectangles) < min_recurrence:
+            raise RuntimeError("Auto-discovered running header could not be re-located")
+
+        translated_candidates: dict[str, dict[str, object]] = {}
+        for source_page_number, rectangle in source_rectangles:
+            output_index = page_map[source_page_number]
+            candidate = _clean_text(
+                translated[output_index].get_text(clip=rectangle, sort=True)
             )
-        entry = translated_candidates.setdefault(
-            normalized,
-            {"count": 0, "display_counts": Counter(), "pages": []},
-        )
-        entry["count"] = int(entry["count"]) + 1
-        cast(Counter[str], entry["display_counts"])[candidate] += 1
-        cast(list[int], entry["pages"]).append(output_index + 1)
+            normalized = _normalize(candidate)
+            if not normalized:
+                raise RuntimeError(
+                    "Translated running header was empty on output page "
+                    f"{output_index + 1}"
+                )
+            entry = translated_candidates.setdefault(
+                normalized,
+                {"count": 0, "display_counts": Counter(), "pages": []},
+            )
+            entry["count"] = int(entry["count"]) + 1
+            cast(Counter[str], entry["display_counts"])[candidate] += 1
+            cast(list[int], entry["pages"]).append(output_index + 1)
 
-    sorted_candidates = sorted(
-        (
-            {
-                "normalized_text": normalized,
-                "display_text": sorted(
-                    cast(Counter[str], entry["display_counts"]).items(),
-                    key=lambda item: (-item[1], item[0]),
-                )[0][0],
-                "count": int(entry["count"]),
-                "pages": sorted(cast(list[int], entry["pages"])),
-            }
-            for normalized, entry in translated_candidates.items()
-        ),
-        key=lambda entry: (-cast(int, entry["count"]), str(entry["display_text"])),
-    )
-    if len(sorted_candidates) > 1 and cast(int, sorted_candidates[0]["count"]) == cast(
-        int, sorted_candidates[1]["count"]
-    ):
-        raise RuntimeError(
-            "Ambiguous canonical running header translation candidates"
+        sorted_candidates = sorted(
+            (
+                {
+                    "normalized_text": normalized,
+                    "display_text": sorted(
+                        cast(Counter[str], entry["display_counts"]).items(),
+                        key=lambda item: (-item[1], item[0]),
+                    )[0][0],
+                    "count": int(entry["count"]),
+                    "pages": sorted(cast(list[int], entry["pages"])),
+                }
+                for normalized, entry in translated_candidates.items()
+            ),
+            key=lambda entry: (
+                -cast(int, entry["count"]),
+                min(cast(list[int], entry["pages"])),
+                str(entry["display_text"]),
+            ),
         )
-    canonical_target = str(sorted_candidates[0]["display_text"])
-    return {
-        "source_text": source_text,
-        "source_text_sha256": _text_sha256(source_text),
-        "source_occurrence_count": len(source_rectangles),
-        "recurrence_threshold": min_recurrence,
-        "rectangles": [
+        tied = (
+            len(sorted_candidates) > 1
+            and cast(int, sorted_candidates[0]["count"])
+            == cast(int, sorted_candidates[1]["count"])
+        )
+        if tied and len(source_rectangles) > 2:
+            raise RuntimeError(
+                "Ambiguous canonical running header translation candidates"
+            )
+        canonical_target = str(sorted_candidates[0]["display_text"])
+        families.append(
             {
-                "page": source_page_number,
-                "bbox": [rectangle.x0, rectangle.y0, rectangle.x1, rectangle.y1],
+                "source_text": source_text,
+                "source_text_sha256": _text_sha256(source_text),
+                "source_occurrence_count": len(source_rectangles),
+                "recurrence_threshold": min_recurrence,
+                "rectangles": [
+                    {
+                        "page": source_page_number,
+                        "bbox": [
+                            rectangle.x0,
+                            rectangle.y0,
+                            rectangle.x1,
+                            rectangle.y1,
+                        ],
+                    }
+                    for source_page_number, rectangle in source_rectangles
+                ],
+                "translated_candidates": sorted_candidates,
+                "canonical_target": canonical_target,
+                "canonical_target_sha256": _text_sha256(canonical_target),
             }
-            for source_page_number, rectangle in source_rectangles
-        ],
-        "translated_candidates": sorted_candidates,
-        "canonical_target": canonical_target,
-        "canonical_target_sha256": _text_sha256(canonical_target),
-    }
+        )
+    return families
 
 
 def _discover_front_matter_lines(source_page: fitz.Page) -> list[dict[str, object]]:
@@ -890,20 +909,23 @@ def _protect_pdf_open_documents(
     if auto_header_min_recurrence < 2:
         raise RuntimeError("Auto header recurrence threshold must be at least 2")
 
-    auto_header_receipt: dict[str, object] | None = None
-    resolved_source_header = source_header
-    resolved_target_header = target_header
+    auto_header_receipts: list[dict[str, object]] | None = None
+    header_families: list[tuple[str, str]] = []
     if auto_header:
-        auto_header_receipt = _discover_running_header(
+        auto_header_receipts = _discover_running_headers(
             source,
             translated,
             selected_source_pages,
             page_map,
             min_recurrence=auto_header_min_recurrence,
         )
-        resolved_source_header = str(auto_header_receipt["source_text"])
-        resolved_target_header = str(auto_header_receipt["canonical_target"])
-    elif not resolved_source_header or not resolved_target_header:
+        header_families = [
+            (str(family["source_text"]), str(family["canonical_target"]))
+            for family in auto_header_receipts
+        ]
+    elif source_header and target_header:
+        header_families = [(source_header, target_header)]
+    else:
         raise RuntimeError("Explicit source and target headers are required")
 
     raster_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
@@ -1026,15 +1048,16 @@ def _protect_pdf_open_documents(
         reference_heading_count += 1
 
     header_count = 0
-    for output_index, source_page_number in enumerate(selected_source_pages):
-        source_rect = _find_header_rect(
-            source[source_page_number - 1],
-            str(resolved_source_header),
-        )
-        if source_rect is None:
-            continue
-        _insert_header(translated[output_index], source_rect, str(resolved_target_header))
-        header_count += 1
+    for resolved_source_header, resolved_target_header in header_families:
+        for output_index, source_page_number in enumerate(selected_source_pages):
+            source_rect = _find_header_rect(
+                source[source_page_number - 1],
+                resolved_source_header,
+            )
+            if source_rect is None:
+                continue
+            _insert_header(translated[output_index], source_rect, resolved_target_header)
+            header_count += 1
 
     fixed_replacement_count = 0
     fixed_checks: list[tuple[int, fitz.Rect, str]] = []
@@ -1105,20 +1128,21 @@ def _protect_pdf_open_documents(
                     failures.append(
                         f"protected_region_mismatch:output_page_{output_index + 1}"
                     )
-        for output_index, source_page_number in enumerate(selected_source_pages):
-            if (
-                _find_header_rect(
-                    source[source_page_number - 1],
-                    str(resolved_source_header),
-                )
-                is None
-            ):
-                continue
-            rendered = _normalize(protected[output_index].get_text())
-            if _normalize(str(resolved_target_header)) not in rendered:
-                failures.append(
-                    f"canonical_header_missing:output_page_{output_index + 1}"
-                )
+        for resolved_source_header, resolved_target_header in header_families:
+            for output_index, source_page_number in enumerate(selected_source_pages):
+                if (
+                    _find_header_rect(
+                        source[source_page_number - 1],
+                        resolved_source_header,
+                    )
+                    is None
+                ):
+                    continue
+                rendered = _normalize(protected[output_index].get_text())
+                if _normalize(resolved_target_header) not in rendered:
+                    failures.append(
+                        f"canonical_header_missing:output_page_{output_index + 1}"
+                    )
         for output_index, rectangle, target_text in fixed_checks:
             verification_clip = fitz.Rect(
                 rectangle.x0 - 4,
@@ -1161,8 +1185,9 @@ def _protect_pdf_open_documents(
         "failures": failures,
         "verified": not failures,
     }
-    if auto_header_receipt is not None:
-        receipt["auto_header"] = auto_header_receipt
+    if auto_header_receipts is not None:
+        receipt["auto_header"] = auto_header_receipts[0]
+        receipt["auto_headers"] = auto_header_receipts
     if auto_front_matter_receipt is not None:
         receipt["auto_front_matter"] = auto_front_matter_receipt
     return receipt

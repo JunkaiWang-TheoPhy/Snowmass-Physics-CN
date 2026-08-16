@@ -191,6 +191,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         root: Path,
         *,
         header_variants: list[str],
+        source_header_variants: list[str] | None = None,
         repeated_stamp: bool = False,
     ) -> tuple[Path, Path, Path]:
         source = root / "auto-source.pdf"
@@ -296,9 +297,14 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         )
         first_translated.insert_text((300, 750), "1")
 
-        for page_number, header_text in enumerate(header_variants, start=2):
+        if source_header_variants is None:
+            source_header_variants = ["SOURCE HEADER"] * len(header_variants)
+        self.assertEqual(len(source_header_variants), len(header_variants))
+        for page_number, (source_header_text, header_text) in enumerate(
+            zip(source_header_variants, header_variants, strict=True), start=2
+        ):
             source_page = source_doc.new_page(width=612, height=792)
-            source_page.insert_text((150, 60), "SOURCE HEADER")
+            source_page.insert_text((150, 60), source_header_text)
             if repeated_stamp:
                 source_page.insert_text((180, 88), "REPEATING STAMP")
             source_page.insert_text((72, 120), f"Source body page {page_number}")
@@ -327,15 +333,15 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         translated_doc.save(translated)
         source_doc.close()
         translated_doc.close()
+        page_elements = "\n".join(
+            f'  <page pageNumber="{page_number}"/>'
+            for page_number in range(len(header_variants) + 1)
+        )
         ir.write_text(
-            """<?xml version="1.0"?>
-<document totalPages="4">
-  <page pageNumber="0"/>
-  <page pageNumber="1"/>
-  <page pageNumber="2"/>
-  <page pageNumber="3"/>
-</document>
-""",
+            f'<?xml version="1.0"?>\n'
+            f'<document totalPages="{len(header_variants) + 1}">\n'
+            f"{page_elements}\n"
+            "</document>\n",
             encoding="utf-8",
         )
         return source, translated, ir
@@ -703,6 +709,52 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                     auto_header=True,
                     auto_header_min_recurrence=2,
                 )
+
+    def test_auto_header_canonicalizes_disjoint_alternating_header_families(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, translated, ir = self._make_auto_discovery_fixture(
+                root,
+                source_header_variants=[
+                    "AUTHOR RUNNING HEADER",
+                    "PAPER TITLE RUNNING HEADER",
+                    "AUTHOR RUNNING HEADER",
+                    "PAPER TITLE RUNNING HEADER",
+                ],
+                header_variants=[
+                    "作者页眉",
+                    "论文标题页眉甲",
+                    "作者页眉",
+                    "论文标题页眉乙",
+                ],
+            )
+            output = root / "alternating.pdf"
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1, 2, 3, 4, 5),
+                ir_xml=ir,
+                auto_header=True,
+                auto_front_matter=True,
+                auto_header_min_recurrence=2,
+            )
+
+            self.assertTrue(receipt["verified"])
+            self.assertEqual(len(receipt["auto_headers"]), 2)
+            self.assertEqual(receipt["canonical_header_count"], 4)
+            with fitz.open(output) as document:
+                rendered = [document[index].get_text() for index in range(1, 5)]
+            self.assertIn("作者页眉", rendered[0])
+            self.assertIn("作者页眉", rendered[2])
+            self.assertIn("论文标题页眉甲", rendered[1])
+            self.assertIn("论文标题页眉甲", rendered[3])
+            self.assertNotIn("论文标题页眉乙", "".join(rendered))
 
     def test_auto_front_matter_rejects_arxiv_and_report_lines(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines
