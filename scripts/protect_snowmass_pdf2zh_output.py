@@ -1832,12 +1832,20 @@ def _toc_topology_conservation(
     return results
 
 
-def _numeric_citation_markers(
+def _normalize_numeric_citation_marker(value: str) -> str:
+    return (
+        re.sub(r"\s+", "", value)
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+    )
+
+
+def _numeric_citation_line_groups(
     page: fitz.Page,
     *,
     excluded_rectangles: tuple[fitz.Rect, ...] = (),
-) -> list[str]:
-    markers: list[str] = []
+) -> list[list[str]]:
+    fragments: list[tuple[fitz.Rect, list[str]]] = []
     for block in page.get_text("dict", sort=True).get("blocks", []):
         if block.get("type") != 0:
             continue
@@ -1852,13 +1860,85 @@ def _numeric_citation_markers(
             line_text = "".join(
                 str(span.get("text", "")) for span in line.get("spans", [])
             )
-            for match in _NUMERIC_CITATION_MARKER.finditer(line_text):
-                markers.append(
-                    re.sub(r"\s+", "", match.group(0))
-                    .replace("\u2013", "-")
-                    .replace("\u2014", "-")
-                )
-    return markers
+            line_markers = [
+                _normalize_numeric_citation_marker(match.group(0))
+                for match in _NUMERIC_CITATION_MARKER.finditer(line_text)
+            ]
+            if line_markers:
+                fragments.append((rectangle, line_markers))
+    clustered: list[list[tuple[fitz.Rect, list[str]]]] = []
+    midpoint = page.rect.width / 2.0
+
+    def column(rectangle: fitz.Rect) -> str:
+        if rectangle.x1 <= midpoint:
+            return "left"
+        if rectangle.x0 >= midpoint:
+            return "right"
+        return "full"
+
+    for rectangle, markers in fragments:
+        target: list[tuple[fitz.Rect, list[str]]] | None = None
+        for group in reversed(clustered):
+            group_rectangle = group[0][0]
+            same_baseline = abs(rectangle.y0 - group_rectangle.y0) <= 2.0
+            same_column = (
+                column(rectangle) == column(group_rectangle)
+                or "full" in {column(rectangle), column(group_rectangle)}
+            )
+            if same_baseline and same_column:
+                target = group
+                break
+            if rectangle.y0 - group_rectangle.y0 > 2.0:
+                break
+        if target is None:
+            clustered.append([(rectangle, markers)])
+        else:
+            target.append((rectangle, markers))
+    return [
+        [
+            marker
+            for _rectangle, markers in sorted(group, key=lambda item: item[0].x0)
+            for marker in markers
+        ]
+        for group in clustered
+    ]
+
+
+def _numeric_citation_markers(
+    page: fitz.Page,
+    *,
+    excluded_rectangles: tuple[fitz.Rect, ...] = (),
+) -> list[str]:
+    return [
+        marker
+        for group in _numeric_citation_line_groups(
+            page,
+            excluded_rectangles=excluded_rectangles,
+        )
+        for marker in group
+    ]
+
+
+def _citation_permutation_within_source_lines(
+    source_groups: list[list[str]],
+    output_groups: list[list[str]],
+) -> bool:
+    source_markers = [marker for group in source_groups for marker in group]
+    output_markers = [marker for group in output_groups for marker in group]
+    if Counter(source_markers) != Counter(output_markers):
+        return False
+    output_index = 0
+    for group in source_groups:
+        accumulated: list[str] = []
+        while output_index < len(output_groups) and len(accumulated) < len(group):
+            output_group = output_groups[output_index]
+            if len(accumulated) + len(output_group) > len(group):
+                return False
+            accumulated.extend(output_group)
+            output_index += 1
+        if Counter(group) != Counter(accumulated):
+            return False
+    return output_index == len(output_groups)
 
 
 def _normalize_numeric_citation_glyphs(
@@ -2235,13 +2315,27 @@ def _protect_pdf_open_documents(
                 *reference_rectangles_by_output.get(output_index, []),
             ]
         )
-        source_markers = _numeric_citation_markers(
+        source_line_groups = _numeric_citation_line_groups(
             source[source_page_number - 1],
             excluded_rectangles=exclusions,
         )
-        output_markers = _numeric_citation_markers(
+        source_markers = [
+            marker for group in source_line_groups for marker in group
+        ]
+        output_line_groups = _numeric_citation_line_groups(
             translated[output_index],
             excluded_rectangles=exclusions,
+        )
+        output_markers = [
+            marker for group in output_line_groups for marker in group
+        ]
+        order_preserved = source_markers == output_markers
+        within_source_line_permutation = (
+            not order_preserved
+            and _citation_permutation_within_source_lines(
+                source_line_groups,
+                output_line_groups,
+            )
         )
         citation_conservation.append(
             {
@@ -2251,7 +2345,11 @@ def _protect_pdf_open_documents(
                 "output": output_markers,
                 "source_sha256": _text_sha256("\n".join(source_markers)),
                 "output_sha256": _text_sha256("\n".join(output_markers)),
-                "matched": source_markers == output_markers,
+                "source_line_groups": source_line_groups,
+                "output_line_groups": output_line_groups,
+                "order_preserved": order_preserved,
+                "within_source_line_permutation": within_source_line_permutation,
+                "matched": order_preserved or within_source_line_permutation,
             }
         )
 

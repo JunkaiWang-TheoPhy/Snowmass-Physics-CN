@@ -510,6 +510,162 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertEqual(receipt["citation_conservation"][0]["output"], ["[1,3]"])
             self.assertIn("citation_sequence_mismatch:output_page_1", receipt["failures"])
 
+    def test_allows_citation_permutation_within_one_source_line(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+            source_document = fitz.open()
+            source_page = source_document.new_page()
+            source_page.insert_text((72, 100), "SoCal Repo [7] uses XCache [1, 2].")
+            source_document.save(source)
+            source_document.close()
+            translated_document = fitz.open()
+            translated_page = translated_document.new_page()
+            translated_page.insert_text((72, 100), "XCache [1, 2] powers")
+            translated_page.insert_text((72, 114), "SoCal Repo [7].")
+            translated_document.save(translated)
+            translated_document.close()
+            ir.write_text(
+                '<document totalPages="1"><page pageNumber="0"/></document>',
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            conservation = receipt["citation_conservation"][0]
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertFalse(conservation["order_preserved"])
+            self.assertTrue(conservation["within_source_line_permutation"])
+
+    def test_rejects_citation_permutation_across_source_lines(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+            for path, lines in (
+                (source, [(100, "First claim [7]."), (114, "Second claim [1, 2].")]),
+                (translated, [(100, "Second [1, 2]."), (114, "First [7].")]),
+            ):
+                document = fitz.open()
+                page = document.new_page()
+                for y, text in lines:
+                    page.insert_text((72, y), text)
+                document.save(path)
+                document.close()
+            ir.write_text(
+                '<document totalPages="1"><page pageNumber="0"/></document>',
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertFalse(receipt["verified"])
+            self.assertFalse(
+                receipt["citation_conservation"][0][
+                    "within_source_line_permutation"
+                ]
+            )
+
+    def test_rejects_cross_line_citation_mixing_with_repeated_marker(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+            for path, lines in (
+                (source, [(100, "L1 [5]."), (114, "L2 [5] and [7].")]),
+                (translated, [(100, "L1 [5] and [7]."), (114, "L2 [5].")]),
+            ):
+                document = fitz.open()
+                page = document.new_page()
+                for y, text in lines:
+                    page.insert_text((72, y), text)
+                document.save(path)
+                document.close()
+            ir.write_text(
+                '<document totalPages="1"><page pageNumber="0"/></document>',
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertFalse(receipt["verified"])
+            self.assertFalse(
+                receipt["citation_conservation"][0][
+                    "within_source_line_permutation"
+                ]
+            )
+
+    def test_coalesces_same_baseline_citation_line_fragments(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+            source_document = fitz.open()
+            source_page = source_document.new_page()
+            source_page.insert_text((72, 100), "First [1].")
+            source_page.insert_text((170, 100), "Second [2].")
+            source_document.save(source)
+            source_document.close()
+            translated_document = fitz.open()
+            translated_page = translated_document.new_page()
+            translated_page.insert_text((72, 100), "Second [2].")
+            translated_page.insert_text((170, 100), "First [1].")
+            translated_document.save(translated)
+            translated_document.close()
+            ir.write_text(
+                '<document totalPages="1"><page pageNumber="0"/></document>',
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(
+                receipt["citation_conservation"][0]["source_line_groups"],
+                [["[1]", "[2]"]],
+            )
+
     def _write_lines(
         self,
         page: fitz.Page,
