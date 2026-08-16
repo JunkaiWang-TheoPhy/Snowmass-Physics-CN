@@ -12,6 +12,20 @@ import fitz
 
 
 class ProtectPdf2zhOutputTests(unittest.TestCase):
+    def test_extracts_numeric_citation_split_across_font_spans(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _numeric_citation_markers
+
+        document = fitz.open()
+        try:
+            page = document.new_page()
+            page.insert_text((72, 100), "Body [", fontname="helv")
+            page.insert_text((108, 100), "1", fontname="tiro")
+            page.insert_text((114, 100), ", 2] tail", fontname="helv")
+
+            self.assertEqual(_numeric_citation_markers(page), ["[1,2]"])
+        finally:
+            document.close()
+
     def test_redraws_numeric_citations_with_a_safe_standard_font(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import (
             _normalize_numeric_citation_glyphs,

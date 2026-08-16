@@ -1443,8 +1443,8 @@ def _replace_output_text(page: fitz.Page, source_text: str, target_text: str) ->
 
 
 _NUMERIC_CITATION_MARKER = re.compile(
-    r"\[(?:\d+(?:\s*[-\u2013\u2014]\s*\d+)?)(?:\s*,\s*"
-    r"\d+(?:\s*[-\u2013\u2014]\s*\d+)?)*\]"
+    r"\[\s*(?:\d+(?:\s*[-\u2013\u2014]\s*\d+)?)(?:\s*,\s*"
+    r"\d+(?:\s*[-\u2013\u2014]\s*\d+)?)*\s*\]"
 )
 _NUMERIC_CITATION_SPAN = re.compile(
     _NUMERIC_CITATION_MARKER.pattern + r"\s*[,.;:]?\s*$"
@@ -1461,22 +1461,22 @@ def _numeric_citation_markers(
         if block.get("type") != 0:
             continue
         for line in block.get("lines", []):
-            for span in line.get("spans", []):
-                rectangle = fitz.Rect(*span["bbox"])
-                center = fitz.Point(
-                    (rectangle.x0 + rectangle.x1) / 2,
-                    (rectangle.y0 + rectangle.y1) / 2,
+            rectangle = fitz.Rect(*line["bbox"])
+            center = fitz.Point(
+                (rectangle.x0 + rectangle.x1) / 2,
+                (rectangle.y0 + rectangle.y1) / 2,
+            )
+            if any(excluded.contains(center) for excluded in excluded_rectangles):
+                continue
+            line_text = "".join(
+                str(span.get("text", "")) for span in line.get("spans", [])
+            )
+            for match in _NUMERIC_CITATION_MARKER.finditer(line_text):
+                markers.append(
+                    re.sub(r"\s+", "", match.group(0))
+                    .replace("\u2013", "-")
+                    .replace("\u2014", "-")
                 )
-                if any(excluded.contains(center) for excluded in excluded_rectangles):
-                    continue
-                for match in _NUMERIC_CITATION_MARKER.finditer(
-                    str(span.get("text", ""))
-                ):
-                    markers.append(
-                        re.sub(r"\s+", "", match.group(0))
-                        .replace("\u2013", "-")
-                        .replace("\u2014", "-")
-                    )
     return markers
 
 
