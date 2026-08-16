@@ -122,6 +122,41 @@ class PackagedPdfAuditTests(unittest.TestCase):
                 )
             )
 
+    def test_rejects_mixed_lowercase_fragment_near_page_bottom(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "fragment.pdf"
+            document = fitz.open()
+            page = document.new_page(width=595, height=842)
+            page.insert_text((72, 100), "完整正文", fontname="china-s", fontsize=12)
+            page.insert_text(
+                (72, 740),
+                "组合 ation of spectroscopic measurements",
+                fontname="china-s",
+                fontsize=10,
+            )
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("mixed_script_bottom_fragment:page_1", report["failures"])
+
+    def test_rejects_standalone_punctuation_fragment_near_page_bottom(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "fragment.pdf"
+            document = fitz.open()
+            page = document.new_page(width=595, height=842)
+            page.insert_text((72, 100), "完整正文", fontname="china-s", fontsize=12)
+            page.insert_text((72, 740), "s.", fontsize=10)
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("isolated_latin_edge_word:s.:page_1", report["failures"])
+
 
 if __name__ == "__main__":
     unittest.main()

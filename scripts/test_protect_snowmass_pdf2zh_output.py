@@ -8,6 +8,20 @@ import fitz
 
 
 class ProtectPdf2zhOutputTests(unittest.TestCase):
+    def test_coalesces_adjacent_verbatim_lines(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _coalesce_adjacent_text
+
+        rectangles = [
+            fitz.Rect(150, 210, 460, 224),
+            fitz.Rect(170, 227, 440, 238),
+            fitz.Rect(72, 320, 300, 380),
+        ]
+
+        merged = _coalesce_adjacent_text(rectangles)
+
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0], fitz.Rect(150, 210, 460, 238))
+
     def _make_pdf(self, path: Path, *, translated: bool) -> None:
         doc = fitz.open()
         first = doc.new_page(width=612, height=792)
@@ -17,11 +31,16 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             "WRONG FRONTMATTER" if translated else "SOURCE FRONTMATTER",
         )
         first.insert_text(
+            (150, 140), "translated author" if translated else "AUTHOR SOURCE"
+        )
+        first.insert_text(
             (72, 180), "translated table" if translated else "TABLE SOURCE"
         )
         first.insert_text(
             (72, 320), "translated figure" if translated else "FIGURE SOURCE"
         )
+        if translated:
+            first.insert_text((72, 420), "偏袒", fontname="china-s")
         first.insert_text((300, 750), "1")
         second = doc.new_page(width=612, height=792)
         if translated:
@@ -72,6 +91,8 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                 source_header="SOURCE HEADER",
                 target_header="统一页眉",
                 fixed_replacements=((1, "SOURCE FRONTMATTER", "固定首页文字"),),
+                verbatim_texts=((1, "AUTHOR SOURCE"),),
+                output_replacements=((1, "偏袒", "偏置"),),
             )
 
             self.assertTrue(receipt["verified"])
@@ -86,10 +107,14 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertNotIn("WRONG HEADER", first + second)
             self.assertIn("固定首页文字", first)
             self.assertNotIn("WRONG FRONTMATTER", first)
+            self.assertIn("AUTHOR SOURCE", first)
+            self.assertNotIn("translated author", first)
             self.assertIn("TABLE SOURCE", first)
             self.assertNotIn("translated table", first)
             self.assertIn("FIGURE SOURCE", first)
             self.assertNotIn("translated figure", first)
+            self.assertIn("偏置", first)
+            self.assertNotIn("偏袒", first)
             self.assertIn("参考文献", second)
             self.assertIn("[1] A. Author. Original title.", second)
             self.assertNotIn("中文标题", second)

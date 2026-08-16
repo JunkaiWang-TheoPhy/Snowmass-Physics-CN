@@ -119,3 +119,27 @@ This is a zero-paid `debug=false` parse. It runs BabelDOC's native parser,
 layout parser, paragraph finder, and formula/style pass, then serializes the
 official `Document` through `XMLConverter`. The protection stage consumes this
 fresh XML; a prior legacy-run IR is not acceptable production evidence.
+
+## Complete probe result
+
+The fresh 26-page probe passed on `arxiv:2203.07506` after the runner was
+corrected to merge the tracked global glossary with the existing per-paper
+glossary and all of its aliases. Per-paper decisions override global decisions
+deterministically, and both source hashes are recorded in preflight. This
+removed the observed `relics`, `偏袒`, `天文物體`, and untranslated
+`cosmic variance` failures without another model cleanup pass.
+
+The corrected run used 106 API calls and 119,081 tokens for RMB
+0.08420299776. Its final protected PDF has SHA-256
+`38b6c8a1be148b8a9201e2e55df2437db589c9e2ccce6ffb601245b155a3a5ec`.
+Semantic and structural audits passed with zero findings, and the complete
+visual review scored 95/100. `scripts/seal_snowmass_pdf2zh_probe.py` binds the
+translation, fresh IR, protection, semantic, structural, and visual receipt
+hashes; a missing or mismatched receipt fails closed.
+
+The legacy custom paid CLI route is now frozen by
+`translations/snowmass-production-engine.json`. Zero-paid legacy diagnostics
+remain available, but paid production must use the pinned pdf2zh-next adapter.
+The next production step is a new staged orchestrator over the live
+`publication_allowed: true` cohort; it must derive the current count (273 at
+the time of this probe) rather than hard-code it.

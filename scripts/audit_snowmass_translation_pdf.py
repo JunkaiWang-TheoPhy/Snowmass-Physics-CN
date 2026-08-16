@@ -24,7 +24,12 @@ RESIDUE_PATTERNS = (
     ("cid", re.compile(r"cid:", re.IGNORECASE)),
     ("replacement_character", re.compile("�")),
 )
-_LATIN_WORD_RE = re.compile(r"^[A-Za-z]{2,12}$")
+_LATIN_FRAGMENT_RE = re.compile(r"^[A-Za-z]{1,12}[.,]?$")
+_PUNCTUATION_FRAGMENT_RE = re.compile(r"^[.,;:]$")
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_MIXED_FRAGMENT_RE = re.compile(
+    r"(?:[\u3400-\u9fff]\s+[a-z]{2,}\b|\b[a-z]{2,}\s+[\u3400-\u9fff])"
+)
 
 
 def _sha256(path: Path) -> str:
@@ -70,6 +75,7 @@ def audit_pdf(
     residue: list[dict[str, Any]] = []
     low_text_pages: list[int] = []
     isolated_latin_edge_words: list[dict[str, Any]] = []
+    mixed_script_bottom_fragments: list[dict[str, Any]] = []
     ignored_text_regions = ignored_text_regions or {}
     try:
         document = fitz.open(pdf_path)
@@ -105,6 +111,28 @@ def audit_pdf(
                     failures.append(f"residue:{label}:page_{page_number}")
             bounds = page.rect
             blocks = page.get_text("blocks")
+            for block in blocks:
+                x0, y0, x1, y1, block_text = block[:5]
+                center_x = (x0 + x1) / 2
+                center_y = (y0 + y1) / 2
+                ignored = any(
+                    left <= center_x <= right and top <= center_y <= bottom
+                    for left, top, right, bottom in ignored_text_regions.get(page_number, [])
+                )
+                if (
+                    not ignored
+                    and y0 >= bounds.y1 * 0.82
+                    and _CJK_RE.search(str(block_text))
+                    and _MIXED_FRAGMENT_RE.search(str(block_text))
+                ):
+                    mixed_script_bottom_fragments.append(
+                        {
+                            "page": page_number,
+                            "bbox": [x0, y0, x1, y1],
+                            "text": re.sub(r"\s+", " ", str(block_text)).strip()[:160],
+                        }
+                    )
+                    failures.append(f"mixed_script_bottom_fragment:page_{page_number}")
             for block in page.get_text("dict").get("blocks", []):
                 for line in block.get("lines", []):
                     line_text = "".join(
@@ -112,9 +140,20 @@ def audit_pdf(
                     ).strip()
                     x0, y0, x1, y1 = line.get("bbox", (0, 0, 0, 0))
                     if (
-                        _LATIN_WORD_RE.fullmatch(line_text)
-                        and x0 >= bounds.x1 * 0.80
-                        and y0 >= bounds.y1 * 0.65
+                        (
+                            _LATIN_FRAGMENT_RE.fullmatch(line_text)
+                            and (
+                                y0 >= bounds.y1 * 0.82
+                                or (
+                                    x0 >= bounds.x1 * 0.80
+                                    and y0 >= bounds.y1 * 0.65
+                                )
+                            )
+                            or (
+                                _PUNCTUATION_FRAGMENT_RE.fullmatch(line_text)
+                                and y0 >= bounds.y1 * 0.82
+                            )
+                        )
                     ):
                         center_x = (x0 + x1) / 2
                         center_y = (y0 + y1) / 2
@@ -161,6 +200,7 @@ def audit_pdf(
         "low_text_pages": low_text_pages,
         "out_of_bounds": out_of_bounds,
         "isolated_latin_edge_words": isolated_latin_edge_words,
+        "mixed_script_bottom_fragments": mixed_script_bottom_fragments,
         "residue": residue,
         "ignored_text_region_count": sum(map(len, ignored_text_regions.values())),
         "contact_sheet_path": (

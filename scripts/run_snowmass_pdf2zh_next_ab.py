@@ -71,6 +71,7 @@ class RunConfig:
     pool_max_workers: int
     project_control_dir: Path | None = None
     usd_cny_rate: float = USD_CNY_RATE
+    supplemental_glossary_json: Path | None = None
 
 
 def utc_now() -> datetime:
@@ -266,13 +267,12 @@ def cost_rmb(
     return cost_usd * float(usd_cny_rate)
 
 
-def materialize_glossary_csv(source: Path, target: Path) -> str:
-    payload = json.loads(Path(source).read_text(encoding="utf-8"))
-    terms = payload.get("terms") if isinstance(payload, dict) else None
-    if not isinstance(terms, list):
-        raise ValueError(  # noqa: TRY004 - malformed file, not caller type misuse
-            "locked glossary must contain a terms list"
-        )
+def materialize_glossary_csv(
+    source: Path | tuple[Path, ...], target: Path
+) -> str:
+    sources = (source,) if isinstance(source, Path) else tuple(source)
+    if not sources:
+        raise ValueError("at least one locked glossary is required")
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(
         buffer,
@@ -280,21 +280,48 @@ def materialize_glossary_csv(source: Path, target: Path) -> str:
         lineterminator="\r\n",
     )
     writer.writeheader()
-    seen: set[str] = set()
-    for index, term in enumerate(terms):
-        if not isinstance(term, dict):
-            raise ValueError(  # noqa: TRY004 - malformed file data
-                f"glossary term {index} is not an object"
+    decisions: dict[str, str] = {}
+    spellings: dict[str, str] = {}
+    for glossary_index, glossary_source in enumerate(sources):
+        payload = json.loads(Path(glossary_source).read_text(encoding="utf-8"))
+        terms = payload.get("terms") if isinstance(payload, dict) else None
+        if not isinstance(terms, list):
+            raise ValueError(  # noqa: TRY004 - malformed file, not caller type misuse
+                "locked glossary must contain a terms list"
             )
-        source_term = str(term.get("source") or "").strip()
-        target_term = str(term.get("target") or "").strip()
-        if not source_term or not target_term:
-            raise ValueError(f"glossary term {index} is missing source or target")
-        normalized = " ".join(source_term.lower().split())
-        if normalized in seen:
-            raise ValueError(f"duplicate glossary source: {source_term}")
-        seen.add(normalized)
-        writer.writerow({"source": source_term, "target": target_term, "tgt_lng": "zh"})
+        for term_index, term in enumerate(terms):
+            if not isinstance(term, dict):
+                raise ValueError(  # noqa: TRY004 - malformed file data
+                    f"glossary term {glossary_index}:{term_index} is not an object"
+                )
+            source_term = str(term.get("source") or "").strip()
+            target_term = str(term.get("target") or "").strip()
+            if not source_term or not target_term:
+                raise ValueError(
+                    f"glossary term {glossary_index}:{term_index} is missing source or target"
+                )
+            aliases = term.get("aliases") or []
+            if not isinstance(aliases, list):
+                raise ValueError(
+                    f"glossary term {glossary_index}:{term_index} aliases must be a list"
+                )
+            for candidate in (source_term, *(str(alias).strip() for alias in aliases)):
+                if not candidate:
+                    continue
+                normalized = " ".join(candidate.casefold().split())
+                previous = decisions.get(normalized)
+                if previous == target_term:
+                    continue
+                decisions[normalized] = target_term
+                spellings[normalized] = candidate
+    for normalized, target_term in decisions.items():
+        writer.writerow(
+            {
+                "source": spellings[normalized],
+                "target": target_term,
+                "tgt_lng": "zh",
+            }
+        )
     atomic_bytes(target, buffer.getvalue().encode("utf-8"))
     return sha256_file(target)
 
@@ -1392,17 +1419,23 @@ def execute(
     request_cap = validate_request_cap(config.stage_max_api_calls)
     if not config.source_pdf.is_file() or config.source_pdf.suffix.lower() != ".pdf":
         raise FileNotFoundError(f"source PDF is unavailable: {config.source_pdf}")
-    if not config.glossary_json.is_file():
-        raise FileNotFoundError(
-            f"locked glossary is unavailable: {config.glossary_json}"
-        )
+    glossary_sources = tuple(
+        source
+        for source in (config.glossary_json, config.supplemental_glossary_json)
+        if source is not None
+    )
+    for glossary_source in glossary_sources:
+        if not glossary_source.is_file():
+            raise FileNotFoundError(
+                f"locked glossary is unavailable: {glossary_source}"
+            )
     record = require_publication_allowed(config.rights_manifest, config.record_id)
     source_identity = require_source_identity(
         config.source_manifest, config.record_id, config.source_pdf
     )
     config.output_root.mkdir(parents=True, exist_ok=True)
     glossary_csv = config.output_root / "locked-glossary.csv"
-    glossary_sha256 = materialize_glossary_csv(config.glossary_json, glossary_csv)
+    glossary_sha256 = materialize_glossary_csv(glossary_sources, glossary_csv)
     settings_spec = build_safe_settings_spec(
         output_dir=config.output_root / "rendered",
         glossary_csv=glossary_csv,
@@ -1444,6 +1477,7 @@ def execute(
         },
         "glossary": {
             "source_sha256": sha256_file(config.glossary_json),
+            "source_sha256s": [sha256_file(path) for path in glossary_sources],
             "csv_sha256": glossary_sha256,
         },
         "settings": settings_spec,
@@ -1572,6 +1606,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=ROOT / "translations/snowmass-global-glossary.json",
     )
+    parser.add_argument("--supplemental-glossary-json", type=Path)
     parser.add_argument(
         "--output-root",
         type=Path,
@@ -1609,6 +1644,7 @@ def main(argv: list[str] | None = None) -> int:
         qps=args.qps,
         pool_max_workers=args.pool_max_workers,
         project_control_dir=args.project_control_dir,
+        supplemental_glossary_json=args.supplemental_glossary_json,
     )
     receipt = execute(config, preflight_only=args.preflight_only)
     print(

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import importlib.util
 import json
 import math
@@ -246,6 +247,58 @@ class SafeConfigurationTests(unittest.TestCase):
             self.assertEqual(first, target.read_bytes())
             self.assertEqual(first_hash, second_hash)
             self.assertTrue(first.startswith(b"source,target,tgt_lng\r\n"))
+
+    def test_glossary_conversion_merges_per_paper_aliases(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            global_glossary = root / "global.json"
+            paper_glossary = root / "paper.json"
+            target = root / "locked.csv"
+            global_glossary.write_text(
+                json.dumps(
+                    {
+                        "terms": [
+                            {"source": "dark matter", "target": "暗物质"},
+                            {"source": "observatory", "target": "观测台"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            paper_glossary.write_text(
+                json.dumps(
+                    {
+                        "terms": [
+                            {
+                                "source": "light relic",
+                                "target": "轻遗迹粒子",
+                                "aliases": ["light relics", "light relic particles"],
+                            },
+                            {"source": "observatory", "target": "天文台"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            module.materialize_glossary_csv(
+                (global_glossary, paper_glossary), target
+            )
+
+            with target.open(encoding="utf-8") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(
+                [row["source"] for row in rows],
+                [
+                    "dark matter",
+                    "observatory",
+                    "light relic",
+                    "light relics",
+                    "light relic particles",
+                ],
+            )
+            self.assertEqual(rows[1]["target"], "天文台")
 
     def test_secret_redaction_is_recursive(self) -> None:
         module = load_module()

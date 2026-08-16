@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "language_pair": "en-zh-CN",
   "first_use_policy": "For entries with first_use=true, the first abstract/body occurrence must use Chinese (English, acronym when defined).",
   "terms": [
@@ -34,6 +34,11 @@
     {"source": "Dark Ages", "target": "黑暗时期", "first_use": true},
     {"source": "baryon", "target": "重子", "first_use": true},
     {"source": "observable", "target": "可观测量", "first_use": true, "contextual_targets": [{"source_regex": "\\bobservable\\s+(?:cluster\\s+)?(?:property|properties|quantity|quantities|effect|effects|scale|scales)\\b", "target": "可观测"}], "note": "Use 可观测量 as a noun; use 可观测 only as the modifier in explicitly matched property, quantity, effect, or scale phrases."},
+    {"source": "bias", "target": "偏置", "first_use": true, "note": "Use the standard cosmology/statistics term; never translate as 偏袒."},
+    {"source": "bias parameter", "target": "偏置参数"},
+    {"source": "light relic", "target": "轻遗迹粒子", "aliases": ["light relics", "light relic particle", "light relic particles"]},
+    {"source": "cosmic variance", "target": "宇宙方差"},
+    {"source": "astronomical object", "target": "天体", "aliases": ["astronomical objects"]},
     {"source": "cross section", "target": "截面", "first_use": true},
     {"source": "luminosity", "target": "光度", "first_use": true},
     {"source": "redshift", "target": "红移", "first_use": true},

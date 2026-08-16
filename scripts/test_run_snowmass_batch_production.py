@@ -189,6 +189,46 @@ class BatchSelectionTests(unittest.TestCase):
         config = module._parse_args([*base, "--stage-max-cost-rmb", "100"])
         self.assertEqual(config.stage_max_cost_rmb, 100.0)
 
+    def test_tracked_engine_lock_freezes_legacy_paid_cli_route(self) -> None:
+        module = load_module()
+        lock = self.root / "engine.json"
+        lock.write_text(
+            json.dumps(
+                {
+                    "paid_engine": "pdf2zh-next-2.9.0",
+                    "legacy_custom_paid_enabled": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        base = dict(
+            rights_manifest=self.manifest,
+            pdf_root=self.root / "pdf",
+            output_root=self.root / "output",
+            control_dir=self.root / "control",
+            stage="pilot5",
+            explicit_ids=(),
+            max_articles=None,
+            project_max_cost_rmb=1000.0,
+            stage_max_cost_rmb=10.0,
+            usd_cny_rate=7.2,
+            chunk_concurrency=1,
+            article_concurrency=1,
+            through_stage="packaged",
+            translation_version="test",
+            packaged_on="2026-08-16",
+            engine_lock=lock,
+        )
+
+        with self.assertRaisesRegex(
+            module.ProjectionGateRefusedError, "legacy custom paid"
+        ):
+            module._enforce_paid_engine_lock(module.BatchConfig(**base))
+
+        module._enforce_paid_engine_lock(
+            module.BatchConfig(**{**base, "preflight_only": True})
+        )
+
     def test_programmatic_preflight_rejects_zero_stage_request_cap(self) -> None:
         module = load_module()
         self.manifest.write_text("[]\n", encoding="utf-8")

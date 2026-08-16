@@ -86,6 +86,28 @@ def _coalesce(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
     return merged
 
 
+def _coalesce_adjacent_text(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
+    """Join neighboring explicit verbatim lines into one redaction/restore block."""
+
+    pending = sorted(rectangles, key=lambda rectangle: (rectangle.y0, rectangle.x0))
+    merged: list[fitz.Rect] = []
+    for rectangle in pending:
+        if not merged:
+            merged.append(rectangle)
+            continue
+        existing = merged[-1]
+        horizontal_overlap = max(
+            0.0, min(existing.x1, rectangle.x1) - max(existing.x0, rectangle.x0)
+        )
+        smaller_width = min(existing.width, rectangle.width)
+        vertical_gap = rectangle.y0 - existing.y1
+        if smaller_width and horizontal_overlap / smaller_width >= 0.5 and vertical_gap <= 5:
+            merged[-1] = existing | rectangle
+        else:
+            merged.append(rectangle)
+    return merged
+
+
 def _reference_clips(source: fitz.Document) -> dict[int, fitz.Rect]:
     clips: dict[int, fitz.Rect] = {}
     in_references = False
@@ -172,7 +194,11 @@ def _source_text_rect(page: fitz.Page, text: str) -> fitz.Rect | None:
 
 
 def _replace_fixed_text(
-    page: fitz.Page, source_rectangle: fitz.Rect, target: str
+    page: fitz.Page,
+    source_rectangle: fitz.Rect,
+    target: str,
+    *,
+    align: int = fitz.TEXT_ALIGN_CENTER,
 ) -> None:
     patch = fitz.Rect(source_rectangle)
     for block in page.get_text("blocks", sort=True):
@@ -208,7 +234,11 @@ def _replace_fixed_text(
             continue
         baseline = patch.y0 + (patch.height - line_height * len(lines)) / 2 + font_size
         for segments, widths in zip(segmented_lines, line_widths, strict=True):
-            x = patch.x0 + (patch.width - sum(widths)) / 2
+            x = (
+                patch.x0
+                if align == fitz.TEXT_ALIGN_LEFT
+                else patch.x0 + (patch.width - sum(widths)) / 2
+            )
             for segment, width in zip(segments, widths, strict=True):
                 page.insert_text(
                     (x, baseline),
@@ -228,12 +258,41 @@ def _replace_fixed_text(
             fontsize=font_size,
             fontname="china-s",
             color=(0, 0, 0),
-            align=fitz.TEXT_ALIGN_CENTER,
+            align=align,
             overlay=True,
         )
         if result >= 0:
             return
     raise RuntimeError(f"Fixed text does not fit source region: {target[:40]}")
+
+
+def _replace_output_text(page: fitz.Page, source_text: str, target_text: str) -> int:
+    matches = page.search_for(source_text)
+    if not matches:
+        raise RuntimeError(f"Translated output text was not found: {source_text}")
+    patches = [
+        fitz.Rect(match.x0 - 1, match.y0 - 1, match.x1 + 1, match.y1 + 1)
+        for match in matches
+    ]
+    for patch in patches:
+        page.add_redact_annot(patch, fill=(1, 1, 1))
+    page.apply_redactions()
+    for patch in patches:
+        for font_size in (patch.height * 0.78, 10.0, 9.0, 8.0, 7.0, 6.0):
+            result = page.insert_textbox(
+                patch,
+                target_text,
+                fontsize=min(font_size, patch.height * 0.78),
+                fontname="helv" if target_text.isascii() else "china-s",
+                color=(0, 0, 0),
+                align=fitz.TEXT_ALIGN_CENTER,
+                overlay=True,
+            )
+            if result >= 0:
+                break
+        else:
+            raise RuntimeError(f"Output replacement does not fit: {target_text}")
+    return len(patches)
 
 
 def protect_pdf(
@@ -246,6 +305,9 @@ def protect_pdf(
     source_header: str,
     target_header: str,
     fixed_replacements: tuple[tuple[int, str, str], ...] = (),
+    left_fixed_replacements: tuple[tuple[int, str, str], ...] = (),
+    verbatim_texts: tuple[tuple[int, str], ...] = (),
+    output_replacements: tuple[tuple[int, str, str], ...] = (),
 ) -> dict[str, object]:
     """Restore figure/table/reference regions and enforce one canonical header."""
 
@@ -279,6 +341,23 @@ def protect_pdf(
             continue
         rectangles_by_output.setdefault(output_index, []).append(clip)
         kind_counts["reference"] += 1
+    verbatim_text_count = 0
+    verbatim_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
+    for source_page_number, source_text in verbatim_texts:
+        output_index = page_map.get(source_page_number)
+        if output_index is None:
+            continue
+        rectangle = _source_text_rect(source[source_page_number - 1], source_text)
+        if rectangle is None:
+            raise RuntimeError(
+                f"Verbatim source text was not found on page {source_page_number}"
+            )
+        verbatim_rectangles_by_output.setdefault(output_index, []).append(rectangle)
+        verbatim_text_count += 1
+    for output_index, rectangles in verbatim_rectangles_by_output.items():
+        rectangles_by_output.setdefault(output_index, []).extend(
+            _coalesce_adjacent_text(rectangles)
+        )
 
     protected_regions: list[tuple[int, int, fitz.Rect]] = []
     for output_index, rectangles in rectangles_by_output.items():
@@ -322,6 +401,34 @@ def protect_pdf(
         _replace_fixed_text(translated[output_index], source_rectangle, target_text)
         fixed_replacement_count += 1
         fixed_checks.append((output_index, source_rectangle, target_text))
+    for source_page_number, source_text, target_text in left_fixed_replacements:
+        output_index = page_map.get(source_page_number)
+        if output_index is None:
+            continue
+        source_rectangle = _source_text_rect(
+            source[source_page_number - 1], source_text
+        )
+        if source_rectangle is None:
+            raise RuntimeError(
+                f"Left-aligned source text was not found on page {source_page_number}"
+            )
+        _replace_fixed_text(
+            translated[output_index],
+            source_rectangle,
+            target_text,
+            align=fitz.TEXT_ALIGN_LEFT,
+        )
+        fixed_replacement_count += 1
+        fixed_checks.append((output_index, source_rectangle, target_text))
+
+    output_replacement_count = 0
+    for source_page_number, source_text, target_text in output_replacements:
+        output_index = page_map.get(source_page_number)
+        if output_index is None:
+            continue
+        output_replacement_count += _replace_output_text(
+            translated[output_index], source_text, target_text
+        )
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     translated.save(output_pdf, garbage=4, deflate=True)
@@ -373,6 +480,8 @@ def protect_pdf(
         "reference_page_count": kind_counts["reference"],
         "canonical_header_count": header_count,
         "fixed_replacement_count": fixed_replacement_count,
+        "output_replacement_count": output_replacement_count,
+        "verbatim_text_count": verbatim_text_count,
         "protected_regions": [
             {
                 "output_page": output_index + 1,
@@ -403,6 +512,27 @@ def main(argv: list[str] | None = None) -> int:
         metavar=("SOURCE_PAGE", "SOURCE", "TARGET"),
         default=[],
     )
+    parser.add_argument(
+        "--fixed-replacement-left",
+        nargs=3,
+        action="append",
+        metavar=("SOURCE_PAGE", "SOURCE", "TARGET"),
+        default=[],
+    )
+    parser.add_argument(
+        "--verbatim-text",
+        nargs=2,
+        action="append",
+        metavar=("SOURCE_PAGE", "SOURCE"),
+        default=[],
+    )
+    parser.add_argument(
+        "--output-replacement",
+        nargs=3,
+        action="append",
+        metavar=("SOURCE_PAGE", "OUTPUT", "TARGET"),
+        default=[],
+    )
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args(argv)
     selected = tuple(
@@ -419,6 +549,17 @@ def main(argv: list[str] | None = None) -> int:
         fixed_replacements=tuple(
             (int(source_page), source, target)
             for source_page, source, target in args.fixed_replacement
+        ),
+        left_fixed_replacements=tuple(
+            (int(source_page), source, target)
+            for source_page, source, target in args.fixed_replacement_left
+        ),
+        verbatim_texts=tuple(
+            (int(source_page), source) for source_page, source in args.verbatim_text
+        ),
+        output_replacements=tuple(
+            (int(source_page), source, target)
+            for source_page, source, target in args.output_replacement
         ),
     )
     args.receipt.parent.mkdir(parents=True, exist_ok=True)

@@ -58,6 +58,7 @@ DEFAULT_RIGHTS_MANIFEST = ROOT / "site/data/papers.json"
 DEFAULT_PDF_ROOT = ROOT / "tmp/pdfs/snowmass2021"
 DEFAULT_OUTPUT_ROOT = ROOT / "output/snowmass2021/babeldoc_production"
 DEFAULT_CONTROL_DIR = ROOT / "output/snowmass2021/production_control"
+DEFAULT_ENGINE_LOCK = ROOT / "translations/snowmass-production-engine.json"
 DEFAULT_HISTORICAL_ROOTS = (ROOT / "output/snowmass2021/babeldoc_ab_v1",)
 DEEPSEEK_PROBE_MAX_COST_RMB = 100.0
 STAGE_LIMITS = {
@@ -321,6 +322,7 @@ class BatchConfig:
     local_model_manifest_sha256: str | None = None
     local_server_binary_sha256: str | None = None
     local_server_command_sha256: str | None = None
+    engine_lock: Path | None = None
 
 
 def _sha256(path: Path) -> str:
@@ -2063,8 +2065,28 @@ def _run_article(
 def run_batch(config: BatchConfig, *, client: Any = None) -> dict[str, Any]:
     """Run under an exclusive process-local model/provider identity context."""
 
+    _enforce_paid_engine_lock(config)
     with _EXECUTION_CONTEXT_LOCK:
         return _run_batch_with_execution_context(config, client=client)
+
+
+def _enforce_paid_engine_lock(config: BatchConfig) -> None:
+    """Prevent the retired custom paid engine from bypassing pdf2zh-next."""
+
+    if config.engine_lock is None or config.preflight_only or config.stage == "shadow":
+        return
+    if not config.engine_lock.is_file():
+        raise ProjectionGateRefusedError(
+            "production engine lock is missing",
+            reason_code="production_engine_lock_missing",
+        )
+    lock = json.loads(config.engine_lock.read_text(encoding="utf-8"))
+    if lock.get("legacy_custom_paid_enabled") is not True:
+        replacement = str(lock.get("paid_engine") or "pdf2zh-next")
+        raise ProjectionGateRefusedError(
+            f"legacy custom paid parse/refill/render is frozen; use {replacement}",
+            reason_code="legacy_paid_engine_frozen",
+        )
 
 
 def _run_batch_with_execution_context(
@@ -2714,6 +2736,7 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
     parser.add_argument("--local-model")
     parser.add_argument("--local-model-manifest", type=Path)
     parser.add_argument("--local-server-binary", type=Path)
+    parser.add_argument("--engine-lock", type=Path, default=DEFAULT_ENGINE_LOCK)
     args = parser.parse_args(argv)
     try:
         project = validate_budget(
@@ -2761,6 +2784,7 @@ def _parse_args(argv: list[str] | None) -> BatchConfig:
         local_model=args.local_model,
         local_model_manifest=args.local_model_manifest,
         local_server_binary=args.local_server_binary,
+        engine_lock=args.engine_lock,
     )
 
 

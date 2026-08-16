@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "paid_engine": "pdf2zh-next-2.9.0",
+  "babeldoc": "0.6.2",
+  "model": "deepseek-v4-flash",
+  "legacy_custom_paid_enabled": false,
+  "probe_seal_required": true,
+  "directive": "Do not re-enable the legacy custom paid parse/refill/render route. Paid production must use the pinned pdf2zh-next adapter and fresh semantic, structural, visual, protection, IR, and cost receipts."
+}
