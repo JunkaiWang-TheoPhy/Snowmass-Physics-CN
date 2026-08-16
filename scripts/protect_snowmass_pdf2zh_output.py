@@ -923,9 +923,11 @@ def _protect_pdf_open_documents(
             (str(family["source_text"]), str(family["canonical_target"]))
             for family in auto_header_receipts
         ]
-    elif source_header and target_header:
+    elif source_header is not None or target_header is not None:
+        if not source_header or not target_header:
+            raise RuntimeError("Explicit source and target headers are required")
         header_families = [(source_header, target_header)]
-    else:
+    elif len(selected_source_pages) > 2:
         raise RuntimeError("Explicit source and target headers are required")
 
     raster_rectangles_by_output: dict[int, list[fitz.Rect]] = {}

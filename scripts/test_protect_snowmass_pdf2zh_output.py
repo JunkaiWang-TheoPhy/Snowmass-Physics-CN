@@ -799,6 +799,31 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                     auto_header_min_recurrence=2,
                 )
 
+    def test_two_page_paper_allows_front_matter_protection_without_header_vote(
+        self,
+    ) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, translated, ir = self._make_auto_discovery_fixture(
+                root,
+                header_variants=["单页页眉"],
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=root / "two-page.pdf",
+                selected_source_pages=(1, 2),
+                ir_xml=ir,
+                auto_header=False,
+                auto_front_matter=True,
+            )
+
+            self.assertTrue(receipt["verified"])
+            self.assertEqual(receipt["canonical_header_count"], 0)
+
     def test_main_accepts_auto_flags_without_explicit_headers(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import main
 

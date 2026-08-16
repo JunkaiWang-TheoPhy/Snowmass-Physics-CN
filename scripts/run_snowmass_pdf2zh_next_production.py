@@ -11,7 +11,7 @@ import math
 import os
 import subprocess
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -177,13 +177,27 @@ def _source_pdf(args: PlanArgs, record_id: str, identity: Mapping[str, Any]) -> 
     return args.pdf_root / filename
 
 
-def _request_allocations(total: int, count: int) -> list[int]:
+def _request_allocations(
+    total: int, records: Sequence[Mapping[str, Any]]
+) -> list[int]:
+    count = len(records)
     if count <= 0:
         raise RuntimeError("stage cohort is empty")
     if total < count:
         raise ValueError("request cap must allow at least one request per paper")
-    quotient, remainder = divmod(total, count)
-    return [quotient + (1 if index < remainder else 0) for index in range(count)]
+    weights = [max(5, int(record.get("page_count") or 0)) for record in records]
+    remaining = total - count
+    weight_total = sum(weights)
+    exact_shares = [remaining * weight / weight_total for weight in weights]
+    allocations = [1 + math.floor(share) for share in exact_shares]
+    remainder = total - sum(allocations)
+    order = sorted(
+        range(count),
+        key=lambda index: (-(exact_shares[index] % 1), index),
+    )
+    for index in order[:remainder]:
+        allocations[index] += 1
+    return allocations
 
 
 @contextmanager
@@ -430,7 +444,7 @@ def plan_stage(
     ]
     if args.stage == "deepseek_probe" and selected_ids != [FORMAL_PROBE_RECORD_ID]:
         raise RuntimeError(f"formal deepseek probe must be {FORMAL_PROBE_RECORD_ID}")
-    allocations = _request_allocations(stage_request_cap, len(selected))
+    allocations = _request_allocations(stage_request_cap, selected)
     source_by_id = _source_records(args.source_manifest)
     preflight_runner = preflight_runner or _default_preflight_runner
     papers: list[dict[str, Any]] = []
@@ -843,13 +857,13 @@ def status_stage(plan_path: Path) -> dict[str, Any]:
             outcomes.append("quarantined")
             continue
         state, _finish = _finish_state(paper)
-        if (
+        if (article / "qc" / "paper-seal.json").is_file():
+            outcomes.append("sealed")
+        elif (
             state == "valid"
             and (article / "qc" / "visual-review-request.json").is_file()
         ):
             outcomes.append("awaiting_visual_review")
-        elif (article / "qc" / "paper-seal.json").is_file():
-            outcomes.append("sealed")
         else:
             outcomes.append(state)
     return {

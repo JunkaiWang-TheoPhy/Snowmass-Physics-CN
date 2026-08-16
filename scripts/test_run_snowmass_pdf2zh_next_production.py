@@ -206,6 +206,24 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         self.assertEqual(plan["record_ids"], ["arxiv:2203.06843"])
         self.assertEqual(plan["papers"][0]["record_id"], "arxiv:2203.06843")
 
+    def test_request_allocations_follow_page_weight_and_preserve_total(self) -> None:
+        module = load_module()
+        records = [
+            {"page_count": 2},
+            {"page_count": 7},
+            {"page_count": 3},
+            {"page_count": 31},
+            {"page_count": 80},
+        ]
+
+        allocations = module._request_allocations(1280, records)
+
+        self.assertEqual(sum(allocations), 1280)
+        self.assertTrue(all(value > 0 for value in allocations))
+        self.assertGreaterEqual(allocations[-1], 790)
+        self.assertGreaterEqual(allocations[-2], 300)
+        self.assertLessEqual(max(allocations[:3]), 75)
+
     def test_plan_assigns_disjoint_stage_cohorts_and_probe_is_pinned(self) -> None:
         module = load_module()
         probe = self._seed_record("arxiv:2203.06843", frontiers=["AA"], page_count=10)
@@ -450,6 +468,41 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             (qc_dir / "launch-quarantine.json").read_text(encoding="utf-8")
         )
         self.assertTrue(quarantine["active"])
+
+    def test_status_reports_a_sealed_paper_before_its_retained_review_request(
+        self,
+    ) -> None:
+        module = load_module()
+        paper = self._seed_record("arxiv:2203.06843")
+        self._write_manifests([paper])
+        plan = module.plan_stage(
+            self._plan_args(module, "deepseek_probe", stage_max_api_calls=3),
+            preflight_runner=lambda _config: {
+                "projection": {"request_cap": 2, "max_cost_rmb": 1.25}
+            },
+        )
+        planned = plan["papers"][0]
+        article = Path(planned["article_dir"])
+        run = article / "run"
+        qc = article / "qc"
+        run.mkdir(parents=True, exist_ok=True)
+        qc.mkdir(parents=True, exist_ok=True)
+        (run / "finish.json").write_text(
+            json.dumps(
+                {
+                    "status": "translated_pending_qc",
+                    "source": {"sha256": planned["source_sha256"]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (qc / "visual-review-request.json").write_text("{}", encoding="utf-8")
+        (qc / "paper-seal.json").write_text("{}", encoding="utf-8")
+
+        status = module.status_stage(Path(plan["plan_path"]))
+
+        self.assertEqual(status["sealed_count"], 1)
+        self.assertEqual(status["awaiting_visual_review"], 0)
 
     def test_launch_blocks_same_fingerprint_quarantine(self) -> None:
         module = load_module()
