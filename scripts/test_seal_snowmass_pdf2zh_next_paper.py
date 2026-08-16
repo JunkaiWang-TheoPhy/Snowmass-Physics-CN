@@ -135,6 +135,7 @@ class SealPdf2zhNextPaperTests(unittest.TestCase):
                 "figure_region_count": 0,
                 "table_region_count": 0,
                 "reference_page_count": 0,
+                "canonical_reference_heading_count": 0,
                 "canonical_header_count": 5,
                 "verbatim_text_count": 0,
             },

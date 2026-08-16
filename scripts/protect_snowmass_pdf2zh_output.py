@@ -120,15 +120,10 @@ def _coalesce_adjacent_text(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
     return merged
 
 
-def _reference_clips(source: fitz.Document) -> dict[int, fitz.Rect]:
-    clips: dict[int, fitz.Rect] = {}
+def _reference_clips(source: fitz.Document) -> dict[int, list[fitz.Rect]]:
+    clips: dict[int, list[fitz.Rect]] = {}
     in_references = False
     for page_index, page in enumerate(source):
-        blocks = [
-            block
-            for block in page.get_text("blocks", sort=True)
-            if str(block[4]).strip()
-        ]
         heading_rects = [
             *page.search_for("References"),
             *page.search_for("Bibliography"),
@@ -142,21 +137,51 @@ def _reference_clips(source: fitz.Document) -> dict[int, fitz.Rect]:
             in_references = True
         if not in_references:
             continue
-        numbered = [block for block in blocks if re.match(r"\s*\[\d+\]", str(block[4]))]
-        if not numbered:
+        page_clips: list[fitz.Rect] = []
+        for block in page.get_text("dict", sort=True).get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            lines = []
+            for line in block.get("lines", []):
+                text = "".join(
+                    str(span.get("text", "")) for span in line.get("spans", [])
+                ).strip()
+                if text:
+                    lines.append((fitz.Rect(*line["bbox"]), text))
+            starts = [
+                index
+                for index, (_, text) in enumerate(lines)
+                if re.match(r"^\[\d+\]\s+\S", text)
+            ]
+            if not starts:
+                continue
+            first_reference_line = min(starts)
+            prefix_text = " ".join(
+                text for _, text in lines[:first_reference_line]
+            ).casefold()
+            preserve_prefix = bool(
+                re.search(r"(?:https?://|doi\s*:|doi\.org|arxiv\s*:)", prefix_text)
+            )
+            reference_lines = lines if preserve_prefix else lines[first_reference_line:]
+            page_clips.append(
+                fitz.Rect(
+                    max(0.0, min(rectangle.x0 for rectangle, _ in reference_lines) - 2.0),
+                    max(0.0, reference_lines[0][0].y0),
+                    min(
+                        page.rect.width,
+                        max(rectangle.x1 for rectangle, _ in reference_lines) + 2.0,
+                    ),
+                    min(
+                        page.rect.height,
+                        max(rectangle.y1 for rectangle, _ in reference_lines) + 3.0,
+                    ),
+                )
+            )
+        if not page_clips:
             if heading is None:
                 in_references = False
             continue
-        body_blocks = [
-            block
-            for block in blocks
-            if block[1] < page.rect.height - 35
-            and (heading is None or block[1] > heading.y1)
-            and not re.fullmatch(r"\s*\d+\s*", str(block[4]))
-        ]
-        y0 = max(0.0, min(block[1] for block in numbered) - 7.0)
-        y1 = min(page.rect.height, max(block[3] for block in body_blocks) + 3.0)
-        clips[page_index + 1] = fitz.Rect(65.0, y0, page.rect.width - 65.0, y1)
+        clips[page_index + 1] = page_clips
     return clips
 
 
@@ -175,20 +200,45 @@ def _insert_header(page: fitz.Page, rectangle: fitz.Rect, text: str) -> None:
     )
     page.add_redact_annot(patch, fill=(1, 1, 1))
     page.apply_redactions()
-    maximum = max(8.0, min(12.0, rectangle.height * 0.9))
-    for font_size in (maximum, 10.0, 9.0, 8.0, 7.0, 6.0):
-        result = page.insert_textbox(
-            patch,
-            text,
-            fontsize=min(maximum, font_size),
-            fontname="china-s",
-            color=(0, 0, 0),
-            align=fitz.TEXT_ALIGN_CENTER,
-            overlay=True,
-        )
-        if result >= 0:
-            return
+    segments = [
+        segment
+        for segment in re.findall(r"[\x20-\x7e]+|[^\x20-\x7e]+", text)
+        if segment
+    ]
+    maximum = max(4.0, min(12.0, rectangle.height * 0.65))
+    candidate_sizes = [maximum, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0]
+    for font_size in candidate_sizes:
+        if font_size > maximum:
+            continue
+        widths = [
+            fitz.Font(fontname="helv" if segment.isascii() else "china-s").text_length(
+                segment, fontsize=font_size
+            )
+            for segment in segments
+        ]
+        line_height = font_size * 1.25
+        if sum(widths) > patch.width or line_height > patch.height:
+            continue
+        baseline = patch.y0 + (patch.height - line_height) / 2 + font_size
+        x = patch.x0 + (patch.width - sum(widths)) / 2
+        for segment, width in zip(segments, widths, strict=True):
+            page.insert_text(
+                (x, baseline),
+                segment,
+                fontsize=font_size,
+                fontname="helv" if segment.isascii() else "china-s",
+                color=(0, 0, 0),
+                overlay=True,
+            )
+            x += width
+        return
     raise RuntimeError("Canonical running header does not fit its source rectangle")
+
+
+def _insert_reference_heading(page: fitz.Page, rectangle: fitz.Rect) -> None:
+    """Restore the canonical Chinese heading after reference-body redaction."""
+
+    _insert_header(page, rectangle, "参考文献")
 
 
 def _insert_rasterized_source_clip(
@@ -845,7 +895,7 @@ def _protect_pdf_open_documents(
         raise RuntimeError("Explicit source and target headers are required")
 
     raster_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
-    vector_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
+    reference_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
     kind_counts = {"figure": 0, "table": 0, "reference": 0}
     for kind, regions in (("figure", figures), ("table", tables)):
         for source_page_number, box in regions:
@@ -856,11 +906,11 @@ def _protect_pdf_open_documents(
                 _top_rect(source[source_page_number - 1], box)
             )
             kind_counts[kind] += 1
-    for source_page_number, clip in reference_clips.items():
+    for source_page_number, clips in reference_clips.items():
         output_index = page_map.get(source_page_number)
         if output_index is None:
             continue
-        vector_rectangles_by_output.setdefault(output_index, []).append(clip)
+        reference_rectangles_by_output.setdefault(output_index, []).extend(clips)
         kind_counts["reference"] += 1
     verbatim_text_count = 0
     verbatim_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
@@ -902,7 +952,7 @@ def _protect_pdf_open_documents(
 
     protected_regions: list[tuple[int, int, fitz.Rect, str, str | None]] = []
     all_output_indices = sorted(
-        set(raster_rectangles_by_output) | set(vector_rectangles_by_output)
+        set(raster_rectangles_by_output) | set(reference_rectangles_by_output)
     )
     for output_index in all_output_indices:
         source_page_number = selected_source_pages[output_index]
@@ -910,18 +960,26 @@ def _protect_pdf_open_documents(
         raster_rectangles = _coalesce(
             raster_rectangles_by_output.get(output_index, [])
         )
-        vector_rectangles = _coalesce(
-            vector_rectangles_by_output.get(output_index, [])
+        reference_rectangles = _coalesce(
+            reference_rectangles_by_output.get(output_index, [])
         )
         for rectangle in raster_rectangles:
             output_page.add_redact_annot(
                 _expanded_redaction_rectangle(output_page, rectangle),
                 fill=(1, 1, 1),
             )
-        for rectangle in vector_rectangles:
-            output_page.add_redact_annot(rectangle, fill=(1, 1, 1))
+        for rectangle in reference_rectangles:
+            output_page.add_redact_annot(
+                fitz.Rect(
+                    rectangle.x0 - 1.0,
+                    rectangle.y0 - 0.5,
+                    rectangle.x1 + 1.0,
+                    rectangle.y1 + 1.0,
+                ),
+                fill=(1, 1, 1),
+            )
         output_page.apply_redactions()
-        for rectangle in raster_rectangles:
+        for rectangle in [*raster_rectangles, *reference_rectangles]:
             pixel_hash = _insert_rasterized_source_clip(
                 output_page,
                 source[source_page_number - 1],
@@ -936,24 +994,24 @@ def _protect_pdf_open_documents(
                     pixel_hash,
                 )
             )
-        for rectangle in vector_rectangles:
-            output_page.show_pdf_page(
-                rectangle,
-                source,
-                source_page_number - 1,
-                clip=rectangle,
-                keep_proportion=False,
-                overlay=True,
-            )
-            protected_regions.append(
-                (
-                    output_index,
-                    source_page_number,
-                    rectangle,
-                    "vector_source_clip",
-                    None,
-                )
-            )
+
+    reference_heading_count = 0
+    for source_page_number in reference_clips:
+        output_index = page_map.get(source_page_number)
+        if output_index is None:
+            continue
+        source_page = source[source_page_number - 1]
+        headings = [
+            *source_page.search_for("References"),
+            *source_page.search_for("Bibliography"),
+        ]
+        if not headings:
+            continue
+        _insert_reference_heading(
+            translated[output_index],
+            min(headings, key=lambda rectangle: rectangle.y0),
+        )
+        reference_heading_count += 1
 
     header_count = 0
     for output_index, source_page_number in enumerate(selected_source_pages):
@@ -1073,6 +1131,7 @@ def _protect_pdf_open_documents(
         "figure_region_count": kind_counts["figure"],
         "table_region_count": kind_counts["table"],
         "reference_page_count": kind_counts["reference"],
+        "canonical_reference_heading_count": reference_heading_count,
         "canonical_header_count": header_count,
         "fixed_replacement_count": fixed_replacement_count,
         "output_replacement_count": output_replacement_count,

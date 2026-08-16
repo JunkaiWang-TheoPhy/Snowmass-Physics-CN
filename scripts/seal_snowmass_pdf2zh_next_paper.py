@@ -479,6 +479,7 @@ def _seal_paper(
             "figure_region_count",
             "table_region_count",
             "reference_page_count",
+            "canonical_reference_heading_count",
             "canonical_header_count",
             "verbatim_text_count",
         ),

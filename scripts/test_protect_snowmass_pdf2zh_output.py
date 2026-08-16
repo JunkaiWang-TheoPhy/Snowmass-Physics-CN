@@ -56,6 +56,136 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertEqual(len(merged), 2)
         self.assertEqual(merged[0], fitz.Rect(150, 210, 460, 238))
 
+    def test_inserts_canonical_chinese_header_in_short_source_band(self) -> None:
+        """Catch regressions for the 59x7 pt author header in arXiv:2203.06843."""
+
+        from scripts.protect_snowmass_pdf2zh_output import _insert_header
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            source_rectangle = fitz.Rect(
+                499.0989990234375,
+                61.267860412597656,
+                558.2018432617188,
+                68.24166107177734,
+            )
+            page.insert_text(
+                (source_rectangle.x0, source_rectangle.y1 - 1),
+                "WRONG HEADER",
+                fontsize=6,
+            )
+
+            _insert_header(page, source_rectangle, "Sim 和 Kissel 等人。")
+
+            header_band = fitz.Rect(450, 45, 590, 82)
+            rendered = page.get_text(clip=header_band, sort=True)
+            matches = page.search_for("Sim 和 Kissel 等人。")
+        finally:
+            document.close()
+
+        self.assertIn("Sim 和 Kissel 等人。", rendered)
+        self.assertNotIn("WRONG HEADER", rendered)
+        self.assertGreaterEqual(len(matches), 1)
+        rendered_rectangle = fitz.Rect(matches[0])
+        for match in matches[1:]:
+            rendered_rectangle |= match
+        safe_patch = fitz.Rect(
+            source_rectangle.x0 - 2,
+            source_rectangle.y0 - 1,
+            source_rectangle.x1 + 2,
+            source_rectangle.y1 + 0.5,
+        )
+        self.assertTrue(safe_patch.contains(rendered_rectangle))
+
+    def test_reinserts_canonical_reference_heading_after_body_redaction(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _insert_reference_heading
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            heading_rectangle = fitz.Rect(53.8, 297.86, 123.21, 308.77)
+            page.insert_text((54, 309), "damaged heading", fontsize=10)
+
+            _insert_reference_heading(page, heading_rectangle)
+
+            rendered = page.get_text(clip=fitz.Rect(45, 288, 150, 320), sort=True)
+        finally:
+            document.close()
+
+        self.assertIn("参考文献", rendered)
+        self.assertNotIn("damaged heading", rendered)
+
+    def test_reference_clip_uses_real_text_width_instead_of_fixed_margins(self) -> None:
+        """Catch truncation when a paper's references extend left of 65 pt."""
+
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            page.insert_text((52, 110), "References", fontsize=12)
+            page.insert_text(
+                (53, 140),
+                "[1] A. Author. Complete reference entry.",
+                fontsize=10,
+            )
+
+            clips = _reference_clips(document)
+        finally:
+            document.close()
+
+        self.assertIn(1, clips)
+        self.assertEqual(len(clips[1]), 1)
+        self.assertLessEqual(clips[1][0].x0, 52)
+        self.assertGreaterEqual(clips[1][0].x1, 229)
+
+    def test_reference_clips_follow_two_column_continuation(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            page.insert_text((52, 300), "References", fontsize=12)
+            page.insert_text((53, 325), "[1] A. Author. Left-column entry.", fontsize=9)
+            page.insert_text(
+                (320, 90),
+                "Translated body before references\n[2] B. Author. Right-column entry.",
+                fontsize=9,
+            )
+
+            clips = _reference_clips(document)
+        finally:
+            document.close()
+
+        self.assertEqual(len(clips[1]), 2)
+        left, right = sorted(clips[1], key=lambda rectangle: rectangle.x0)
+        self.assertLess(left.x0, 60)
+        self.assertGreater(right.x0, 300)
+        self.assertGreaterEqual(right.y0, 92.6)
+
+    def test_reference_clip_keeps_adjacent_doi_tail_in_same_source_block(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            page.insert_text((52, 300), "References", fontsize=12)
+            page.insert_text((53, 325), "[1] A. Author. Left-column entry.", fontsize=9)
+            page.insert_text(
+                (320, 90),
+                "In Conference. https://doi.org/10.1000/example\n"
+                "[2] B. Author. Right-column entry.",
+                fontsize=9,
+            )
+
+            clips = _reference_clips(document)
+        finally:
+            document.close()
+
+        right = max(clips[1], key=lambda rectangle: rectangle.x0)
+        self.assertLessEqual(right.y0, 80.4)
+
     def _make_auto_discovery_fixture(
         self,
         root: Path,
@@ -371,8 +501,10 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         if translated:
             second.insert_text((150, 60), "WRONG HEADER")
             second.insert_text((72, 90), "参考文献", fontname="china-s")
+            second.insert_text((72, 108), "已翻译正文", fontname="china-s")
         else:
             second.insert_text((150, 60), "SOURCE HEADER\nReferences")
+            second.insert_text((72, 108), "HIDDEN SOURCE PROSE")
         second.insert_text(
             (72, 125),
             "[1] 中文标题。" if translated else "[1] A. Author. Original title.",
@@ -450,8 +582,14 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertIn("偏置", first)
             self.assertNotIn("偏袒", first)
             self.assertIn("参考文献", second)
-            self.assertIn("[1] A. Author. Original title.", second)
             self.assertNotIn("中文标题", second)
+            self.assertEqual(receipt["reference_page_count"], 1)
+            reference_regions = [
+                region
+                for region in raster_regions
+                if region["source_page"] == 2 and region["bbox"][1] > 100
+            ]
+            self.assertEqual(len(reference_regions), 1)
             extracted = subprocess.run(
                 ["pdftotext", "-layout", str(output), "-"],
                 capture_output=True,
@@ -460,6 +598,8 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             ).stdout
             self.assertNotIn("SOURCE HEADER", extracted)
             self.assertNotIn("SOURCE FRONTMATTER", extracted)
+            self.assertNotIn("HIDDEN SOURCE PROSE", extracted)
+            self.assertIn("已翻译正文", extracted)
 
     def test_auto_mode_discovers_header_restores_front_matter_and_records_receipt(
         self,
