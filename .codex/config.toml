@@ -1,0 +1,4 @@
+# Shared-root fail-closed policy. App updates may rewrite ~/.codex/config.toml,
+# but this trusted project layer remains authoritative for Projects-7 tasks.
+[features]
+memories = false
