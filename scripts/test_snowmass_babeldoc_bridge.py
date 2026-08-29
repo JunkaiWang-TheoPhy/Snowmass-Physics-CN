@@ -1376,6 +1376,36 @@ class BabelDocWorkspaceTests(unittest.TestCase):
                 regions=[bridge.TableRegion(1, 0, (20, 80, 280, 130))],
             )
 
+    def test_restore_reference_regions_allows_source_image_padding_inside_region(self) -> None:
+        bridge = load_bridge()
+        import pymupdf
+
+        source = self.root / "reference-padding-source.pdf"
+        mono = self.root / "reference-padding-mono.pdf"
+        dual = self.root / "reference-padding-dual.pdf"
+        document = pymupdf.open()
+        page = document.new_page(width=300, height=400)
+        page.insert_text((75, 180), "[6] PADDED SOURCE REFERENCE", fontsize=12)
+        document.save(source)
+        document.close()
+        for path, width in ((mono, 300), (dual, 600)):
+            document = pymupdf.open()
+            page = document.new_page(width=width, height=400)
+            page.insert_text((75, 180), "[6] TRANSLATED REFERENCE", fontsize=12)
+            if width == 600:
+                page.insert_text((375, 180), "[6] TRANSLATED REFERENCE", fontsize=12)
+            document.save(path)
+            document.close()
+
+        # The controlled region deliberately includes more horizontal padding
+        # than the source text/image bbox, matching real BabelDOC paragraph IR.
+        bridge.restore_verbatim_reference_regions(
+            source_pdf=source,
+            mono_pdf=mono,
+            dual_pdf=dual,
+            regions=[bridge.TableRegion(1, 0, (60, 190, 290, 245))],
+        )
+
     def test_figure_region_self_check_rejects_rendered_text_drift(self) -> None:
         bridge = load_bridge()
         import pymupdf

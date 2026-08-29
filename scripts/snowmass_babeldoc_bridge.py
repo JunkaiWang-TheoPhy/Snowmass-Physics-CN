@@ -1156,13 +1156,16 @@ def restore_verbatim_reference_regions(
             image_box = pymupdf.Rect(image_info["bbox"])
             if (
                 image_info.get("digest") == digest
-                and max(
-                    abs(image_box.x0 - clip.x0),
-                    abs(image_box.y0 - clip.y0),
-                    abs(image_box.x1 - clip.x1),
-                    abs(image_box.y1 - clip.y1),
-                )
-                <= 1.5
+                # The digest is the authoritative pixel check.  The source
+                # paragraph box intentionally has horizontal/vertical safety
+                # padding, so the extracted image bbox need not coincide with
+                # every edge of that box.  Require containment instead of an
+                # overly strict edge-distance match.
+                and image_box.intersects(clip)
+                and image_box.x0 >= clip.x0 - 0.5
+                and image_box.y0 >= clip.y0 - 0.5
+                and image_box.x1 <= clip.x1 + 0.5
+                and image_box.y1 <= clip.y1 + 0.5
             ):
                 return True
         return False
