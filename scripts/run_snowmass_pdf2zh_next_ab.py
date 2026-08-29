@@ -33,6 +33,7 @@ from typing import Any, Protocol, Self
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PDF2ZH_NEXT_VERSION = "2.9.0"
 EXPECTED_BABELDOC_VERSION = "0.6.4"
+UPSTREAM_REQUEST_TIMEOUT_SECONDS = 60
 MODEL = "deepseek-v4-flash"
 PROJECT_MAXIMUM_RMB = 1000.0
 STAGE_MAXIMUM_RMB = 100.0
@@ -1545,6 +1546,12 @@ def httpx_disable_environment_proxy():
     class EnvironmentIndependentClient(original_client):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             kwargs["trust_env"] = False
+            # pdf2zh-next constructs its OpenAI client with a 600-second
+            # timeout. Clamp that library default so a stalled upstream call
+            # cannot hold a paper worker for ten minutes before retrying.
+            timeout = kwargs.get("timeout")
+            if timeout is None or timeout > UPSTREAM_REQUEST_TIMEOUT_SECONDS:
+                kwargs["timeout"] = UPSTREAM_REQUEST_TIMEOUT_SECONDS
             super().__init__(*args, **kwargs)
 
     httpx.Client = EnvironmentIndependentClient
