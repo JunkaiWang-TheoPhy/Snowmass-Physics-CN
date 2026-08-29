@@ -23,6 +23,7 @@ STAGE_SEQUENCE = (
     "revision_ready",
     "translated",
     "rendered",
+    "protected",
     "semantic_qc",
     "structural_qc",
     "visual_qc",
