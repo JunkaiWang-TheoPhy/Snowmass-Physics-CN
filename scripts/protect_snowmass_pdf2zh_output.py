@@ -2307,6 +2307,8 @@ def _protect_pdf_open_documents(
         }
 
     citation_conservation: list[dict[str, object]] = []
+    document_source_line_groups: list[list[str]] = []
+    document_output_line_groups: list[list[str]] = []
     for output_index, source_page_number in enumerate(selected_source_pages):
         exclusions = tuple(
             [
@@ -2329,6 +2331,8 @@ def _protect_pdf_open_documents(
         output_markers = [
             marker for group in output_line_groups for marker in group
         ]
+        document_source_line_groups.extend(source_line_groups)
+        document_output_line_groups.extend(output_line_groups)
         order_preserved = source_markers == output_markers
         within_source_line_permutation = (
             not order_preserved
@@ -2358,12 +2362,13 @@ def _protect_pdf_open_documents(
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     translated.save(output_pdf, garbage=4, deflate=True)
 
-    failures: list[str] = []
-    failures.extend(
-        f"citation_sequence_mismatch:output_page_{item['output_page']}"
-        for item in citation_conservation
-        if item["matched"] is not True
+    document_citations_match = _citation_permutation_within_source_lines(
+        document_source_line_groups,
+        document_output_line_groups,
     )
+    failures: list[str] = []
+    if not document_citations_match:
+        failures.append("citation_sequence_mismatch:document")
     toc_topology: list[dict[str, object]] = []
     with fitz.open(output_pdf) as protected:
         for output_index, source_page_number in enumerate(selected_source_pages):
@@ -2476,6 +2481,21 @@ def _protect_pdf_open_documents(
         "normalized_citation_glyph_count": len(citation_glyph_receipts),
         "normalized_citation_glyphs": citation_glyph_receipts,
         "citation_conservation": citation_conservation,
+        "document_citation_conservation": {
+            "source_line_groups": document_source_line_groups,
+            "output_line_groups": document_output_line_groups,
+            "source": [
+                marker
+                for group in document_source_line_groups
+                for marker in group
+            ],
+            "output": [
+                marker
+                for group in document_output_line_groups
+                for marker in group
+            ],
+            "matched": document_citations_match,
+        },
         "repaired_toc_group_count": repaired_toc_group_count,
         "repaired_toc_rows": repaired_toc_rows,
         "toc_topology": toc_topology,

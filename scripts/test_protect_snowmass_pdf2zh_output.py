@@ -508,7 +508,49 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertFalse(receipt["verified"])
             self.assertEqual(receipt["citation_conservation"][0]["source"], ["[1,2]"])
             self.assertEqual(receipt["citation_conservation"][0]["output"], ["[1,3]"])
-            self.assertIn("citation_sequence_mismatch:output_page_1", receipt["failures"])
+            self.assertIn("citation_sequence_mismatch:document", receipt["failures"])
+
+    def test_allows_citations_to_reflow_across_page_breaks_without_order_drift(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+            for path, pages in (
+                (
+                    source,
+                    [["First claim [1]. Second claim [2]."], ["No citation here."]],
+                ),
+                (
+                    translated,
+                    [["First claim [1]."], ["Second claim [2]."]],
+                ),
+            ):
+                document = fitz.open()
+                for lines in pages:
+                    page = document.new_page()
+                    for y, text in enumerate(lines, start=500):
+                        page.insert_text((72, y), text)
+                document.save(path)
+                document.close()
+            ir.write_text(
+                '<document totalPages="2"><page pageNumber="0"/><page pageNumber="1"/></document>',
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1, 2),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertTrue(receipt["document_citation_conservation"]["matched"])
 
     def test_allows_citation_permutation_within_one_source_line(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf
