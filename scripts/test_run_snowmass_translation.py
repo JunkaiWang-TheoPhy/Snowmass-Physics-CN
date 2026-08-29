@@ -1411,6 +1411,15 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(normalized, "每个模块使用3乘3晶体矩阵。")
         self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
 
+    def test_numeric_dimension_normalization_repairs_spurious_negative_after_multiplication_sign(self) -> None:
+        source = "Each module uses a 3-by-3 crystals matrix."
+        candidate = "每个子模块由一块3×-3晶体矩阵构成。"
+
+        normalized = RUNNER.normalize_hyphenated_numeric_ranges(source, candidate)
+
+        self.assertEqual(normalized, "每个子模块由一块3×3晶体矩阵构成。")
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
     def test_tier_label_normalization_repairs_spurious_negative_level(self) -> None:
         source = "The ATLAS and CMS Tier-1 sites provide the data."
         candidate = "ATLAS和CMS以及-1站点提供数据。"

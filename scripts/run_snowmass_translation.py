@@ -840,7 +840,7 @@ def normalize_hyphenated_numeric_ranges(source: str, translated: str) -> str:
         right = source_match.group("right")
         translated_range = re.compile(
             rf"(?<![\d.+-])(?P<left>{re.escape(left)})"
-            rf"(?P<spacing_before>\s*)(?P<connector>[到至乘])"
+            rf"(?P<spacing_before>\s*)(?P<connector>[到至乘×xX])"
             rf"(?P<spacing_after>\s*)[-−]\s*"
             rf"(?P<right>{re.escape(right)})(?![\d.])"
         )
