@@ -32,7 +32,7 @@ from typing import Any, Protocol, Self
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PDF2ZH_NEXT_VERSION = "2.9.0"
-EXPECTED_BABELDOC_VERSION = "0.6.2"
+EXPECTED_BABELDOC_VERSION = "0.6.4"
 MODEL = "deepseek-v4-flash"
 PROJECT_MAXIMUM_RMB = 1000.0
 STAGE_MAXIMUM_RMB = 100.0

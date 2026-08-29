@@ -134,6 +134,28 @@ def _covered_area(
     return area
 
 
+def _has_visible_page_content(page: fitz.Page) -> bool:
+    """Distinguish an image/vector-only page from a genuinely blank page.
+
+    Some source papers render References or scanned figures without an
+    extractable text layer.  Those pages still require visual review, but
+    must not be classified as blank solely because text extraction returns
+    zero characters.
+    """
+
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(0.25, 0.25), alpha=False)
+    samples = pixmap.samples
+    if not samples:
+        return False
+    channels = pixmap.n
+    non_white = 0
+    pixels = len(samples) // channels
+    for offset in range(0, len(samples), channels):
+        if min(samples[offset : offset + min(channels, 3)]) < 245:
+            non_white += 1
+    return pixels > 0 and non_white / pixels >= 0.002
+
+
 def audit_pdf(
     pdf_path: str | Path,
     *,
@@ -194,6 +216,7 @@ def audit_pdf(
             if (
                 extractable < minimum_extractable_characters
                 and protected_coverage < 0.5
+                and not _has_visible_page_content(page)
             ):
                 low_text_pages.append(page_number)
                 failures.append(f"low_text_page:{page_number}")

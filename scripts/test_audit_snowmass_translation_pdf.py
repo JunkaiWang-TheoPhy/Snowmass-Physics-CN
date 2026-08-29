@@ -116,6 +116,20 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertTrue(report["ok"])
             self.assertEqual(report["low_text_pages"], [])
 
+    def test_image_only_page_is_not_classified_as_blank(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "image-only-reference-page.pdf"
+            document = fitz.open()
+            page = document.new_page(width=595, height=842)
+            page.draw_rect((72, 72, 520, 770), color=(0, 0, 0), fill=(1, 1, 1))
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf, expected_pages=1)
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["low_text_pages"], [])
+
     def test_rejects_isolated_latin_word_at_right_page_edge(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "paper.pdf"
