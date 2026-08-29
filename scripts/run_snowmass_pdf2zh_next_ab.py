@@ -1286,6 +1286,7 @@ class DeepSeekBudgetProxy:
                 "Content-Type": "application/json",
             },
             timeout=180,
+            trust_env=False,
         )
         return (
             int(response.status_code),
@@ -1484,8 +1485,19 @@ def _build_official_settings(spec: Mapping[str, Any], proxy_base_url: str) -> An
 
 @contextmanager
 def localhost_proxy_bypass_environment():
-    """Force loopback bypass while preserving the machine's egress proxy."""
-    previous = {name: os.environ.get(name) for name in ("NO_PROXY", "no_proxy")}
+    """Isolate local and upstream HTTP clients from malformed proxy settings."""
+    proxy_names = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    )
+    previous = {
+        name: os.environ.get(name)
+        for name in (*proxy_names, "NO_PROXY", "no_proxy")
+    }
     bypass_hosts: list[str] = []
     for value in previous.values():
         if value:
@@ -1498,8 +1510,10 @@ def localhost_proxy_bypass_environment():
     bypass = ",".join(bypass_hosts)
     os.environ["NO_PROXY"] = bypass
     os.environ["no_proxy"] = bypass
+    for name in proxy_names:
+        os.environ.pop(name, None)
     try:
-        yield ["NO_PROXY", "no_proxy"]
+        yield [*proxy_names, "NO_PROXY", "no_proxy"]
     finally:
         for name, value in previous.items():
             if value is None:
