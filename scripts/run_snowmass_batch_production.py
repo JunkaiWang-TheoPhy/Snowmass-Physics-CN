@@ -1897,6 +1897,14 @@ def _classify_selected_records(
 
 def resolve_babeldoc_python(console_script: Path | None = None) -> Path:
     if console_script is None:
+        pinned_runtime = Path(
+            os.environ.get(
+                "SNOWMASS_PDF2ZH_RUNTIME",
+                "/Users/Zhuanz/.local/share/snowmass-tools/pdf2zh-next-2.9.0",
+            )
+        ) / "bin/python"
+        if pinned_runtime.is_file():
+            return pinned_runtime
         resolved = shutil.which("babeldoc")
         if not resolved:
             raise RuntimeError("The BabelDOC console script is unavailable")
