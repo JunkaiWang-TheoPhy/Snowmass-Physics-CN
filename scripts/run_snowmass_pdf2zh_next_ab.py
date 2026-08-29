@@ -1522,6 +1522,25 @@ def localhost_proxy_bypass_environment():
                 os.environ[name] = value
 
 
+@contextmanager
+def httpx_disable_environment_proxy():
+    """Force pdf2zh-next's internally-created clients to ignore proxy env vars."""
+    import httpx
+
+    original_client = httpx.Client
+
+    class EnvironmentIndependentClient(original_client):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            kwargs["trust_env"] = False
+            super().__init__(*args, **kwargs)
+
+    httpx.Client = EnvironmentIndependentClient
+    try:
+        yield
+    finally:
+        httpx.Client = original_client
+
+
 def run_official_translation(
     *,
     source_pdf: Path,
@@ -1555,6 +1574,7 @@ def run_official_translation(
 
     with (
         localhost_proxy_bypass_environment() as bypass_environment_names,
+        httpx_disable_environment_proxy(),
         DeepSeekBudgetProxy(api_key=api_key, gate=gate) as proxy,
     ):
         return asyncio.run(run(proxy.base_url, bypass_environment_names))
