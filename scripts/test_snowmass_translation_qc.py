@@ -397,6 +397,26 @@ class ValidateChunkTests(unittest.TestCase):
 
         self.assertTrue(report.ok)
 
+    def test_locked_observable_deviation_accepts_adjectival_target(self) -> None:
+        report = QC.validate_chunk(
+            source="Observable deviations from the standard model can be constrained.\n",
+            translated="来自标准模型的可观测偏差可以受到约束。\n",
+            mapping={},
+            glossary=[
+                {
+                    "source": "observable",
+                    "target": "可观测量",
+                    "contextual_targets": [
+                        {
+                            "source_regex": r"\bobservable\s+deviations?\b",
+                            "target": "可观测",
+                        }
+                    ],
+                }
+            ],
+        )
+        self.assertTrue(report.ok)
+
     def test_locked_term_phrase_exception_preserves_foreign_proper_name(self) -> None:
         report = QC.validate_chunk(
             source="Université Catholique, Chemin du Cyclotron, Belgium.\n",

@@ -33,7 +33,7 @@
     {"source": "21 cm", "target": "21 cm", "note": "Retain the conventional radio-astronomy notation and spacing."},
     {"source": "Dark Ages", "target": "黑暗时期", "first_use": true},
     {"source": "baryon", "target": "重子", "first_use": true},
-    {"source": "observable", "target": "可观测量", "first_use": true, "contextual_targets": [{"source_regex": "\\bobservable\\s+(?:cluster\\s+)?(?:property|properties|quantity|quantities|effect|effects|scale|scales)\\b", "target": "可观测"}], "note": "Use 可观测量 as a noun; use 可观测 only as the modifier in explicitly matched property, quantity, effect, or scale phrases."},
+    {"source": "observable", "target": "可观测量", "first_use": true, "contextual_targets": [{"source_regex": "\\bobservable\\s+(?:cluster\\s+)?(?:property|properties|quantity|quantities|effect|effects|scale|scales|deviation|deviations|photon|photons|signal|signals)\\b", "target": "可观测"}], "note": "Use 可观测量 as a noun; use 可观测 only as the modifier in explicitly matched property, quantity, effect, scale, deviation, photon, or signal phrases."},
     {"source": "bias", "target": "偏置", "first_use": true, "note": "Use the standard cosmology/statistics term; never translate as 偏袒."},
     {"source": "bias parameter", "target": "偏置参数"},
     {"source": "light relic", "target": "轻遗迹粒子", "aliases": ["light relics", "light relic particle", "light relic particles"]},
