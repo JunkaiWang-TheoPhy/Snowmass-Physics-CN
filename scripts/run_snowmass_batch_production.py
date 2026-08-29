@@ -44,6 +44,7 @@ import snowmass_publication_qc as publication_qc
 import snowmass_qc_contract as qc_contract
 import snowmass_production_contract as production_contract
 import audit_snowmass_translation_pdf as pdf_audit
+import seal_snowmass_pdf2zh_next_paper as pdf_seal
 from snowmass_batch_budget import (
     AUTHORIZED_PROJECT_MAX_RMB,
     PersistentBudgetGuard,
@@ -1662,10 +1663,15 @@ def _package_article(config: BatchConfig, record: dict[str, Any], article_dir: P
         raise RuntimeError("QC receipt gate failed: " + ", ".join(qc_report["errors"]))
     safe_id = prepare.safe_record_name(str(record["record_id"])).replace("arxiv_", "")
     output = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.pdf"
+    protected_candidates = sorted(article_dir.glob("protected/*.protected.pdf"))
+    if len(protected_candidates) != 1:
+        raise RuntimeError(
+            "publication packaging requires exactly one deterministic protected PDF"
+        )
     receipt = packager.package_translation_pdf(
         record=record,
         chinese_title=_chinese_title(article_dir, str(record.get("title") or "")),
-        source_pdf_path=article_dir / "rendered/translated_mono.pdf",
+        source_pdf_path=protected_candidates[0],
         output_pdf_path=output,
         version=config.translation_version,
         packaged_on=config.packaged_on,
@@ -1712,7 +1718,12 @@ def _adopt_verified_translation_chain(config: BatchConfig, record: dict[str, Any
 def _write_article_qc_receipts(config: BatchConfig, record: dict[str, Any], article_dir: Path, qc: dict[str, Any]) -> dict[str, Any]:
     article_dir = article_dir.resolve()
     environment_lock = _production_environment_lock()
-    target = article_dir / "rendered/translated_mono.pdf"
+    protected_candidates = sorted(article_dir.glob("protected/*.protected.pdf"))
+    if len(protected_candidates) != 1:
+        raise RuntimeError(
+            "publication QC requires exactly one deterministic protected PDF"
+        )
+    target = protected_candidates[0]
     audit = pdf_audit.audit_pdf(target)
     evidence = {
         "semantic": {"article_qc": qc, "checks": ["numbers", "units", "citations", "protected_literals", "model_meta"]},
@@ -1726,7 +1737,7 @@ def _write_article_qc_receipts(config: BatchConfig, record: dict[str, Any], arti
             article_root=article_dir,
             record_id=str(record["record_id"]),
             kind=kind,
-            target_artifact_id="rendered-mono",
+            target_artifact_id="protected-pdf",
             target_path=target,
             environment_lock_sha256=environment_lock["lock_sha256"],
             contract_version=1,
@@ -1742,7 +1753,13 @@ def _write_article_qc_receipts(config: BatchConfig, record: dict[str, Any], arti
     )
     if not verdict["publishable"]:
         raise RuntimeError("QC receipt creation failed: " + ", ".join(verdict["errors"]))
-    parent = "rendered"
+    _record_stage_artifact(
+        config, record, article_dir,
+        artifact_id="protected-pdf", relative_path=str(target.relative_to(article_dir)),
+        producer="seal_snowmass_pdf2zh_next_paper", artifact_type="protected_pdf",
+        paper_stage="protected", parents=("rendered",),
+    )
+    parent = "protected-pdf"
     for kind, stage in (("semantic", "semantic_qc"), ("structural", "structural_qc"), ("visual", "visual_qc")):
         _record_stage_artifact(
             config, record, article_dir,
@@ -1760,6 +1777,7 @@ def _package_only_result(
 ) -> dict[str, Any]:
     article_dir = _article_dir(config, str(record["record_id"]))
     _refill_article(config, article_dir)
+    _prepare_deterministic_pdf_qc(config, article_dir)
     qc = evaluate_article_qc(article_dir)
     if not qc["ok"]:
         raise RuntimeError("publication QC failed: " + ", ".join(qc["failures"]))
@@ -1780,6 +1798,11 @@ def _resume_article_result(
     """Reconstruct a completed result only from current, hash-verified artifacts."""
 
     article_dir = _article_dir(config, str(record["record_id"]))
+    protected_candidates = sorted(article_dir.glob("protected/*.protected.pdf"))
+    if len(protected_candidates) != 1:
+        # A raw render is not a publishable artifact.  Force the normal
+        # package-only path to rerun the deterministic protection step.
+        return None
     qc = evaluate_article_qc(article_dir)
     if not qc["ok"]:
         return None
@@ -1797,7 +1820,7 @@ def _resume_article_result(
     safe_id = prepare.safe_record_name(str(record["record_id"])).replace("arxiv_", "")
     receipt_path = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.json"
     output_path = article_dir / "packaged" / f"snowmass-{safe_id}.zh-CN.pdf"
-    source_path = article_dir / "rendered/translated_mono.pdf"
+    source_path = protected_candidates[0]
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -1953,6 +1976,61 @@ def _refill_article(config: BatchConfig, article_dir: Path) -> None:
         raise RuntimeError(f"BabelDOC refill failed with exit code {exit_code}")
 
 
+def _prepare_deterministic_pdf_qc(config: BatchConfig, article_dir: Path) -> dict[str, Any]:
+    """Run the pinned post-render protection before any publication audit."""
+
+    from pypdf import PdfReader
+
+    article_dir = Path(article_dir).resolve()
+    manifest = json.loads((article_dir / "manifest.json").read_text(encoding="utf-8"))
+    source_pdf = Path(str(manifest["source_pdf_path"])).resolve()
+    raw_candidates = sorted(
+        article_dir.glob("rendered/*.no_watermark.zh.mono.pdf")
+    )
+    if len(raw_candidates) != 1:
+        raise RuntimeError(
+            "deterministic PDF QC requires exactly one raw mono render"
+        )
+    glossary = runner.resolve_glossary_path(config.output_root, None)
+    source_reader = PdfReader(str(source_pdf))
+    pages = ",".join(str(index) for index in range(1, len(source_reader.pages) + 1))
+    command = [
+        str(resolve_babeldoc_python()),
+        str(pdf_seal.__file__),
+        "prepare",
+        "--article",
+        str(article_dir),
+        "--source-pdf",
+        str(source_pdf),
+        "--raw-pdf",
+        str(raw_candidates[0]),
+        "--glossary-csv",
+        str(glossary),
+        "--pages",
+        pages,
+    ]
+    process = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if process.returncode != 0:
+        detail = " ".join((process.stderr or process.stdout).split())[:1000]
+        raise RuntimeError(
+            "deterministic PDF QC failed"
+            + (f": {detail}" if detail else "")
+        )
+    try:
+        result = json.loads(process.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("deterministic PDF QC returned invalid JSON") from error
+    if not isinstance(result, dict):
+        raise RuntimeError("deterministic PDF QC returned a non-object result")
+    return result
+
+
 def _run_article(
     config: BatchConfig,
     record: dict[str, Any],
@@ -2043,6 +2121,7 @@ def _run_article(
     if config.through_stage == "translated":
         return result
     _refill_article(config, article_dir)
+    _prepare_deterministic_pdf_qc(config, article_dir)
     result["status"] = "rendered"
     _record_stage_artifact(
         config, record, article_dir,

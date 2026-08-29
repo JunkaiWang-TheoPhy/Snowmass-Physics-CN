@@ -2138,6 +2138,7 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_source_character_count", return_value=7),
                 mock.patch.object(module, "_record_stage_artifact"),
                 mock.patch.object(module, "_refill_article") as refill_article,
+                mock.patch.object(module, "_prepare_deterministic_pdf_qc"),
                 mock.patch.object(module, "_package_article", return_value=expected["package"]),
                 mock.patch.object(module.refined, "run_refined_article") as translate,
             ):
@@ -2219,6 +2220,9 @@ class BatchResumeTests(unittest.TestCase):
             target = article / "rendered/translated_mono.pdf"
             target.parent.mkdir(parents=True)
             target.write_bytes(b"rendered")
+            protected = article / "protected/translated_mono.protected.pdf"
+            protected.parent.mkdir(parents=True)
+            protected.write_bytes(b"protected")
             config = self._two_record_config(module, root)
             record = {"record_id": "arxiv:a", "publication_allowed": True}
 
