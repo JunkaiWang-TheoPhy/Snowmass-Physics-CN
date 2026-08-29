@@ -680,7 +680,11 @@ def _seal_paper(
         ("prepared", preflight, "pdf2zh-next-preflight", "receipt"),
         ("revision_ready", ir, "babeldoc-official-ir", "receipt"),
         ("translated", raw, "pdf2zh-next-2.9.0", "pdf"),
-        ("rendered", protected, "snowmass-pdf2zh-protection", "pdf"),
+        # The adapter's raw output is already the completed render before the
+        # deterministic protection pass. Keep both lifecycle stages explicit
+        # even though they point to the same immutable PDF bytes.
+        ("rendered", raw, "pdf2zh-next-2.9.0", "pdf"),
+        ("protected", protected, "snowmass-pdf2zh-protection", "pdf"),
     )
     parent: tuple[str, ...] = ()
     for artifact_id, path, producer, artifact_type in chain:
@@ -718,7 +722,7 @@ def _seal_paper(
         },
     }
     qc_paths: dict[str, Path] = {}
-    parent_id = "rendered"
+    parent_id = "protected"
     for kind, stage in (
         ("semantic", "semantic_qc"),
         ("structural", "structural_qc"),
@@ -730,7 +734,7 @@ def _seal_paper(
             article_root=article,
             record_id=record_id,
             kind=kind,
-            target_artifact_id="rendered",
+            target_artifact_id="protected",
             target_path=Path(protected),
             environment_lock_sha256=str(environment["lock_sha256"]),
             contract_version=QC_CONTRACT_VERSION,
