@@ -323,17 +323,11 @@ def prepare_paper_qc(
                 # region.  Keep only text whose source occurrence proves that
                 # the IR attached it to a different page (a known BabelDOC
                 # cross-page ownership artifact such as a prose IPv6 token).
-                if source_page != page_index or (
+                if source_page != page_index and not (
                     len(candidates) > 1
                     and ("[" in text or "]" in text or "::" in text)
                 ):
-                    pages_to_protect = (
-                        candidates
-                        if ("[" in text or "]" in text or "::" in text)
-                        else [source_page]
-                    )
-                    for protected_page in pages_to_protect:
-                        verbatim_texts.append((protected_page, text))
+                    verbatim_texts.append((source_page, text))
 
     protected_dir = article / "protected"
     protected_pdf = protected_dir / f"{raw_pdf.stem}.protected.pdf"
