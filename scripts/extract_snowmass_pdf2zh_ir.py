@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persist official BabelDOC 0.6.2 layout IR without any model calls."""
+"""Persist official BabelDOC 0.6.4 layout IR without any model calls."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-EXPECTED_BABELDOC_VERSION = "0.6.2"
+EXPECTED_BABELDOC_VERSION = "0.6.4"
 
 
 def _sha256(path: Path) -> str:

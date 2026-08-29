@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "paid_engine": "pdf2zh-next-2.9.0",
-  "babeldoc": "0.6.2",
+  "babeldoc": "0.6.4",
   "model": "deepseek-v4-flash",
   "legacy_custom_paid_enabled": false,
   "probe_seal_required": true,

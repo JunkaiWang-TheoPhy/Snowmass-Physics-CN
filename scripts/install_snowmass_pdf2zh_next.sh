@@ -29,7 +29,7 @@ env \
   "${runtime_root}/bin/python" - <<'PY'
 import importlib.metadata
 
-expected = {"pdf2zh-next": "2.9.0", "babeldoc": "0.6.2"}
+expected = {"pdf2zh-next": "2.9.0", "babeldoc": "0.6.4"}
 for package, version in expected.items():
     installed = importlib.metadata.version(package)
     if installed != version:

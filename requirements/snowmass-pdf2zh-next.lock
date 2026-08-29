@@ -8,7 +8,7 @@ anyio==4.14.2
 attrs==26.1.0
 azure-ai-translation-text==1.0.1
 azure-core==1.41.0
-babeldoc==0.6.2
+babeldoc==0.6.4
 backports-zstd==1.7.0
 bitarray==3.10.1
 bitstring==4.4.0

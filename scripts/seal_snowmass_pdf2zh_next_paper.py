@@ -211,7 +211,7 @@ def _load_valid_ir_receipt(ir_dir: Path, source_pdf: Path) -> dict[str, Any] | N
         receipt = _load(receipt_path, label="IR receipt")
         if receipt.get("zero_paid") is not True:
             return None
-        if receipt.get("babeldoc_version") != "0.6.2":
+        if receipt.get("babeldoc_version") != "0.6.4":
             return None
         if receipt.get("source_pdf_sha256") != _sha256(source_pdf):
             return None
@@ -550,7 +550,7 @@ def _seal_paper(
     _positive(budget.get("stage_max_api_calls"), 100000.0, label="request cap")
 
     ir_receipt = _load(Path(ir), label="IR receipt")
-    if ir_receipt.get("zero_paid") is not True or ir_receipt.get("babeldoc_version") != "0.6.2":
+    if ir_receipt.get("zero_paid") is not True or ir_receipt.get("babeldoc_version") != "0.6.4":
         raise RuntimeError("IR receipt is not a pinned zero-paid extraction")
     if ir_receipt.get("source_pdf_sha256") != source_hash:
         raise RuntimeError("IR source hash mismatch")

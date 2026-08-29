@@ -30,7 +30,7 @@ class ExtractIrIntegrationTests(unittest.TestCase):
             receipt = extract_ir(source, root / "ir")
 
             self.assertTrue(receipt["zero_paid"])
-            self.assertEqual(receipt["babeldoc_version"], "0.6.2")
+            self.assertEqual(receipt["babeldoc_version"], "0.6.4")
             self.assertEqual(receipt["page_count"], 1)
             self.assertTrue((root / "ir" / "babeldoc_ir.xml").is_file())
             self.assertTrue((root / "ir" / "babeldoc_ir.json").is_file())
