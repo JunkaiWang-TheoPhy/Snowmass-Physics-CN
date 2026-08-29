@@ -2081,7 +2081,7 @@ def _enforce_paid_engine_lock(config: BatchConfig) -> None:
             reason_code="production_engine_lock_missing",
         )
     lock = json.loads(config.engine_lock.read_text(encoding="utf-8"))
-    if lock.get("legacy_custom_paid_enabled") is not True:
+    if lock.get("legacy_custom_paid_enabled") is True:
         replacement = str(lock.get("paid_engine") or "pdf2zh-next")
         raise ProjectionGateRefusedError(
             f"legacy custom paid parse/refill/render is frozen; use {replacement}",

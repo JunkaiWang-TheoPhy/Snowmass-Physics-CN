@@ -220,6 +220,17 @@ class BatchSelectionTests(unittest.TestCase):
             engine_lock=lock,
         )
 
+        module._enforce_paid_engine_lock(module.BatchConfig(**base))
+
+        lock.write_text(
+            json.dumps(
+                {
+                    "paid_engine": "pdf2zh-next-2.9.0",
+                    "legacy_custom_paid_enabled": True,
+                }
+            ),
+            encoding="utf-8",
+        )
         with self.assertRaisesRegex(
             module.ProjectionGateRefusedError, "legacy custom paid"
         ):
