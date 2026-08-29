@@ -1823,6 +1823,52 @@ class BatchResumeTests(unittest.TestCase):
             evaluate_qc.assert_called_once_with(article)
             self.assertEqual(result["status"], "packaged")
 
+    def test_package_only_does_not_refill_a_visual_bound_protected_pdf(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._two_record_config(module, root)
+            source = root / "source.pdf"
+            contact = root / "contact-sheet.jpg"
+            protected = module._article_dir(config, "arxiv:a") / "protected" / "a.protected.pdf"
+            protected.parent.mkdir(parents=True)
+            source.write_bytes(b"source")
+            contact.write_bytes(b"contact")
+            protected.write_bytes(b"protected")
+            article = protected.parents[1]
+            (article / "manifest.json").write_text(
+                json.dumps({"source_pdf_path": str(source)}), encoding="utf-8"
+            )
+            (article / "qc").mkdir()
+            (article / "qc" / "visual-review.json").write_text(
+                json.dumps(
+                    {
+                        "pdf_sha256": module._sha256(protected),
+                        "source_pdf_sha256": module._sha256(source),
+                        "contact_sheet_sha256": module._sha256(contact),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (article / "qc" / "contact-sheet.jpg").write_bytes(contact.read_bytes())
+
+            with (
+                mock.patch.object(module, "_refill_article") as refill_article,
+                mock.patch.object(
+                    module,
+                    "evaluate_article_qc",
+                    return_value={"ok": True, "failures": []},
+                ),
+                mock.patch.object(module, "_source_character_count", return_value=7),
+                mock.patch.object(module, "_package_article", return_value={"ok": True}),
+            ):
+                result = module._package_only_result(
+                    config, {"record_id": "arxiv:a", "publication_allowed": True}
+                )
+
+            refill_article.assert_not_called()
+            self.assertEqual(result["status"], "packaged")
+
     def test_preflight_quarantines_artifact_contract_drift_before_launch(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

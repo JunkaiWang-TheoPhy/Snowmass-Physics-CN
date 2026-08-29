@@ -1776,8 +1776,34 @@ def _package_only_result(
     record: dict[str, Any],
 ) -> dict[str, Any]:
     article_dir = _article_dir(config, str(record["record_id"]))
-    _refill_article(config, article_dir)
-    _prepare_deterministic_pdf_qc(config, article_dir)
+    protected_candidates = sorted(article_dir.glob("protected/*.protected.pdf"))
+    visual_review_path = article_dir / "qc" / "visual-review.json"
+    if not protected_candidates:
+        _refill_article(config, article_dir)
+        _prepare_deterministic_pdf_qc(config, article_dir)
+    elif not visual_review_path.is_file():
+        raise RuntimeError(
+            "package-only reuse requires a visual review bound to the protected PDF"
+        )
+    else:
+        try:
+            visual_review = json.loads(visual_review_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("visual review is unreadable; re-attest before packaging") from error
+        source_pdf = Path(str(record.get("source_pdf_path") or ""))
+        if not source_pdf.is_file():
+            manifest = article_dir / "manifest.json"
+            source_pdf = Path(str(json.loads(manifest.read_text(encoding="utf-8"))["source_pdf_path"]))
+        contact_sheet = article_dir / "qc" / "contact-sheet.jpg"
+        expected = {
+            "pdf_sha256": _sha256(protected_candidates[0]),
+            "source_pdf_sha256": _sha256(source_pdf),
+            "contact_sheet_sha256": _sha256(contact_sheet),
+        }
+        if any(visual_review.get(key) != value for key, value in expected.items()):
+            raise RuntimeError(
+                "visual review is stale for the protected PDF; re-attest before packaging"
+            )
     qc = evaluate_article_qc(article_dir)
     if not qc["ok"]:
         raise RuntimeError("publication QC failed: " + ", ".join(qc["failures"]))
