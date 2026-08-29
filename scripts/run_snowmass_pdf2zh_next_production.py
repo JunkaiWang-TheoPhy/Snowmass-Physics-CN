@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import os
+import signal
 import subprocess
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -29,6 +30,7 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
+ADAPTER_PROCESS_TIMEOUT_SECONDS = 15 * 60
 STAGES = (
     "deepseek_probe",
     "pilot5",
@@ -378,12 +380,27 @@ def _adapter_command(config: ab_runner.RunConfig, *, preflight_only: bool) -> li
 def _run_adapter_subprocess(
     config: ab_runner.RunConfig, *, preflight_only: bool
 ) -> dict[str, Any]:
-    result = subprocess.run(
+    process = subprocess.Popen(
         _adapter_command(config, preflight_only=preflight_only),
         cwd=ROOT,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=ADAPTER_PROCESS_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        # Kill the whole process group: pdf2zh-next may have spawned workers
+        # that otherwise outlive the adapter and retain a budget reservation.
+        os.killpg(process.pid, signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        raise RuntimeError(
+            f"pinned pdf2zh-next adapter timed out after "
+            f"{ADAPTER_PROCESS_TIMEOUT_SECONDS}s"
+        ) from error
+    result = subprocess.CompletedProcess(
+        process.args, process.returncode, stdout=stdout, stderr=stderr
     )
     if result.returncode != 0:
         raise RuntimeError(
