@@ -552,6 +552,44 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertTrue(receipt["verified"], receipt["failures"])
             self.assertTrue(receipt["document_citation_conservation"]["matched"])
 
+    def test_allows_numeric_citation_range_split_across_visual_lines(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+            for path, lines in (
+                (source, [(100, "Claim [71-73] and [74].")]),
+                (translated, [(100, "Claim [71-"), (114, "73] and [74].")]),
+            ):
+                document = fitz.open()
+                page = document.new_page()
+                for y, text in lines:
+                    page.insert_text((72, y), text)
+                document.save(path)
+                document.close()
+            ir.write_text(
+                '<document totalPages="1"><page pageNumber="0"/></document>',
+                encoding="utf-8",
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(
+                receipt["document_citation_conservation"]["source"],
+                ["[71-73]", "[74]"],
+            )
+
     def test_allows_citation_permutation_within_one_source_line(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf
 

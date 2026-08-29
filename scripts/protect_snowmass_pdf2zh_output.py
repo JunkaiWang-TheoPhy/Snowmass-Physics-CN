@@ -1861,6 +1861,7 @@ def _numeric_citation_line_groups(
     excluded_rectangles: tuple[fitz.Rect, ...] = (),
 ) -> list[list[str]]:
     fragments: list[tuple[fitz.Rect, list[str]]] = []
+    pending_fragment: tuple[fitz.Rect, str] | None = None
     for block in page.get_text("dict", sort=True).get("blocks", []):
         if block.get("type") != 0:
             continue
@@ -1875,12 +1876,31 @@ def _numeric_citation_line_groups(
             line_text = "".join(
                 str(span.get("text", "")) for span in line.get("spans", [])
             )
-            line_markers = [
+            line_consumed_by_pending = False
+            if pending_fragment is not None:
+                pending_rect, pending_text = pending_fragment
+                combined = pending_text + line_text
+                combined_markers = [
+                    _normalize_numeric_citation_marker(match.group(0))
+                    for match in _NUMERIC_CITATION_MARKER.finditer(combined)
+                ]
+                if combined_markers:
+                    fragments.append((pending_rect, combined_markers))
+                    pending_fragment = None
+                    line_consumed_by_pending = True
+                elif pending_text.count("[") > pending_text.count("]"):
+                    pending_fragment = (pending_rect, combined)
+                    continue
+                else:
+                    pending_fragment = None
+            line_markers = [] if line_consumed_by_pending else [
                 _normalize_numeric_citation_marker(match.group(0))
                 for match in _NUMERIC_CITATION_MARKER.finditer(line_text)
             ]
             if line_markers:
                 fragments.append((rectangle, line_markers))
+            elif line_text.count("[") > line_text.count("]"):
+                pending_fragment = (rectangle, line_text)
     clustered: list[list[tuple[fitz.Rect, list[str]]]] = []
     midpoint = page.rect.width / 2.0
 
