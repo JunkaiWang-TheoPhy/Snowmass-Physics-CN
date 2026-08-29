@@ -400,6 +400,7 @@ def prepare_paper_qc(
     contact_sheet = qc_dir / "contact-sheet.jpg"
     structural_report = audit_pdf(
         protected_pdf,
+        source_pdf=source_pdf,
         expected_pages=len(selected_source_pages),
         contact_sheet_path=contact_sheet,
         ignored_text_regions=ignored,

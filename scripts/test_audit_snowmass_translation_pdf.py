@@ -158,6 +158,24 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertTrue(protected["ok"])
             self.assertEqual(protected["isolated_latin_edge_words"], [])
 
+    def test_allows_source_proven_edge_proper_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.pdf"
+            output = root / "output.pdf"
+            self._write_pdf(source, ["Scuola"])
+            document = fitz.open()
+            page = document.new_page(width=595, height=842)
+            page.insert_text((72, 200), "中文正文", fontname="china-s")
+            page.insert_text((72, 740), "Scuola", fontsize=10)
+            document.save(output)
+            document.close()
+
+            report = audit_pdf(output, source_pdf=source)
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["isolated_latin_edge_words"], [])
+
     def test_malformed_pdf_returns_a_failed_report(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "broken.pdf"

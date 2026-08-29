@@ -167,6 +167,7 @@ def _has_visible_page_content(page: fitz.Page) -> bool:
 def audit_pdf(
     pdf_path: str | Path,
     *,
+    source_pdf: str | Path | None = None,
     expected_pages: int | None = None,
     contact_sheet_path: str | Path | None = None,
     minimum_extractable_characters: int = 5,
@@ -187,6 +188,18 @@ def audit_pdf(
     secondary_extractor: dict[str, str] | None = None
     primary_page_text_lengths: list[int] = []
     ignored_text_regions = ignored_text_regions or {}
+    source_page_texts: list[str] = []
+    source_pdf_sha256: str | None = None
+    if source_pdf is not None:
+        source_path = Path(source_pdf)
+        try:
+            with fitz.open(source_path) as source_document:
+                source_page_texts = [
+                    page.get_text("text") for page in source_document
+                ]
+            source_pdf_sha256 = _sha256(source_path)
+        except (OSError, RuntimeError, ValueError):
+            failures.append("unreadable_source_pdf")
     try:
         document = fitz.open(pdf_path)
     except (OSError, RuntimeError, ValueError) as error:
@@ -309,6 +322,16 @@ def audit_pdf(
                             "word": line_text,
                             "bbox": [x0, y0, x1, y1],
                         }
+                        source_text = (
+                            source_page_texts[page_number - 1]
+                            if page_number <= len(source_page_texts)
+                            else ""
+                        )
+                        if (
+                            line_text.casefold() in source_text.casefold()
+                            and line_text.casefold() not in {"the", "and", "for"}
+                        ):
+                            continue
                         isolated_latin_edge_words.append(detail)
                         failures.append(
                             f"isolated_latin_edge_word:{line_text.casefold()}:page_{page_number}"
@@ -377,6 +400,7 @@ def audit_pdf(
         "schema_version": 1,
         "pdf_path": pdf_path.name,
         "pdf_sha256": _sha256(pdf_path),
+        "source_pdf_sha256": source_pdf_sha256,
         "page_count": page_count,
         "expected_pages": expected_pages,
         "low_text_pages": low_text_pages,
@@ -406,6 +430,7 @@ def audit_pdf(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pdf", type=Path)
+    parser.add_argument("--source-pdf", type=Path)
     parser.add_argument("--expected-pages", type=int)
     parser.add_argument("--contact-sheet", type=Path)
     parser.add_argument("--report", type=Path)
@@ -429,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
             )
     report = audit_pdf(
         arguments.pdf,
+        source_pdf=arguments.source_pdf,
         expected_pages=arguments.expected_pages,
         contact_sheet_path=arguments.contact_sheet,
         ignored_text_regions=ignored_text_regions,
