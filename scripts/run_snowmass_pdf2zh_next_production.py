@@ -85,6 +85,17 @@ def _json_hash(value: Any) -> str:
     ).hexdigest()
 
 
+def _translation_contract_sha256() -> str:
+    """Fingerprint local translation/QC code that can change launch validity."""
+
+    paths = (
+        Path(ab_runner.__file__).resolve(),
+        Path(paper_sealer.__file__).resolve(),
+        ROOT / "scripts/protect_snowmass_pdf2zh_output.py",
+    )
+    return _json_hash({str(path): _sha256(path) for path in paths})
+
+
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -529,6 +540,7 @@ def plan_stage(
                 "projection": projection,
                 "preflight_path": str(preflight_path.resolve()),
                 "preflight_sha256": _sha256(preflight_path),
+                "translation_contract_sha256": _translation_contract_sha256(),
                 "finish_sha256": None,
             }
         )
@@ -624,6 +636,7 @@ def paper_launch_fingerprint(paper: Mapping[str, Any]) -> str:
                 "pages",
                 "request_cap",
                 "stage_max_cost_rmb",
+                "translation_contract_sha256",
             )
         }
     )

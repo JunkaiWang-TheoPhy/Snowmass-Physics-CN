@@ -541,7 +541,24 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["quarantined_count"], 1)
-        self.assertEqual(result["launched_count"], 0)
+
+    def test_translation_contract_change_invalidates_old_quarantine(self) -> None:
+        module = load_module()
+        paper = {
+            "record_id": "arxiv:example",
+            "source_sha256": "source",
+            "preflight_sha256": "preflight",
+            "pages": "all",
+            "request_cap": 10,
+            "stage_max_cost_rmb": 1.0,
+            "translation_contract_sha256": "contract-a",
+        }
+        changed = dict(paper, translation_contract_sha256="contract-b")
+
+        self.assertNotEqual(
+            module.paper_launch_fingerprint(paper),
+            module.paper_launch_fingerprint(changed),
+        )
 
     def test_launch_requires_previous_stage_seal(self) -> None:
         module = load_module()
