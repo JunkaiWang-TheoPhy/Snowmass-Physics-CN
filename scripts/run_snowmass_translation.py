@@ -1461,9 +1461,17 @@ def complete_style_fallback(
 
 
 class DeepSeekClient:
-    def __init__(self, api_key: str, max_retries: int = 5) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        max_retries: int = 5,
+        request_timeout_seconds: int = 300,
+    ) -> None:
+        if request_timeout_seconds <= 0:
+            raise ValueError("request timeout must be positive")
         self.api_key = api_key
         self.max_retries = max_retries
+        self.request_timeout_seconds = request_timeout_seconds
 
     def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, Any], float]:
         payload = build_request_payload(instructions, input_text, max_output_tokens)
@@ -1483,7 +1491,9 @@ class DeepSeekClient:
                 method="POST",
             )
             try:
-                with urllib.request.urlopen(request, timeout=900) as response_stream:
+                with urllib.request.urlopen(
+                    request, timeout=self.request_timeout_seconds
+                ) as response_stream:
                     response = json.loads(response_stream.read().decode("utf-8"))
                 return normalize_chat_completion_response(response), round(
                     time.monotonic() - started, 3
