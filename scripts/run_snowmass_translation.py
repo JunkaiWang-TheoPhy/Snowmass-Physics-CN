@@ -926,10 +926,21 @@ def refinement_context_contains_factual_literals(context: str) -> bool:
     return "<PROTECTED_" in sanitize_refinement_context(critique)
 
 
+def refinement_context_is_translation_omission(context: str) -> bool:
+    """Identify critique that asks to translate omitted source-language text."""
+
+    return bool(re.search(r"(?:未翻译|漏译|英文残留|应译为|应翻译为)", context))
+
+
 _CRITIQUE_REPLACEMENT_RE = re.compile(
     r'[“"](?P<old>[^”"]+)[”"].*?'
-    r'(?:应(?:改)?为|建议改为|应调整为|调整为|应补全(?:为)?)[“"]'
+    r'(?:应(?:改|译)?为|建议改为|应调整为|调整为|应补全(?:为)?)[“"]'
     r'(?P<new>[^”"]+)[”"]'
+)
+_ENGLISH_ORDINAL_DATE_RE = re.compile(
+    r"\b(?:January|February|March|April|May|June|July|August|September|"
+    r"October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)\b",
+    flags=re.IGNORECASE,
 )
 
 
@@ -953,7 +964,21 @@ def deterministic_critique_revision(
         applied = True
     if not applied or candidate == prior_text:
         return None
-    return candidate if validate_chunk(source, candidate, {}, qc_terms).ok else None
+    report = validate_chunk(source, candidate, {}, qc_terms)
+    if report.ok:
+        return candidate
+    if report.failures != ("numbers_mismatch",):
+        return None
+    # English ordinal suffixes (``30th``) are not semantic digits in the
+    # Chinese rendering.  Permit this one source-evidenced localization only
+    # when the same day number remains present and every other QC is clean.
+    days = [match.group("day") for match in _ENGLISH_ORDINAL_DATE_RE.finditer(source)]
+    if days and all(
+        re.search(rf"(?<!\d){re.escape(day)}(?!\d)", candidate)
+        for day in days
+    ):
+        return candidate
+    return None
 
 
 def localize_source_month_years(text: str) -> str:
@@ -1850,6 +1875,7 @@ def process_chunk(
             stage == "revision"
             and deterministic_revision is None
             and refinement_context_contains_factual_literals(stable_paper_context)
+            and not refinement_context_is_translation_omission(stable_paper_context)
         )
         expected_policy = (
             f"passthrough:{task.get('passthrough_reason')}"

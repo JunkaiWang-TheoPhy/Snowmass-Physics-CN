@@ -882,6 +882,12 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertGreaterEqual(sanitized.count("<PROTECTED_NUMBER>"), 1)
         self.assertEqual(sanitized.count("<PROTECTED_UNIT>"), 1)
 
+    def test_translation_omission_is_not_blocked_as_literal_rebinding(self) -> None:
+        context = 'chunk0001: 中文稿漏译“March 30th”，应译为“3月30日”。'
+
+        self.assertTrue(RUNNER.refinement_context_contains_factual_literals(context))
+        self.assertTrue(RUNNER.refinement_context_is_translation_omission(context))
+
     def test_placeholder_indices_are_not_treated_as_factual_critique_literals(self) -> None:
         context = "chunk0136: replace the punctuation after {v15}."
 
@@ -901,6 +907,23 @@ class ProcessChunkTests(unittest.TestCase):
         )
 
         self.assertEqual(repaired, "第2.4节所述该结果。\n")
+
+    def test_quoted_translation_omission_is_repaired_without_model(self) -> None:
+        source = "Additional contributors can subscribe until March 30th.\n"
+        prior = "Additional contributors can subscribe until March 30th.\n"
+        context = (
+            'chunk0001: 中文稿未翻译“Additional contributors can subscribe until '
+            'March 30th.”，应译为“其他贡献者可在3月30日前订阅。”'
+        )
+
+        repaired = RUNNER.deterministic_critique_revision(
+            source=source,
+            prior_text=prior,
+            paper_context=context,
+            qc_terms=[],
+        )
+
+        self.assertEqual(repaired, "其他贡献者可在3月30日前订阅。\n")
 
     def test_critique_replacement_that_changes_numeric_literals_is_rejected(self) -> None:
         repaired = RUNNER.deterministic_critique_revision(

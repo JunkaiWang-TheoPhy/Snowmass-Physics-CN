@@ -2137,8 +2137,10 @@ def _planned_stage_model_subrequests(
         decision = runner.StageDecision(False, "revision_no_actionable_chunk_critique")
     elif deterministic_revision is not None:
         decision = runner.StageDecision(False, "revision_deterministic_critique_replacement")
-    elif stage == "revision" and runner.refinement_context_contains_factual_literals(
-        paper_context
+    elif (
+        stage == "revision"
+        and runner.refinement_context_contains_factual_literals(paper_context)
+        and not runner.refinement_context_is_translation_omission(paper_context)
     ):
         decision = runner.StageDecision(
             False,
@@ -2497,7 +2499,7 @@ def revision_ready_projection(
         if legacy_critique is not None:
             critique_valid = True
             critique_text = legacy_critique
-        elif len(source) + len(draft) > CRITIQUE_SHARD_CHAR_LIMIT:
+        else:
             critique_valid = _valid_sharded_critique_checkpoint(
                 article_dir,
                 chunks=chunks,
@@ -2512,17 +2514,6 @@ def revision_ready_projection(
                     for chunk in chunks
                 },
                 paper_status=paper_status,
-            )
-        else:
-            critique_phase = paper_phases.get("critique", {})
-            critique_valid = isinstance(critique_phase, dict) and _phase_valid(
-                critique_phase,
-                article_dir / CRITIQUE_FILE,
-                _paper_phase_input_hash(
-                    _critique_instructions(),
-                    f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}",
-                    CRITIQUE_MAX_OUTPUT_TOKENS,
-                ),
             )
         if (
             not critique_valid
@@ -2543,16 +2534,12 @@ def revision_ready_projection(
             )
         )
     else:
-        projected_draft = _merge_tagged_outputs(chunks, predicted_terminology_texts)
-        if len(source) + len(projected_draft) <= CRITIQUE_SHARD_CHAR_LIMIT:
-            report["missing_stage_api_calls"]["critique"] = 1
-        else:
-            report["missing_stage_api_calls"]["critique"] = 2 * _critique_shard_count(
-                chunks,
-                source_texts=source_texts,
-                draft_texts=predicted_terminology_texts,
-                shard_char_limit=CRITIQUE_SHARD_CHAR_LIMIT,
-            )
+        report["missing_stage_api_calls"]["critique"] = 2 * _critique_shard_count(
+            chunks,
+            source_texts=source_texts,
+            draft_texts=predicted_terminology_texts,
+            shard_char_limit=CRITIQUE_SHARD_CHAR_LIMIT,
+        )
 
     if not critique_valid:
         critique_text = ""
@@ -2937,7 +2924,7 @@ def run_refined_article(
     )
     if legacy_critique is not None:
         critique = legacy_critique
-    elif len(source) + len(draft) > CRITIQUE_SHARD_CHAR_LIMIT:
+    else:
         _require_critique_drafts_within_projection_bound(
             chunks,
             source_texts={
@@ -2959,20 +2946,6 @@ def run_refined_article(
         critique = _run_sharded_critique(
             article_dir=article_dir,
             chunks=chunks,
-            client=client,
-            status=status,
-            status_path=status_path,
-            run_id=run_id,
-            budget_guard=budget_guard,
-            retry_uncertain=retry_uncertain,
-        )
-    else:
-        critique = _run_paper_model_phase(
-            phase_name="critique",
-            output_path=article_dir / CRITIQUE_FILE,
-            instructions=critique_instructions,
-            input_text=f"ENGLISH SOURCE:\n{source}\n\nCHINESE DRAFT:\n{draft}",
-            max_output_tokens=CRITIQUE_MAX_OUTPUT_TOKENS,
             client=client,
             status=status,
             status_path=status_path,
