@@ -3113,7 +3113,7 @@ def main(argv: list[str] | None = None) -> int:
     run_id = uuid.uuid4().hex
     result = run_refined_article(
         args.article_dir,
-        client=runner.DeepSeekClient(runner.load_api_key()),
+        client=runner.DeepSeekClient(runner.load_api_key(), transport="curl"),
         terms=terms,
         run_id=run_id,
         budget_guard=budget,

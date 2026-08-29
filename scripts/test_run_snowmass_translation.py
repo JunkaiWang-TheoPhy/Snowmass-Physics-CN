@@ -9,6 +9,7 @@ import io
 import json
 import re
 import ssl
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -2667,6 +2668,21 @@ class ProcessChunkTests(unittest.TestCase):
 
 
 class DeepSeekClientRetryTests(unittest.TestCase):
+    def test_client_curl_transport_has_process_level_timeout(self) -> None:
+        client = RUNNER.DeepSeekClient("test-key", max_retries=0, transport="curl")
+        completed = subprocess.CompletedProcess(
+            args=["curl"],
+            returncode=0,
+            stdout=json.dumps(chat_completion_response("ok")) + "\n200",
+            stderr="",
+        )
+        with mock.patch.object(RUNNER.subprocess, "run", return_value=completed) as run:
+            result, _latency = client.complete("instructions", "input", 2048)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(run.call_args.kwargs["timeout"], 180)
+        self.assertIn("--max-time", run.call_args.args[0])
+
     def test_client_uses_bounded_request_timeout(self) -> None:
         client = RUNNER.DeepSeekClient("test-key", max_retries=0)
         response = mock.MagicMock()

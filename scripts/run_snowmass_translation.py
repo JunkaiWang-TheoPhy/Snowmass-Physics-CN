@@ -1466,12 +1466,68 @@ class DeepSeekClient:
         api_key: str,
         max_retries: int = 2,
         request_timeout_seconds: int = 180,
+        transport: str = "urllib",
     ) -> None:
         if request_timeout_seconds <= 0:
             raise ValueError("request timeout must be positive")
+        if transport not in {"urllib", "curl"}:
+            raise ValueError("transport must be urllib or curl")
         self.api_key = api_key
         self.max_retries = max_retries
         self.request_timeout_seconds = request_timeout_seconds
+        self.transport = transport
+
+    def _curl_complete(self, body: bytes) -> dict[str, Any]:
+        command = [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            str(self.request_timeout_seconds),
+            "--connect-timeout",
+            str(min(30, self.request_timeout_seconds)),
+            "--request",
+            "POST",
+            API_URL,
+            "--header",
+            f"Authorization: Bearer {self.api_key}",
+            "--header",
+            "Content-Type: application/json",
+            "--header",
+            "Accept: application/json",
+            "--data-binary",
+            "@-",
+            "--write-out",
+            "\n%{http_code}",
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                input=body,
+                capture_output=True,
+                timeout=self.request_timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise AmbiguousTransportError("curl request exceeded hard timeout") from error
+        if completed.returncode != 0:
+            stderr = completed.stderr or b""
+            detail = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else str(stderr)
+            raise AmbiguousTransportError(
+                f"curl transport failed: {detail.strip()[:500]}"
+            )
+        stdout = completed.stdout or b""
+        raw = stdout.decode("utf-8", errors="replace") if isinstance(stdout, bytes) else str(stdout)
+        payload_text, separator, status_text = raw.rpartition("\n")
+        if not separator or not status_text.isdigit():
+            raise AmbiguousTransportError("curl response did not include HTTP status")
+        status_code = int(status_text)
+        if status_code >= 400:
+            raise RuntimeError(f"HTTP {status_code}: {payload_text.strip()[:500]}")
+        try:
+            return normalize_chat_completion_response(json.loads(payload_text))
+        except (json.JSONDecodeError, TypeError) as error:
+            raise AmbiguousTransportError("curl response was not valid JSON") from error
 
     def complete(self, instructions: str, input_text: str, max_output_tokens: int) -> tuple[dict[str, Any], float]:
         payload = build_request_payload(instructions, input_text, max_output_tokens)
@@ -1491,6 +1547,10 @@ class DeepSeekClient:
                 method="POST",
             )
             try:
+                if self.transport == "curl":
+                    return self._curl_complete(body), round(
+                        time.monotonic() - started, 3
+                    )
                 with urllib.request.urlopen(
                     request, timeout=self.request_timeout_seconds
                 ) as response_stream:

@@ -2662,7 +2662,9 @@ def _run_batch_locked(
                 +
                 f"{projected_worst_case} > {stage_remaining_api_calls}"
             )
-        actual_client = client or runner.DeepSeekClient(runner.load_api_key())
+        actual_client = client or runner.DeepSeekClient(
+            runner.load_api_key(), transport="curl"
+        )
 
     def persist() -> None:
         with state_lock:
