@@ -2667,7 +2667,7 @@ class DeepSeekClientRetryTests(unittest.TestCase):
         with mock.patch.object(RUNNER.urllib.request, "urlopen", return_value=response) as urlopen:
             client.complete("instructions", "input", 2048)
 
-        self.assertEqual(urlopen.call_args.kwargs["timeout"], 300)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 180)
 
     def test_client_serializes_style_batch_requests_in_json_object_mode(self) -> None:
         client = RUNNER.DeepSeekClient("test-key", max_retries=0)

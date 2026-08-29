@@ -1464,8 +1464,8 @@ class DeepSeekClient:
     def __init__(
         self,
         api_key: str,
-        max_retries: int = 5,
-        request_timeout_seconds: int = 300,
+        max_retries: int = 2,
+        request_timeout_seconds: int = 180,
     ) -> None:
         if request_timeout_seconds <= 0:
             raise ValueError("request timeout must be positive")
