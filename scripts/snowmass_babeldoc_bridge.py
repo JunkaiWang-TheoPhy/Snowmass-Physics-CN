@@ -598,6 +598,43 @@ def apply_cross_page_line_fragment_carries(
             continue
         portable_trailing: list[Any] = []
         trailing_text = str(getattr(trailing, "unicode", "") or "").rstrip()
+        # A carry is an optional layout optimization.  If any formula in the
+        # trailing line is not a plain numeric superscript, leave the original
+        # page split intact instead of failing the whole document refill.
+        carry_is_portable = True
+        for composition in trailing_compositions:
+            formula = getattr(composition, "pdf_formula", None)
+            if formula is None:
+                portable_trailing.append(composition)
+                continue
+            formula_characters = list(getattr(formula, "pdf_character", ()) or ())
+            formula_text = "".join(
+                str(getattr(character, "char_unicode", "") or "")
+                for character in formula_characters
+            )
+            if (
+                not formula_text
+                or any(character not in "−-+0123456789" for character in formula_text)
+                or (getattr(formula, "pdf_curve", None) or getattr(formula, "pdf_form", None))
+                or not _BABELDOC_PLACEHOLDER.search(trailing_text)
+                or not any(
+                    str(
+                        getattr(
+                            getattr(prior, "pdf_same_style_unicode_characters", None),
+                            "unicode",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                    for prior in portable_trailing
+                )
+            ):
+                carry_is_portable = False
+                break
+            portable_trailing.append(composition)
+        if not carry_is_portable:
+            continue
+        portable_trailing = []
         for composition in trailing_compositions:
             formula = getattr(composition, "pdf_formula", None)
             if formula is None:
@@ -613,9 +650,7 @@ def apply_cross_page_line_fragment_carries(
                 or any(character not in "−-+0123456789" for character in formula_text)
                 or (getattr(formula, "pdf_curve", None) or getattr(formula, "pdf_form", None))
             ):
-                raise RuntimeError(
-                    "Cross-page formula is not a portable numeric superscript"
-                )
+                raise AssertionError("portable carry preflight was incomplete")
             superscript = formula_text.translate(superscripts)
             for prior in reversed(portable_trailing):
                 unicode_run = getattr(
@@ -628,16 +663,12 @@ def apply_cross_page_line_fragment_carries(
                     unicode_run.unicode = run_text.rstrip() + superscript
                     break
             else:
-                raise RuntimeError(
-                    "Cross-page superscript has no adjacent Unicode text run"
-                )
+                raise AssertionError("portable carry preflight missed adjacent text")
             trailing_text, replacement_count = _BABELDOC_PLACEHOLDER.subn(
                 superscript, trailing_text, count=1
             )
             if replacement_count != 1:
-                raise RuntimeError(
-                    "Cross-page superscript has no matching BabelDOC placeholder"
-                )
+                raise AssertionError("portable carry preflight missed placeholder")
         trailing_compositions = portable_trailing
         for composition in following_compositions:
             unicode_run = getattr(

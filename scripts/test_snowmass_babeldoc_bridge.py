@@ -613,12 +613,11 @@ class BabelDocWorkspaceTests(unittest.TestCase):
             ]
         )
 
-        with self.assertRaisesRegex(
-            RuntimeError, "Cross-page formula is not a portable numeric superscript"
-        ):
-            bridge.apply_cross_page_line_fragment_carries(
-                document, [(1, 0, 2, 0)]
-            )
+        applied = bridge.apply_cross_page_line_fragment_carries(
+            document, [(1, 0, 2, 0)]
+        )
+        self.assertEqual(applied, [])
+        self.assertEqual(document.page[0].pdf_paragraph[0].unicode, "quantity {v1}")
 
     def test_materializes_lazy_passthrough_values_before_xml_serialization(self) -> None:
         bridge = load_bridge()
