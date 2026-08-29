@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -265,6 +266,74 @@ def prepare_paper_qc(
     if ir_receipt is None:
         ir_receipt = extract_ir(source_pdf, ir_dir)
     ir_xml = ir_dir / str(ir_receipt["ir_xml"])
+    ir_json = ir_dir / str(ir_receipt["ir_json"])
+    ir_document = _load(ir_json, label="IR JSON")
+    import fitz
+
+    with fitz.open(source_pdf) as source_document:
+        source_pages_by_text: dict[str, list[int]] = {}
+        for page_number, source_page in enumerate(source_document, start=1):
+            for paragraph in ir_document.get("page") or []:
+                for item in paragraph.get("pdf_paragraph") or []:
+                    if not item.get("xobj_id"):
+                        continue
+                    text = str(item.get("unicode") or "").strip()
+                    normalized_text = "".join(text.split())
+                    word_match = any(
+                        normalized_text in "".join(str(word[4]).split())
+                        for word in source_page.get_text("words", sort=True)
+                    )
+                    if text and (source_page.search_for(text) or word_match):
+                        source_pages_by_text.setdefault(text, []).append(page_number)
+    verbatim_texts: list[tuple[int, str]] = []
+    output_placeholder_repairs: list[tuple[int, str, str]] = []
+    with fitz.open(raw_pdf) as translated_document:
+        placeholder_pattern = re.compile(r"\{v\d+\}(?:::\{v\d+\})?")
+        for page_index, page in enumerate(ir_document.get("page") or [], start=1):
+            for paragraph in page.get("pdf_paragraph") or []:
+                text = str(paragraph.get("unicode") or "").strip()
+                if not text or ("[" not in text and "::" not in text):
+                    continue
+                candidates = source_pages_by_text.get(text, [])
+                for source_page in candidates:
+                    if source_page not in selected_source_pages:
+                        continue
+                    output_index = selected_source_pages.index(source_page)
+                    output_text = translated_document[output_index].get_text()
+                    if text in output_text and not placeholder_pattern.search(output_text):
+                        continue
+                    match = placeholder_pattern.search(output_text)
+                    if match:
+                        output_placeholder_repairs.append(
+                            (source_page, match.group(0), text)
+                        )
+                        break
+    for page_index, page in enumerate(ir_document.get("page") or [], start=1):
+        for paragraph in page.get("pdf_paragraph") or []:
+            xobj_id = int(paragraph.get("xobj_id") or 0)
+            if xobj_id == 0:
+                continue
+            text = str(paragraph.get("unicode") or "").strip()
+            if text:
+                candidates = source_pages_by_text.get(text, [])
+                source_page = page_index if page_index in candidates else (
+                    candidates[0] if candidates else page_index
+                )
+                # Same-page xobject text is covered by the complete raster
+                # region.  Keep only text whose source occurrence proves that
+                # the IR attached it to a different page (a known BabelDOC
+                # cross-page ownership artifact such as a prose IPv6 token).
+                if source_page != page_index or (
+                    len(candidates) > 1
+                    and ("[" in text or "]" in text or "::" in text)
+                ):
+                    pages_to_protect = (
+                        candidates
+                        if ("[" in text or "]" in text or "::" in text)
+                        else [source_page]
+                    )
+                    for protected_page in pages_to_protect:
+                        verbatim_texts.append((protected_page, text))
 
     protected_dir = article / "protected"
     protected_pdf = protected_dir / f"{raw_pdf.stem}.protected.pdf"
@@ -280,6 +349,8 @@ def prepare_paper_qc(
         auto_header=auto_header,
         auto_front_matter=True,
         auto_header_min_recurrence=2,
+        verbatim_texts=tuple(verbatim_texts),
+        output_replacements=tuple(output_placeholder_repairs),
     )
     _atomic_json(protection_path, protection_receipt)
     if protection_receipt.get("verified") is not True:

@@ -407,11 +407,26 @@ def _has_embedded_raster_clip(
 def _source_text_rect(page: fitz.Page, text: str) -> fitz.Rect | None:
     matches = page.search_for(text)
     if matches:
-        rectangle = fitz.Rect(matches[0])
-        for match in matches[1:]:
+        return fitz.Rect(matches[0])
+    expected = _normalize(text)
+    # PDF text extraction commonly attaches punctuation to a neighboring
+    # word, e.g. ``([::1]).``.  Resolve these short protected tokens from
+    # word boxes before falling back to an entire text block; the latter can
+    # accidentally rasterize a whole page when a diagram and prose share a
+    # block in the source PDF.
+    word_matches: list[fitz.Rect] = []
+    for word in page.get_text("words", sort=True):
+        candidate = _normalize(str(word[4]))
+        if expected and (
+            expected in candidate
+            or (len(expected) >= 4 and candidate in expected)
+        ):
+            word_matches.append(fitz.Rect(*word[:4]))
+    if word_matches:
+        rectangle = word_matches[0]
+        for match in word_matches[1:]:
             rectangle |= match
         return rectangle
-    expected = _normalize(text)
     for block in page.get_text("blocks", sort=True):
         if _normalize(str(block[4])) == expected:
             return fitz.Rect(*block[:4])
@@ -2129,6 +2144,7 @@ def _protect_pdf_open_documents(
         reference_rectangles_by_output.setdefault(output_index, []).extend(clips)
         kind_counts["reference"] += 1
     verbatim_text_count = 0
+    verbatim_texts_covered_by_raster_region = 0
     verbatim_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
     identity_rectangles_by_output: dict[int, list[fitz.Rect]] = {}
     for source_page_number, source_text in verbatim_texts:
@@ -2140,6 +2156,22 @@ def _protect_pdf_open_documents(
             raise RuntimeError(
                 f"Verbatim source text was not found on page {source_page_number}"
             )
+        # A paragraph owned by a figure xobject is already restored by the
+        # whole source raster clip.  Adding a second, smaller image for every
+        # label inside that clip creates overlapping PDF image objects and can
+        # make the saved-page pixel-hash check nondeterministic.  The whole
+        # clip is the stronger protection boundary, so record the paragraph as
+        # covered while avoiding a nested restore operation.
+        raster_regions = raster_rectangles_by_output.get(output_index, [])
+        if any(
+            rectangle.get_area()
+            and ((rectangle & raster_region).get_area() / rectangle.get_area())
+            >= 0.8
+            for raster_region in raster_regions
+        ):
+            verbatim_texts_covered_by_raster_region += 1
+            verbatim_text_count += 1
+            continue
         verbatim_rectangles_by_output.setdefault(output_index, []).append(rectangle)
         verbatim_text_count += 1
     auto_front_matter_receipt: dict[str, object] | None = None
@@ -2511,6 +2543,7 @@ def _protect_pdf_open_documents(
         "repaired_toc_rows": repaired_toc_rows,
         "toc_topology": toc_topology,
         "verbatim_text_count": verbatim_text_count,
+        "verbatim_texts_covered_by_raster_region": verbatim_texts_covered_by_raster_region,
         "protected_regions": [
             {
                 "output_page": output_index + 1,
