@@ -1941,6 +1941,17 @@ def _citation_permutation_within_source_lines(
     return output_index == len(output_groups)
 
 
+def _document_citations_match(
+    source_groups: list[list[str]], output_groups: list[list[str]]
+) -> bool:
+    """Accept exact document order before considering safe source-line reflow."""
+    source_markers = [marker for group in source_groups for marker in group]
+    output_markers = [marker for group in output_groups for marker in group]
+    if source_markers == output_markers:
+        return True
+    return _citation_permutation_within_source_lines(source_groups, output_groups)
+
+
 def _normalize_numeric_citation_glyphs(
     document: fitz.Document,
 ) -> list[dict[str, object]]:
@@ -2362,7 +2373,7 @@ def _protect_pdf_open_documents(
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     translated.save(output_pdf, garbage=4, deflate=True)
 
-    document_citations_match = _citation_permutation_within_source_lines(
+    document_citations_match = _document_citations_match(
         document_source_line_groups,
         document_output_line_groups,
     )
