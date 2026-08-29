@@ -165,6 +165,38 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                 ["3.1", "3.2", "3.3"],
             )
 
+    def test_repairs_toc_rows_when_last_entry_wraps_to_dot_leader_line(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, translated, output, ir = self._make_toc_fixture(
+                Path(directory),
+                source_rows=[
+                    ("3.1", "Meetings", "4", False),
+                    ("3.2", "Conversations", "5", False),
+                    ("3.3", "Engagement", "5", False),
+                ],
+                translated_lines=[
+                    (150, "3.1 会谈 . . . 4 3.2 对话 . . ."),
+                    (172, ". . . 5 3.3 参与 . . . 5"),
+                ],
+            )
+
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+            )
+
+            self.assertTrue(receipt["verified"], receipt["failures"])
+            self.assertEqual(
+                [item["section_id"] for item in receipt["toc_topology"]],
+                ["3.1", "3.2", "3.3"],
+            )
+            self.assertTrue(all(item["matched"] for item in receipt["toc_topology"]))
+
     def test_toc_ids_use_exact_tokens_not_prefix_substrings(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf
 

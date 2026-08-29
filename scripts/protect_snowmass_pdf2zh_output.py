@@ -1731,11 +1731,50 @@ def _repair_merged_toc_rows(
         return [], 0
     repaired: list[dict[str, object]] = []
     group_count = 0
-    for line in _page_text_lines(output_page):
+    output_lines = _page_text_lines(output_page)
+    consumed_continuation_lines: set[int] = set()
+    for line_index, line in enumerate(output_lines):
+        if line_index in consumed_continuation_lines:
+            continue
         text = str(line["text"])
         line_rectangle = cast(fitz.Rect, line["rect"])
         line_section = _TOC_SECTION_PREFIX.match(_toc_text(text))
+        normalized_text = _toc_text(text)
+        if line_section is not None and line_index + 1 < len(output_lines):
+            next_line = output_lines[line_index + 1]
+            next_text = _toc_text(str(next_line["text"]))
+            next_rectangle = cast(fitz.Rect, next_line["rect"])
+            if (
+                re.match(r"^\s*[.·…]", next_text) is not None
+                and next_rectangle.y0 - line_rectangle.y0 <= 24.0
+            ):
+                normalized_text = _toc_text(f"{text} {next_text}")
+                line_rectangle |= next_rectangle
+                consumed_continuation_lines.add(line_index + 1)
         if line_section is None:
+            if re.match(r"^\s*[.·…]", normalized_text) is None:
+                continue
+            embedded_sections = [
+                (
+                    match.start(),
+                    entry,
+                )
+                for entry in source_entries
+                for match in _toc_id_matches(
+                    normalized_text,
+                    str(entry["section_id"]),
+                    allow_fused_left=True,
+                )
+            ]
+            if not embedded_sections:
+                continue
+            first_section = min(embedded_sections, key=lambda item: item[0])[1]
+            first_section_id = str(first_section["section_id"])
+            line_y_tolerance = 35.0
+        else:
+            first_section_id = line_section.group(1)
+            line_y_tolerance = 8.0
+        if not first_section_id:
             continue
         candidate_groups: list[
             tuple[list[dict[str, object]], list[tuple[dict[str, object], str]]]
@@ -1743,18 +1782,18 @@ def _repair_merged_toc_rows(
         for start in range(len(source_entries)):
             source_rectangle = cast(fitz.Rect, source_entries[start]["rect"])
             if (
-                line_section.group(1) != str(source_entries[start]["section_id"])
+                first_section_id != str(source_entries[start]["section_id"])
                 or abs(line_rectangle.x0 - source_rectangle.x0) > 24.0
-                or abs(line_rectangle.y0 - source_rectangle.y0) > 8.0
+                or abs(line_rectangle.y0 - source_rectangle.y0) > line_y_tolerance
             ):
                 continue
             if not _toc_id_matches(
-                text, str(source_entries[start]["section_id"])
+                normalized_text, str(source_entries[start]["section_id"])
             ):
                 continue
             for end in range(start + 1, len(source_entries) + 1):
                 entries = source_entries[start:end]
-                segments = _toc_title_segments(text, entries)
+                segments = _toc_title_segments(normalized_text, entries)
                 if len(segments) == len(entries):
                     candidate_groups.append((entries, segments))
         if not candidate_groups:
