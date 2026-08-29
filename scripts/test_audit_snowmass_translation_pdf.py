@@ -213,6 +213,24 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertTrue(report["ok"])
             self.assertNotIn("mixed_script_bottom_fragment:page_1", report["failures"])
 
+    def test_allows_scientific_unit_token_in_bottom_caption(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "unit-caption.pdf"
+            document = fitz.open()
+            page = document.new_page(width=595, height=842)
+            page.insert_text(
+                (72, 740),
+                "图 3：1-MeV-neq 通量图，参数见表 1。",
+                fontname="china-s",
+                fontsize=10,
+            )
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertTrue(report["ok"])
+
     def test_rejects_long_english_prose_residue_inside_chinese_body(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "fragment.pdf"
@@ -231,6 +249,19 @@ class PackagedPdfAuditTests(unittest.TestCase):
 
             self.assertFalse(report["ok"])
             self.assertIn("english_prose_residue:page_1", report["failures"])
+
+    def test_allows_academic_english_terms_in_chinese_parentheticals(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "terms.pdf"
+            self._write_pdf(
+                pdf,
+                ["标准模型（standard model）与暗物质（dark matter）是本文讨论对象。"],
+            )
+
+            report = audit_pdf(pdf)
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["english_prose_residue"], [])
 
     def test_rejects_english_only_prose_block_after_first_page(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

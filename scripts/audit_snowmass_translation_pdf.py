@@ -31,10 +31,18 @@ _LATIN_FRAGMENT_RE = re.compile(r"^[A-Za-z]{1,12}[.,]?$")
 _PUNCTUATION_FRAGMENT_RE = re.compile(r"^[.,;:]$")
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _MIXED_FRAGMENT_RE = re.compile(
-    r"(?:[\u3400-\u9fff]\s+[a-z]{2,}\b|\b[a-z]{2,}\s+[\u3400-\u9fff])"
+    # A single Latin token beside Chinese is often a unit, acronym, or
+    # proper name (for example ``1-MeV-neq 通量``).  Require a two-word
+    # English fragment before treating it as leaked prose.
+    r"(?:[\u3400-\u9fff]\s+[a-z]{2,}\s+[a-z]{2,}\b|"
+    r"\b[a-z]{2,}\s+[a-z]{2,}\s+[\u3400-\u9fff])"
 )
 _ENGLISH_PROSE_RE = re.compile(
-    r"\b[a-z]{2,}\b(?:[^A-Za-z]+[a-z]{2,}\b){3,}"
+    # Require a genuinely contiguous English clause.  Isolated terminology
+    # in Chinese parentheticals (for example ``standard model``) is valid;
+    # leaked English sentences such as ``provide compelling science reach``
+    # must still fail closed.
+    r"\b[a-z]{2,}\b(?:[^A-Za-z\u3400-\u9fff]+[a-z]{2,}\b){3,}"
 )
 _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 
