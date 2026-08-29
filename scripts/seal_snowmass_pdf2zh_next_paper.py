@@ -230,6 +230,47 @@ def _load_valid_ir_receipt(ir_dir: Path, source_pdf: Path) -> dict[str, Any] | N
     return receipt
 
 
+def _source_pages_by_xobj_texts(
+    ir_document: Mapping[str, Any], source_document: Any
+) -> dict[str, list[int]]:
+    """Locate figure text while reusing one MuPDF text page per source page."""
+
+    xobj_texts = {
+        str(item.get("unicode") or "").strip()
+        for page in ir_document.get("page") or []
+        for paragraph in page.get("pdf_paragraph") or []
+        for item in paragraph.get("pdf_paragraph") or []
+        if item.get("xobj_id") and str(item.get("unicode") or "").strip()
+    }
+    source_page_cache: list[tuple[Any, Any, str, tuple[str, ...]]] = []
+    for source_page in source_document:
+        textpage = source_page.get_textpage()
+        source_page_cache.append(
+            (
+                source_page,
+                textpage,
+                "".join(str(textpage.extractTEXT(sort=True)).split()),
+                tuple(
+                    "".join(str(word[4]).split())
+                    for word in textpage.extractWORDS()
+                ),
+            )
+        )
+
+    source_pages_by_text: dict[str, list[int]] = {}
+    for text in xobj_texts:
+        normalized_text = "".join(text.split())
+        for page_number, (source_page, textpage, page_text, words) in enumerate(
+            source_page_cache, start=1
+        ):
+            word_match = any(normalized_text in word for word in words)
+            if normalized_text not in page_text and not word_match:
+                continue
+            if textpage.search(text) or word_match:
+                source_pages_by_text.setdefault(text, []).append(page_number)
+    return source_pages_by_text
+
+
 def prepare_paper_qc(
     *,
     article: Path,
@@ -271,36 +312,9 @@ def prepare_paper_qc(
     import fitz
 
     with fitz.open(source_pdf) as source_document:
-        xobj_texts = {
-            str(item.get("unicode") or "").strip()
-            for page in ir_document.get("page") or []
-            for paragraph in page.get("pdf_paragraph") or []
-            for item in paragraph.get("pdf_paragraph") or []
-            if item.get("xobj_id") and str(item.get("unicode") or "").strip()
-        }
-        source_page_cache = []
-        for source_page in source_document:
-            source_page_cache.append(
-                (
-                    source_page,
-                    "".join(source_page.get_text().split()),
-                    tuple(
-                        "".join(str(word[4]).split())
-                        for word in source_page.get_text("words", sort=True)
-                    ),
-                )
-            )
-        source_pages_by_text: dict[str, list[int]] = {}
-        for text in xobj_texts:
-            normalized_text = "".join(text.split())
-            for page_number, (source_page, page_text, words) in enumerate(
-                source_page_cache, start=1
-            ):
-                word_match = normalized_text in words
-                if normalized_text not in page_text and not word_match:
-                    continue
-                if source_page.search_for(text) or word_match:
-                    source_pages_by_text.setdefault(text, []).append(page_number)
+        source_pages_by_text = _source_pages_by_xobj_texts(
+            ir_document, source_document
+        )
     verbatim_texts: list[tuple[int, str]] = []
     output_placeholder_repairs: list[tuple[int, str, str]] = []
     with fitz.open(raw_pdf) as translated_document:

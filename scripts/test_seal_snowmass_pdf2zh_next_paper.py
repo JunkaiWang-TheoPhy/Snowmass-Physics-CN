@@ -255,6 +255,55 @@ class SealPdf2zhNextPaperTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 seal_paper(**arguments)
 
+    def test_xobject_source_lookup_reuses_one_textpage_per_source_page(self) -> None:
+        from scripts.seal_snowmass_pdf2zh_next_paper import (
+            _source_pages_by_xobj_texts,
+        )
+
+        class FakePage:
+            def __init__(self, page_number: int) -> None:
+                self.page_number = page_number
+                self.textpage_calls = 0
+                self.search_calls: list[str] = []
+
+            def get_textpage(self) -> object:
+                self.textpage_calls += 1
+                page = self
+
+                class FakeTextPage:
+                    def extractTEXT(self, sort: bool = False) -> str:
+                        return "plot label"
+
+                    def extractWORDS(self, delimiters: object = None) -> list[tuple]:
+                        return [(0, 0, 1, 1, "plot label")]
+
+                    def search(self, text: str) -> list[object]:
+                        page.search_calls.append(text)
+                        return [object()] if text == "plot label" else []
+
+                return FakeTextPage()
+
+        pages = [FakePage(1), FakePage(2)]
+        ir_document = {
+            "page": [
+                {
+                    "pdf_paragraph": [
+                        {
+                            "pdf_paragraph": [
+                                {"xobj_id": 7, "unicode": "plot label"},
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+
+        result = _source_pages_by_xobj_texts(ir_document, pages)
+
+        self.assertEqual(result, {"plot label": [1, 2]})
+        self.assertEqual([page.textpage_calls for page in pages], [1, 1])
+        self.assertEqual([page.search_calls for page in pages], [["plot label"], ["plot label"]])
+
     def test_does_not_regress_existing_packaged_manifest(self) -> None:
         from scripts import snowmass_production_contract as production
         from scripts.seal_snowmass_pdf2zh_next_paper import seal_paper
