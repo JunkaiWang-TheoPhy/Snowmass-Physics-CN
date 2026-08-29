@@ -856,11 +856,34 @@ def normalize_hyphenated_numeric_ranges(source: str, translated: str) -> str:
     return normalized
 
 
+_SOURCE_TIER_LABEL_RE = re.compile(
+    r"\bTier-(?P<level>\d+)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def normalize_hyphenated_tier_labels(source: str, translated: str) -> str:
+    """Repair ``Tier-N`` rendered as ``-N`` using source evidence.
+
+    This is a punctuation/word-order repair, not a numeric relaxation: the
+    level digit remains present exactly once, while the Chinese ordinal suffix
+    makes the result readable (for example, ``Tier-1`` -> ``1级``).
+    """
+
+    normalized = translated
+    for match in _SOURCE_TIER_LABEL_RE.finditer(source):
+        level = match.group("level")
+        replacement = re.compile(rf"(?<![\d.])[-−]\s*{re.escape(level)}")
+        normalized, _count = replacement.subn(f"{level}级", normalized, count=1)
+    return normalized
+
+
 def normalize_source_evidenced_candidate(source: str, translated: str) -> str:
     """Apply deterministic candidate repairs that are justified by source text."""
 
     normalized = normalize_source_month_names(source, translated)
-    return normalize_hyphenated_numeric_ranges(source, normalized)
+    normalized = normalize_hyphenated_numeric_ranges(source, normalized)
+    return normalize_hyphenated_tier_labels(source, normalized)
 
 
 def sanitize_refinement_context(context: str) -> str:

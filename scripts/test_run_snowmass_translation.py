@@ -1388,6 +1388,15 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertEqual(normalized, "每个模块使用3乘3晶体矩阵。")
         self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
 
+    def test_tier_label_normalization_repairs_spurious_negative_level(self) -> None:
+        source = "The ATLAS and CMS Tier-1 sites provide the data."
+        candidate = "ATLAS和CMS以及-1站点提供数据。"
+
+        normalized = RUNNER.normalize_source_evidenced_candidate(source, candidate)
+
+        self.assertEqual(normalized, "ATLAS和CMS以及1级站点提供数据。")
+        self.assertTrue(RUNNER.validate_chunk(source, normalized, {}, []).ok)
+
     def test_anchor_json_accepts_one_unmatched_quote_before_closing_brace(self) -> None:
         protected, _mapping, _nodes = RUNNER.protect_stage_text("Bandwidth is 10 Gb/s.")
         _payload, anchors, markers = RUNNER.build_structure_anchor_input(protected)
