@@ -2279,6 +2279,8 @@ class ProcessChunkTests(unittest.TestCase):
         self.assertIn("pronoun", instructions)
         self.assertIn("Arabic numeral", instructions)
         self.assertIn(r"\%", instructions)
+        self.assertIn("citation marker", instructions)
+        self.assertIn("exactly once and in the same order", instructions)
 
     def test_process_chunk_reprocesses_legacy_checkpoint_without_qc(self) -> None:
         class InitialClient:
