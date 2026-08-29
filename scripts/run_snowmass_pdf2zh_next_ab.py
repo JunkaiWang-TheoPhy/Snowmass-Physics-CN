@@ -1486,13 +1486,26 @@ def _build_official_settings(spec: Mapping[str, Any], proxy_base_url: str) -> An
 @contextmanager
 def localhost_proxy_bypass_environment():
     """Isolate local and upstream HTTP clients from malformed proxy settings."""
-    proxy_names = (
+    known_proxy_names = (
         "HTTP_PROXY",
         "HTTPS_PROXY",
         "ALL_PROXY",
         "http_proxy",
         "https_proxy",
         "all_proxy",
+    )
+    proxy_names = tuple(
+        sorted(
+            {
+                *known_proxy_names,
+                *(
+                    name
+                    for name in os.environ
+                    if "proxy" in name.casefold()
+                    and name.casefold() not in {"no_proxy"}
+                ),
+            }
+        )
     )
     previous = {
         name: os.environ.get(name)
@@ -1507,7 +1520,7 @@ def localhost_proxy_bypass_environment():
     for host in ("127.0.0.1", "localhost"):
         if host not in bypass_hosts:
             bypass_hosts.append(host)
-    bypass = ",".join(bypass_hosts)
+    bypass = "*"
     os.environ["NO_PROXY"] = bypass
     os.environ["no_proxy"] = bypass
     for name in proxy_names:
