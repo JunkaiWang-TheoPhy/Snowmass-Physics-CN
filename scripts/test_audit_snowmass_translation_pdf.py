@@ -180,6 +180,25 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertFalse(report["ok"])
             self.assertIn("mixed_script_bottom_fragment:page_1", report["failures"])
 
+    def test_allows_source_url_and_product_name_in_bottom_label(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "url-label.pdf"
+            document = fitz.open()
+            page = document.new_page(width=1000, height=842)
+            page.insert_text(
+                (72, 740),
+                "2cms-xcache 镜像：https://hub.docker.com/r/opensciencegrid/cms-xcache",
+                fontname="china-s",
+                fontsize=10,
+            )
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertTrue(report["ok"])
+            self.assertNotIn("mixed_script_bottom_fragment:page_1", report["failures"])
+
     def test_rejects_long_english_prose_residue_inside_chinese_body(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "fragment.pdf"
