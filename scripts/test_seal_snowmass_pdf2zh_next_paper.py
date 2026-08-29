@@ -304,6 +304,24 @@ class SealPdf2zhNextPaperTests(unittest.TestCase):
         self.assertEqual([page.textpage_calls for page in pages], [1, 1])
         self.assertEqual([page.search_calls for page in pages], [["plot label"], ["plot label"]])
 
+    def test_source_text_rect_can_use_cached_textpage_without_page_text_extraction(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _source_text_rect
+
+        class FakeTextPage:
+            def search(self, text: str, quads: int = 0) -> list[tuple[float, ...]]:
+                return [(1.0, 2.0, 3.0, 4.0)]
+
+        class FakePage:
+            def search_for(self, text: str) -> list[object]:
+                raise AssertionError("uncached Page.search_for was called")
+
+            def get_text(self, *args: object, **kwargs: object) -> object:
+                raise AssertionError("uncached Page.get_text was called")
+
+        rectangle = _source_text_rect(FakePage(), "token", textpage=FakeTextPage())
+
+        self.assertEqual(tuple(rectangle), (1.0, 2.0, 3.0, 4.0))
+
     def test_does_not_regress_existing_packaged_manifest(self) -> None:
         from scripts import snowmass_production_contract as production
         from scripts.seal_snowmass_pdf2zh_next_paper import seal_paper

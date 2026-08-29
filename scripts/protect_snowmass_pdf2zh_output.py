@@ -189,13 +189,24 @@ def _coalesce_reference_columns(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
     return sorted(columns, key=lambda item: item.x0)
 
 
-def _reference_clips(source: fitz.Document) -> dict[int, list[fitz.Rect]]:
+def _reference_clips(
+    source: fitz.Document, textpages: dict[int, object] | None = None
+) -> dict[int, list[fitz.Rect]]:
     clips: dict[int, list[fitz.Rect]] = {}
     in_references = False
     for page_index, page in enumerate(source):
+        textpage = textpages.get(page_index) if textpages else None
         heading_rects = [
-            *page.search_for("References"),
-            *page.search_for("Bibliography"),
+            *(
+                [fitz.Rect(rectangle) for rectangle in textpage.search("References", quads=0)]
+                if textpage is not None
+                else page.search_for("References")
+            ),
+            *(
+                [fitz.Rect(rectangle) for rectangle in textpage.search("Bibliography", quads=0)]
+                if textpage is not None
+                else page.search_for("Bibliography")
+            ),
         ]
         heading = (
             min(heading_rects, key=lambda rectangle: rectangle.y0)
@@ -208,7 +219,12 @@ def _reference_clips(source: fitz.Document) -> dict[int, list[fitz.Rect]]:
             continue
         page_clips: list[fitz.Rect] = []
         all_text_rectangles: list[fitz.Rect] = []
-        for block in page.get_text("dict", sort=True).get("blocks", []):
+        blocks = (
+            textpage.extractDICT(sort=True)
+            if textpage is not None
+            else page.get_text("dict", sort=True)
+        )
+        for block in blocks.get("blocks", []):
             if block.get("type") != 0:
                 continue
             lines = []
@@ -283,21 +299,34 @@ def _reference_clips(source: fitz.Document) -> dict[int, list[fitz.Rect]]:
     return clips
 
 
-def _find_header_rect(page: fitz.Page, source_header: str) -> fitz.Rect | None:
+def _find_header_rect(
+    page: fitz.Page, source_header: str, textpage: object | None = None
+) -> fitz.Rect | None:
     matches = [
-        rectangle
-        for rectangle in page.search_for(source_header)
-        if rectangle.y0 < page.rect.height * 0.16
+        fitz.Rect(rectangle)
+        for rectangle in (
+            textpage.search(source_header, quads=0)
+            if textpage is not None
+            else page.search_for(source_header)
+        )
+        if fitz.Rect(rectangle).y0 < page.rect.height * 0.16
     ]
     return min(matches, key=lambda rectangle: rectangle.y0) if matches else None
 
 
-def _insert_header(page: fitz.Page, rectangle: fitz.Rect, text: str) -> None:
+def _insert_header(
+    page: fitz.Page,
+    rectangle: fitz.Rect,
+    text: str,
+    *,
+    already_redacted: bool = False,
+) -> None:
     patch = fitz.Rect(
         rectangle.x0 - 2, rectangle.y0 - 1, rectangle.x1 + 2, rectangle.y1 + 0.5
     )
-    page.add_redact_annot(patch, fill=(1, 1, 1))
-    page.apply_redactions()
+    if not already_redacted:
+        page.add_redact_annot(patch, fill=(1, 1, 1))
+        page.apply_redactions()
     segments = [
         segment
         for segment in re.findall(r"[\x20-\x7e]+|[^\x20-\x7e]+", text)
@@ -404,8 +433,14 @@ def _has_embedded_raster_clip(
     return False
 
 
-def _source_text_rect(page: fitz.Page, text: str) -> fitz.Rect | None:
-    matches = page.search_for(text)
+def _source_text_rect(
+    page: fitz.Page, text: str, textpage: object | None = None
+) -> fitz.Rect | None:
+    matches = (
+        [fitz.Rect(rectangle) for rectangle in textpage.search(text, quads=0)]
+        if textpage is not None
+        else page.search_for(text)
+    )
     if matches:
         return fitz.Rect(matches[0])
     expected = _normalize(text)
@@ -415,7 +450,12 @@ def _source_text_rect(page: fitz.Page, text: str) -> fitz.Rect | None:
     # accidentally rasterize a whole page when a diagram and prose share a
     # block in the source PDF.
     word_matches: list[fitz.Rect] = []
-    for word in page.get_text("words", sort=True):
+    words = (
+        textpage.extractWORDS()
+        if textpage is not None
+        else page.get_text("words", sort=True)
+    )
+    for word in words:
         candidate = _normalize(str(word[4]))
         if expected and (
             expected in candidate
@@ -427,15 +467,27 @@ def _source_text_rect(page: fitz.Page, text: str) -> fitz.Rect | None:
         for match in word_matches[1:]:
             rectangle |= match
         return rectangle
-    for block in page.get_text("blocks", sort=True):
+    blocks = (
+        textpage.extractBLOCKS()
+        if textpage is not None
+        else page.get_text("blocks", sort=True)
+    )
+    for block in blocks:
         if _normalize(str(block[4])) == expected:
             return fitz.Rect(*block[:4])
     return None
 
 
-def _page_text_blocks(page: fitz.Page) -> list[dict[str, object]]:
+def _page_text_blocks(
+    page: fitz.Page, textpage: object | None = None
+) -> list[dict[str, object]]:
     blocks: list[dict[str, object]] = []
-    for block in page.get_text("dict").get("blocks", []):
+    text_blocks = (
+        textpage.extractDICT()
+        if textpage is not None
+        else page.get_text("dict")
+    )
+    for block in text_blocks.get("blocks", []):
         if block.get("type") != 0:
             continue
         lines: list[str] = []
@@ -583,6 +635,7 @@ def _discover_running_headers(
     page_map: dict[int, int],
     *,
     min_recurrence: int,
+    source_textpages: dict[int, object] | None = None,
 ) -> list[dict[str, object]]:
     candidates: dict[str, dict[str, object]] = {}
     for source_page_number in selected_source_pages:
@@ -591,7 +644,10 @@ def _discover_running_headers(
         page = source[source_page_number - 1]
         top_limit = page.rect.height * 0.10
         maximum_header_height = page.rect.height * 0.022
-        for block in _page_text_blocks(page):
+        for block in _page_text_blocks(
+            page,
+            textpage=(source_textpages or {}).get(source_page_number - 1),
+        ):
             rectangle = cast(fitz.Rect, block["rect"])
             normalized = str(block["normalized"])
             if (
@@ -1859,10 +1915,16 @@ def _numeric_citation_line_groups(
     page: fitz.Page,
     *,
     excluded_rectangles: tuple[fitz.Rect, ...] = (),
+    textpage: object | None = None,
 ) -> list[list[str]]:
     fragments: list[tuple[fitz.Rect, list[str]]] = []
     pending_fragment: tuple[fitz.Rect, str] | None = None
-    for block in page.get_text("dict", sort=True).get("blocks", []):
+    text_blocks = (
+        textpage.extractDICT(sort=True)
+        if textpage is not None
+        else page.get_text("dict", sort=True)
+    )
+    for block in text_blocks.get("blocks", []):
         if block.get("type") != 0:
             continue
         for line in block.get("lines", []):
@@ -2114,11 +2176,15 @@ def _protect_pdf_open_documents(
     """Restore figure/table/reference regions and enforce one canonical header."""
 
     figures, tables = _ir_regions(ir_xml)
+    source_textpages = {
+        page_index: page.get_textpage()
+        for page_index, page in enumerate(source)
+    }
     page_map = {
         source_page: output_index
         for output_index, source_page in enumerate(selected_source_pages)
     }
-    reference_clips = _reference_clips(source)
+    reference_clips = _reference_clips(source, source_textpages)
     if len(translated) != len(selected_source_pages):
         raise RuntimeError("Translated page count does not match selected source pages")
     if auto_header_min_recurrence < 2:
@@ -2133,6 +2199,7 @@ def _protect_pdf_open_documents(
             selected_source_pages,
             page_map,
             min_recurrence=auto_header_min_recurrence,
+            source_textpages=source_textpages,
         )
         header_families = [
             (str(family["source_text"]), str(family["canonical_target"]))
@@ -2171,7 +2238,11 @@ def _protect_pdf_open_documents(
         output_index = page_map.get(source_page_number)
         if output_index is None:
             continue
-        rectangle = _source_text_rect(source[source_page_number - 1], source_text)
+        rectangle = _source_text_rect(
+            source[source_page_number - 1],
+            source_text,
+            textpage=source_textpages[source_page_number - 1],
+        )
         if rectangle is None:
             raise RuntimeError(
                 f"Verbatim source text was not found on page {source_page_number}"
@@ -2223,11 +2294,25 @@ def _protect_pdf_open_documents(
             rectangles
         )
 
+    header_rectangles_by_output: dict[int, list[tuple[fitz.Rect, str]]] = {}
+    for resolved_source_header, resolved_target_header in header_families:
+        for output_index, source_page_number in enumerate(selected_source_pages):
+            source_rect = _find_header_rect(
+                source[source_page_number - 1],
+                resolved_source_header,
+                textpage=source_textpages[source_page_number - 1],
+            )
+            if source_rect is not None:
+                header_rectangles_by_output.setdefault(output_index, []).append(
+                    (source_rect, resolved_target_header)
+                )
+
     protected_regions: list[tuple[int, int, fitz.Rect, str, str | None]] = []
     all_output_indices = sorted(
         set(raster_rectangles_by_output)
         | set(identity_rectangles_by_output)
         | set(reference_rectangles_by_output)
+        | set(header_rectangles_by_output)
     )
     for output_index in all_output_indices:
         source_page_number = selected_source_pages[output_index]
@@ -2249,6 +2334,18 @@ def _protect_pdf_open_documents(
         for rectangle in reference_rectangles:
             output_page.add_redact_annot(
                 _reference_redaction_rectangle(output_page, rectangle),
+                fill=(1, 1, 1),
+            )
+        for rectangle, _target_text in header_rectangles_by_output.get(
+            output_index, []
+        ):
+            output_page.add_redact_annot(
+                fitz.Rect(
+                    rectangle.x0 - 2,
+                    rectangle.y0 - 1,
+                    rectangle.x1 + 2,
+                    rectangle.y1 + 0.5,
+                ),
                 fill=(1, 1, 1),
             )
         output_page.apply_redactions()
@@ -2291,15 +2388,14 @@ def _protect_pdf_open_documents(
         reference_heading_count += 1
 
     header_count = 0
-    for resolved_source_header, resolved_target_header in header_families:
-        for output_index, source_page_number in enumerate(selected_source_pages):
-            source_rect = _find_header_rect(
-                source[source_page_number - 1],
-                resolved_source_header,
+    for output_index, headers in header_rectangles_by_output.items():
+        for source_rect, target_text in headers:
+            _insert_header(
+                translated[output_index],
+                source_rect,
+                target_text,
+                already_redacted=True,
             )
-            if source_rect is None:
-                continue
-            _insert_header(translated[output_index], source_rect, resolved_target_header)
             header_count += 1
 
     fixed_replacement_count = 0
@@ -2309,7 +2405,9 @@ def _protect_pdf_open_documents(
         if output_index is None:
             continue
         source_rectangle = _source_text_rect(
-            source[source_page_number - 1], source_text
+            source[source_page_number - 1],
+            source_text,
+            textpage=source_textpages[source_page_number - 1],
         )
         if source_rectangle is None:
             raise RuntimeError(
@@ -2323,7 +2421,9 @@ def _protect_pdf_open_documents(
         if output_index is None:
             continue
         source_rectangle = _source_text_rect(
-            source[source_page_number - 1], source_text
+            source[source_page_number - 1],
+            source_text,
+            textpage=source_textpages[source_page_number - 1],
         )
         if source_rectangle is None:
             raise RuntimeError(
@@ -2383,6 +2483,7 @@ def _protect_pdf_open_documents(
         source_line_groups = _numeric_citation_line_groups(
             source[source_page_number - 1],
             excluded_rectangles=exclusions,
+            textpage=source_textpages[source_page_number - 1],
         )
         source_markers = [
             marker for group in source_line_groups for marker in group
@@ -2474,6 +2575,7 @@ def _protect_pdf_open_documents(
                     _find_header_rect(
                         source[source_page_number - 1],
                         resolved_source_header,
+                        textpage=source_textpages[source_page_number - 1],
                     )
                     is None
                 ):
