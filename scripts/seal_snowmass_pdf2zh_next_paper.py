@@ -271,20 +271,36 @@ def prepare_paper_qc(
     import fitz
 
     with fitz.open(source_pdf) as source_document:
-        source_pages_by_text: dict[str, list[int]] = {}
-        for page_number, source_page in enumerate(source_document, start=1):
-            for paragraph in ir_document.get("page") or []:
-                for item in paragraph.get("pdf_paragraph") or []:
-                    if not item.get("xobj_id"):
-                        continue
-                    text = str(item.get("unicode") or "").strip()
-                    normalized_text = "".join(text.split())
-                    word_match = any(
-                        normalized_text in "".join(str(word[4]).split())
+        xobj_texts = {
+            str(item.get("unicode") or "").strip()
+            for page in ir_document.get("page") or []
+            for paragraph in page.get("pdf_paragraph") or []
+            for item in paragraph.get("pdf_paragraph") or []
+            if item.get("xobj_id") and str(item.get("unicode") or "").strip()
+        }
+        source_page_cache = []
+        for source_page in source_document:
+            source_page_cache.append(
+                (
+                    source_page,
+                    "".join(source_page.get_text().split()),
+                    tuple(
+                        "".join(str(word[4]).split())
                         for word in source_page.get_text("words", sort=True)
-                    )
-                    if text and (source_page.search_for(text) or word_match):
-                        source_pages_by_text.setdefault(text, []).append(page_number)
+                    ),
+                )
+            )
+        source_pages_by_text: dict[str, list[int]] = {}
+        for text in xobj_texts:
+            normalized_text = "".join(text.split())
+            for page_number, (source_page, page_text, words) in enumerate(
+                source_page_cache, start=1
+            ):
+                word_match = normalized_text in words
+                if normalized_text not in page_text and not word_match:
+                    continue
+                if source_page.search_for(text) or word_match:
+                    source_pages_by_text.setdefault(text, []).append(page_number)
     verbatim_texts: list[tuple[int, str]] = []
     output_placeholder_repairs: list[tuple[int, str, str]] = []
     with fitz.open(raw_pdf) as translated_document:
