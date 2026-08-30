@@ -46,6 +46,15 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertTrue(clips)
         document.close()
 
+    def test_body_word_reference_is_not_a_bibliography_heading(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 100), "This reference discusses the method.")
+        self.assertEqual(_reference_clips(document), {})
+        document.close()
+
     def test_removes_only_debug_labels_from_marked_page(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _remove_debug_labels
 

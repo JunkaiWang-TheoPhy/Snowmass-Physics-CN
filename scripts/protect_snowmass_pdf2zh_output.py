@@ -200,23 +200,15 @@ def _reference_clips(
     in_references = False
     for page_index, page in enumerate(source):
         textpage = textpages.get(page_index) if textpages else None
-        heading_rects = [
-            *(
-                [fitz.Rect(rectangle) for rectangle in textpage.search("References", quads=0)]
-                if textpage is not None
-                else page.search_for("References")
-            ),
-            *(
-                [fitz.Rect(rectangle) for rectangle in textpage.search("Reference", quads=0)]
-                if textpage is not None
-                else page.search_for("Reference")
-            ),
-            *(
-                [fitz.Rect(rectangle) for rectangle in textpage.search("Bibliography", quads=0)]
-                if textpage is not None
-                else page.search_for("Bibliography")
-            ),
-        ]
+        heading_rects: list[fitz.Rect] = []
+        blocks = textpage.extractDICT(sort=True) if textpage is not None else page.get_text("dict", sort=True)
+        for block in blocks.get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                line_text = "".join(str(span.get("text", "")) for span in line.get("spans", [])).strip()
+                if re.fullmatch(r"(?:References?|Bibliography|参考文献|文献)\s*[:：]?", line_text, re.IGNORECASE):
+                    heading_rects.append(fitz.Rect(*line["bbox"]))
         heading = (
             min(heading_rects, key=lambda rectangle: rectangle.y0)
             if heading_rects
