@@ -1570,7 +1570,7 @@ _DEBUG_LABEL_SEARCH_RE = re.compile(
     r"(?:titlearagraph\[[^\]]+\]-\[(?:plain(?:\x03|\s)text|plaintext)\]|"
     r"paragraph\[[^\]]+\]-\[(?:plain(?:\x03|\s)text|plaintext|title)\]|"
     r"plain(?:\x03|\s)text|plaintext|formula|figure_caption|isolate_formula|"
-    r"figure|fallback_line|pagenumber:\x03?\d+|Form\[[^\]]+\])",
+    r"figure|abandon|fallback_line|pagenumber:\x03?\d+|Form\[[^\]]+\])",
     re.IGNORECASE,
 )
 
