@@ -246,16 +246,22 @@ def _reference_clips(
                 for index, (_, text) in enumerate(lines)
                 if re.match(r"^\[\d+\]\s+\S", text)
             ]
-            if not starts:
+            if not starts and not in_references:
                 continue
-            first_reference_line = min(starts)
-            prefix_text = " ".join(
-                text for _, text in lines[:first_reference_line]
-            ).casefold()
-            preserve_prefix = bool(
-                re.search(r"(?:https?://|doi\s*:|doi\.org|arxiv\s*:)", prefix_text)
-            )
-            reference_lines = lines if preserve_prefix else lines[first_reference_line:]
+            if starts:
+                first_reference_line = min(starts)
+                prefix_text = " ".join(
+                    text for _, text in lines[:first_reference_line]
+                ).casefold()
+                preserve_prefix = bool(
+                    re.search(r"(?:https?://|doi\s*:|doi\.org|arxiv\s*:)", prefix_text)
+                )
+                reference_lines = lines if preserve_prefix else lines[first_reference_line:]
+            else:
+                # Author-year bibliographies and continuation pages do not
+                # begin with ``[n]``. Once the heading has been seen, protect
+                # the remaining text on the page as bibliography as well.
+                reference_lines = lines
             page_clips.append(
                 fitz.Rect(
                     max(0.0, min(rectangle.x0 for rectangle, _ in reference_lines) - 2.0),
