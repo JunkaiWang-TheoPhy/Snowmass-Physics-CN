@@ -542,7 +542,10 @@ def plan_stage(
     ]
     if args.stage == "deepseek_probe" and selected_ids != [FORMAL_PROBE_RECORD_ID]:
         raise RuntimeError(f"formal deepseek probe must be {FORMAL_PROBE_RECORD_ID}")
-    projected_total = max(len(selected), stage_request_cap // 2)
+    # Reserve most of the finite stage request budget for execution headroom:
+    # runtime caps are three times the projected allocation. A quarter/three
+    # quarter split keeps both sums within the same finite stage cap.
+    projected_total = max(len(selected), stage_request_cap // 4)
     projected_allocations = _request_allocations(projected_total, selected)
     if stage_request_cap < 10 * len(selected):
         # Tiny unit/probe plans intentionally have a tiny total cap; retain
