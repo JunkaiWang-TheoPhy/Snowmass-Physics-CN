@@ -2417,6 +2417,103 @@ def _restore_citation_sequence(
     return receipt
 
 
+def _restore_missing_citations_from_source(
+    source: fitz.Document,
+    translated: fitz.Document,
+    *,
+    selected_source_pages: tuple[int, ...],
+    excluded_rectangles_by_page: dict[int, list[fitz.Rect]],
+) -> dict[str, object]:
+    """Restore citations omitted by the model at their source-page anchors.
+
+    This is deliberately narrower than general text repair: it only handles
+    a translated page whose citation markers are a subset of the source
+    markers, rejects unknown markers, and never touches figure/table/reference
+    regions.  The later document-level conservation check remains mandatory.
+    """
+    source_candidates: list[tuple[int, str, fitz.Rect, float, tuple[float, float, float]]] = []
+    output_candidates: list[tuple[int, str, fitz.Rect]] = []
+
+    def collect(document: fitz.Document, page_indexes: list[int], output: bool) -> None:
+        target = output_candidates if output else source_candidates
+        for output_index, page_index in enumerate(page_indexes):
+            page = document[page_index]
+            excluded = tuple(excluded_rectangles_by_page.get(output_index, []))
+            for block in page.get_text("rawdict", sort=True).get("blocks", []):
+                if block.get("type") != 0:
+                    continue
+                for line in block.get("lines", []):
+                    chars = [
+                        (str(char.get("c", "")), fitz.Rect(*char["bbox"]), span)
+                        for span in line.get("spans", [])
+                        for char in span.get("chars", [])
+                    ]
+                    line_text = "".join(item[0] for item in chars)
+                    for match in _NUMERIC_CITATION_MARKER.finditer(line_text):
+                        matched = chars[match.start():match.end()]
+                        if not matched:
+                            continue
+                        rect = fitz.Rect(matched[0][1])
+                        for _char, char_rect, _span in matched[1:]:
+                            rect |= char_rect
+                        center = fitz.Point((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+                        if any(item.contains(center) for item in excluded):
+                            continue
+                        marker = _normalize_numeric_citation_marker(match.group(0))
+                        if output:
+                            target.append((output_index, marker, rect))
+                        else:
+                            span = matched[0][2]
+                            color = fitz.sRGB_to_rgb(int(span.get("color", 0)))
+                            target.append((output_index, marker, rect, float(span["size"]), tuple(channel / 255 for channel in color)))
+
+    collect(source, [page - 1 for page in selected_source_pages], False)
+    collect(translated, list(range(len(selected_source_pages))), True)
+    expected = [item[1] for item in source_candidates]
+    actual = [item[1] for item in output_candidates]
+    missing: list[tuple[int, str, fitz.Rect, float, tuple[float, float, float]]] = []
+    for page_index in range(len(selected_source_pages)):
+        source_page = [item for item in source_candidates if item[0] == page_index]
+        output_page = [item for item in output_candidates if item[0] == page_index]
+        expected_page = [item[1] for item in source_page]
+        actual_page = [item[1] for item in output_page]
+        # A page with an unknown or relocated citation remains fail-closed;
+        # do not let it prevent safe recovery on unrelated pages.
+        if not expected_page or any(
+            marker not in set(expected_page) for marker in actual_page
+        ):
+            continue
+        # Match by in-page order rather than coordinates: Chinese reflow can
+        # move a citation substantially while preserving the source sequence.
+        output_cursor = 0
+        page_missing = []
+        for item in source_page:
+            _output_index, marker, rect, size, color = item
+            if output_cursor < len(output_page) and output_page[output_cursor][1] == marker:
+                output_cursor += 1
+            else:
+                page_missing.append(item)
+        if page_missing and output_cursor == len(output_page):
+            missing.extend(page_missing)
+    if not missing:
+        return {"attempted": False, "replaced_count": 0, "reason": "not_a_safe_subset"}
+    for output_index, marker, rect, size, color in missing:
+        translated[output_index].insert_text(
+            fitz.Point(rect.x0, rect.y1 - size * 0.2),
+            marker,
+            fontsize=size,
+            fontname="tiro",
+            color=color,
+            overlay=True,
+        )
+    return {
+        "attempted": True,
+        "replaced_count": len(missing),
+        "source_sha256": _text_sha256("\n".join(expected)),
+        "before_sha256": _text_sha256("\n".join(actual)),
+    }
+
+
 def protect_pdf(
     *,
     source_pdf: Path,
@@ -2826,6 +2923,19 @@ def _protect_pdf_open_documents(
             }
         )
 
+    citation_missing_repair = _restore_missing_citations_from_source(
+        source,
+        translated,
+        selected_source_pages=selected_source_pages,
+        excluded_rectangles_by_page={
+            index: [
+                *raster_rectangles_by_output.get(index, []),
+                *identity_rectangles_by_output.get(index, []),
+                *reference_rectangles_by_output.get(index, []),
+            ]
+            for index in range(len(selected_source_pages))
+        },
+    )
     citation_sequence_repair = _restore_citation_sequence(
         translated,
         expected_markers=[
@@ -2842,6 +2952,11 @@ def _protect_pdf_open_documents(
             for index in range(len(selected_source_pages))
         },
     )
+    if citation_missing_repair.get("attempted") is True:
+        citation_sequence_repair = {
+            **citation_missing_repair,
+            "permutation": citation_sequence_repair,
+        }
     if citation_sequence_repair.get("attempted") is True:
         document_output_line_groups = []
         for output_index in range(len(selected_source_pages)):

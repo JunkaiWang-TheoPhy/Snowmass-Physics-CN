@@ -12,6 +12,29 @@ import fitz
 
 
 class ProtectPdf2zhOutputTests(unittest.TestCase):
+    def test_restores_a_source_citation_omitted_by_translation(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import (
+            _restore_missing_citations_from_source,
+        )
+
+        source = fitz.open()
+        source_page = source.new_page(width=612, height=792)
+        source_page.insert_text((100, 100), "正文 [4]", fontsize=10)
+        translated = fitz.open()
+        translated_page = translated.new_page(width=612, height=792)
+        translated_page.insert_text((100, 100), "正文", fontname="china-s", fontsize=10)
+        receipt = _restore_missing_citations_from_source(
+            source,
+            translated,
+            selected_source_pages=(1,),
+            excluded_rectangles_by_page={0: []},
+        )
+        self.assertTrue(receipt["attempted"])
+        self.assertEqual(receipt["replaced_count"], 1)
+        self.assertIn("[4]", translated_page.get_text())
+        source.close()
+        translated.close()
+
     def test_removes_only_debug_labels_from_marked_page(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _remove_debug_labels
 
