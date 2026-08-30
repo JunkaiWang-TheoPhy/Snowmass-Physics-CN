@@ -81,6 +81,7 @@ class RunConfig:
     project_control_dir: Path | None = None
     usd_cny_rate: float = USD_CNY_RATE
     supplemental_glossary_json: Path | None = None
+    projected_request_cap: int | None = None
 
 
 def utc_now() -> datetime:
@@ -1792,9 +1793,15 @@ def execute(
         pool_max_workers=config.pool_max_workers,
     )
     inspection = dict(inspector(config.source_pdf, config.pages))
+    projected_request_cap = config.projected_request_cap or request_cap
+    projected_request_cap = validate_request_cap(projected_request_cap)
+    if projected_request_cap > request_cap:
+        raise ValueError("projected request cap cannot exceed runtime request cap")
     projection = project_maximum_cost(
-        inspection, request_cap=request_cap, usd_cny_rate=config.usd_cny_rate
+        inspection, request_cap=projected_request_cap, usd_cny_rate=config.usd_cny_rate
     )
+    projection["runtime_request_cap"] = request_cap
+    projection["projected_request_cap"] = projected_request_cap
     project_commitment = read_project_commitment(config.project_control_dir)
     if projection["max_cost_rmb"] > stage_budget:
         raise BudgetExceededError(
@@ -1970,6 +1977,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project-max-cost-rmb", type=float, default=100.0)
     parser.add_argument("--stage-max-cost-rmb", type=float, default=10.0)
     parser.add_argument("--stage-max-api-calls", type=int, default=125)
+    parser.add_argument("--projected-request-cap", type=int)
     parser.add_argument("--qps", type=int, default=2)
     parser.add_argument("--pool-max-workers", type=int, default=2)
     parser.add_argument(
@@ -1995,6 +2003,7 @@ def main(argv: list[str] | None = None) -> int:
         project_max_cost_rmb=args.project_max_cost_rmb,
         stage_max_cost_rmb=args.stage_max_cost_rmb,
         stage_max_api_calls=args.stage_max_api_calls,
+        projected_request_cap=args.projected_request_cap,
         qps=args.qps,
         pool_max_workers=args.pool_max_workers,
         project_control_dir=args.project_control_dir,

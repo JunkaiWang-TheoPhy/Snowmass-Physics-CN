@@ -394,6 +394,8 @@ def _adapter_command(config: ab_runner.RunConfig, *, preflight_only: bool) -> li
         "--project-control-dir",
         str(config.project_control_dir),
     ]
+    if config.projected_request_cap is not None:
+        command.extend(["--projected-request-cap", str(config.projected_request_cap)])
     if config.supplemental_glossary_json is not None:
         command.extend(
             ["--supplemental-glossary-json", str(config.supplemental_glossary_json)]
@@ -530,13 +532,17 @@ def plan_stage(
     ]
     if args.stage == "deepseek_probe" and selected_ids != [FORMAL_PROBE_RECORD_ID]:
         raise RuntimeError(f"formal deepseek probe must be {FORMAL_PROBE_RECORD_ID}")
-    allocations = _request_allocations(stage_request_cap, selected)
+    runtime_allocations = _request_allocations(stage_request_cap, selected)
+    projected_total = max(len(selected), stage_request_cap // 2)
+    projected_allocations = _request_allocations(projected_total, selected)
     source_by_id = _source_records(args.source_manifest)
     preflight_runner = preflight_runner or _default_preflight_runner
     papers: list[dict[str, Any]] = []
     projection_cost = 0.0
     projection_requests = 0
-    for index, (record, request_allocation) in enumerate(zip(selected, allocations)):
+    for index, (record, request_allocation, projected_request_allocation) in enumerate(
+        zip(selected, runtime_allocations, projected_allocations)
+    ):
         record_id = selected_ids[index]
         identity = source_by_id.get(record_id)
         if identity is None:
@@ -578,6 +584,7 @@ def plan_stage(
             project_max_cost_rmb=project_budget,
             stage_max_cost_rmb=paper_budget,
             stage_max_api_calls=request_allocation,
+            projected_request_cap=projected_request_allocation,
             qps=args.qps,
             pool_max_workers=args.pool_max_workers,
             project_control_dir=args.project_control_dir,
@@ -588,9 +595,20 @@ def plan_stage(
         projection = preflight.get("projection")
         if not isinstance(projection, dict):
             raise RuntimeError(f"paper projection is missing: {record_id}")
-        projected_requests = int(projection.get("request_cap") or 0)
+        projected_requests = int(
+            projection.get("projected_request_cap")
+            or projection.get("request_cap")
+            or 0
+        )
+        runtime_request_cap = int(
+            projection.get("runtime_request_cap") or request_allocation
+        )
         projected_cost = float(projection.get("max_cost_rmb") or 0)
-        if projected_requests <= 0 or projected_requests > request_allocation:
+        if (
+            projected_requests <= 0
+            or projected_requests > runtime_request_cap
+            or runtime_request_cap != request_allocation
+        ):
             raise ValueError(f"paper projection exceeds request cap: {record_id}")
         if (
             not math.isfinite(projected_cost)
@@ -616,6 +634,7 @@ def plan_stage(
                 "pages": config.pages,
                 "page_count": int(record.get("page_count") or 0),
                 "request_cap": request_allocation,
+                "projected_request_cap": projected_requests,
                 "stage_max_cost_rmb": paper_budget,
                 "projection": projection,
                 "preflight_path": str(preflight_path.resolve()),
@@ -779,6 +798,9 @@ def _config_from_plan(
         project_max_cost_rmb=float(request["project_max_cost_rmb"]),
         stage_max_cost_rmb=float(paper["stage_max_cost_rmb"]),
         stage_max_api_calls=int(paper["request_cap"]),
+        projected_request_cap=int(
+            paper.get("projected_request_cap") or paper["request_cap"]
+        ),
         qps=int(request["qps"]),
         pool_max_workers=int(request["pool_max_workers"]),
         project_control_dir=Path(str(plan["project_control_dir"])),
