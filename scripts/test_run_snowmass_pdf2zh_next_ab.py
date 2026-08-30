@@ -624,6 +624,29 @@ class LocalBudgetProxyTests(unittest.TestCase):
 
 
 class SharedProjectReservationTests(unittest.TestCase):
+    def test_read_project_commitment_reconciles_dead_reservations(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            control = Path(temporary)
+            (control / "budget_ledger.jsonl").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "kind": "reserve",
+                        "run_id": "dead-run",
+                        "reservation_id": "dead-reservation",
+                        "owner_pid": 999_999_999,
+                        "estimated_cost_rmb": 0.6,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertAlmostEqual(module.read_project_commitment(control), 0.0)
+            events = (control / "budget_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn('"kind": "recover_orphan"', events)
+
     def test_active_stage_reservations_share_one_project_cap(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

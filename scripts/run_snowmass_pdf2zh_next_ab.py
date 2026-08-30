@@ -524,6 +524,64 @@ def read_project_commitment(control_dir: Path | None) -> float:
             spent += float(event.get("cost_rmb") or 0)
             if event.get("reservation_id"):
                 active.pop(str(event["reservation_id"]), None)
+    dead = {
+        reservation_id: event
+        for reservation_id, event in active.items()
+        if not pid_is_alive(event.get("owner_pid"))
+    }
+    if dead:
+        lock_path = control_dir / "budget.lock"
+        with lock_path.open("a+", encoding="utf-8") as lock_stream:
+            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX)
+            try:
+                current_text = ledger.read_text(encoding="utf-8")
+                current_events = [
+                    json.loads(line)
+                    for line in current_text.splitlines()
+                    if line.strip()
+                ]
+                current_active: dict[str, dict[str, Any]] = {}
+                for event in current_events:
+                    reservation_id = str(event.get("reservation_id") or "")
+                    if event["kind"] in {"reserve", "resume"}:
+                        current_active[reservation_id] = event
+                    elif event["kind"] in {
+                        "settle",
+                        "commit_estimate",
+                        "recover_orphan",
+                        "historical_baseline",
+                    }:
+                        current_active.pop(reservation_id, None)
+                with ledger.open("a", encoding="utf-8") as stream:
+                    for reservation_id, event in dead.items():
+                        current = current_active.get(reservation_id)
+                        if current is None or pid_is_alive(current.get("owner_pid")):
+                            continue
+                        stream.write(
+                            json.dumps(
+                                {
+                                    "schema_version": 1,
+                                    "event_id": uuid.uuid4().hex,
+                                    "kind": "recover_orphan",
+                                    "reservation_id": reservation_id,
+                                    "run_id": current.get("run_id"),
+                                    "owner_pid": current.get("owner_pid"),
+                                    "cost_rmb": 0.0,
+                                    "recovered_estimate_rmb": float(
+                                        current.get("estimated_cost_rmb") or 0
+                                    ),
+                                },
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            )
+                            + "\n"
+                        )
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            finally:
+                fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)
+        for reservation_id in dead:
+            active.pop(reservation_id, None)
     return spent + sum(
         float(event.get("estimated_cost_rmb") or 0) for event in active.values()
     )
