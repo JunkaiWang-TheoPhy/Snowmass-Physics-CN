@@ -291,7 +291,7 @@ class SafeConfigurationTests(unittest.TestCase):
         self.assertFalse(spec["pdf"]["translate_table_text"])
         self.assertEqual(spec["pdf"]["figure_table_protection_threshold"], 0.95)
         self.assertTrue(spec["pdf"]["only_include_translated_page"])
-        self.assertFalse(spec["basic"]["debug"])
+        self.assertTrue(spec["basic"]["debug"])
         self.assertTrue(spec["translation"]["ignore_cache"])
         self.assertNotIn("api_key", serialized.lower())
         self.assertNotIn("sk-", serialized.lower())

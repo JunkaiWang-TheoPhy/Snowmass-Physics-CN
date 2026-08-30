@@ -385,7 +385,11 @@ def build_safe_settings_spec(
             "only_include_translated_page": True,
             "figure_table_protection_threshold": 0.95,
         },
-        "basic": {"debug": False},
+        # pdf2zh-next's non-debug path creates a second multiprocessing layer
+        # inside the pinned adapter.  On macOS that layer can finish BabelDOC
+        # work but never return its finish event.  ``debug`` here selects the
+        # direct BabelDOC path; it does not relax any translation/QC contract.
+        "basic": {"debug": True},
     }
 
 
