@@ -14,6 +14,10 @@ from typing import Any
 import fitz
 
 DEFAULT_FORBIDDEN = ("偏袒", "天文物體")
+REFERENCE_HEADING = re.compile(
+    r"^\s*(?:References?|Bibliography|参考文献|文献)\s*[:：]?\s*$",
+    re.IGNORECASE,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -62,7 +66,13 @@ def audit_semantics(
     findings: list[dict[str, Any]] = []
     with fitz.open(pdf_path) as document:
         for page_number, page in enumerate(document, 1):
-            for block in page.get_text("blocks", sort=True):
+            blocks = page.get_text("blocks", sort=True)
+            reference_y: float | None = None
+            for block in blocks:
+                block_text = str(block[4]).replace("\x03", " ").strip()
+                if REFERENCE_HEADING.fullmatch(block_text):
+                    reference_y = float(block[1]) if reference_y is None else min(reference_y, float(block[1]))
+            for block in blocks:
                 rectangle = fitz.Rect(*block[:4])
                 center = ((rectangle.x0 + rectangle.x1) / 2, (rectangle.y0 + rectangle.y1) / 2)
                 if any(region.contains(center) for region in ignored.get(page_number, [])):
@@ -79,7 +89,8 @@ def audit_semantics(
                     )
                 ]
                 checks = [("forbidden", value) for value in forbidden]
-                checks.extend(("untranslated_glossary", value) for value in source_terms)
+                if reference_y is None or rectangle.y0 < reference_y:
+                    checks.extend(("untranslated_glossary", value) for value in source_terms)
                 for kind, value in checks:
                     if not value:
                         continue

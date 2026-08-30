@@ -203,6 +203,11 @@ def _reference_clips(
                 else page.search_for("References")
             ),
             *(
+                [fitz.Rect(rectangle) for rectangle in textpage.search("Reference", quads=0)]
+                if textpage is not None
+                else page.search_for("Reference")
+            ),
+            *(
                 [fitz.Rect(rectangle) for rectangle in textpage.search("Bibliography", quads=0)]
                 if textpage is not None
                 else page.search_for("Bibliography")
@@ -333,7 +338,7 @@ def _insert_header(
         if segment
     ]
     maximum = max(4.0, min(12.0, rectangle.height * 0.65))
-    candidate_sizes = [maximum, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0]
+    candidate_sizes = [maximum, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.5, 3.0, 2.5]
     for font_size in candidate_sizes:
         if font_size > maximum:
             continue
@@ -2417,6 +2422,7 @@ def _protect_pdf_open_documents(
         source_page = source[source_page_number - 1]
         headings = [
             *source_page.search_for("References"),
+            *source_page.search_for("Reference"),
             *source_page.search_for("Bibliography"),
         ]
         if not headings:
