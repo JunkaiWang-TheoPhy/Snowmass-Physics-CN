@@ -110,7 +110,11 @@ def _coalesce(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
         for index, existing in enumerate(merged):
             intersection = rectangle & existing
             smaller = min(rectangle.get_area(), existing.get_area())
-            if smaller and intersection.get_area() / smaller >= 0.95:
+            # Nested/overlapping source-controlled regions must be restored
+            # once, or later image insertion can invalidate the pixel check.
+            # Require substantial overlap so neighboring columns/figures do
+            # not get merged accidentally.
+            if smaller and intersection.get_area() / smaller >= 0.50:
                 merged[index] = rectangle | existing
                 break
         else:
@@ -2758,6 +2762,10 @@ def _protect_pdf_open_documents(
         raster_rectangles = _coalesce(
             raster_rectangles_by_output.get(output_index, [])
         )
+        # Source-controlled regions can be adjacent by a sub-point after
+        # BabelDOC reflow. Merge those before redaction/insertion so a later
+        # large clip cannot overwrite a neighboring clip's boundary pixels.
+        raster_rectangles = _coalesce_adjacent_text(raster_rectangles)
         identity_rectangles = identity_rectangles_by_output.get(output_index, [])
         reference_rectangles = _coalesce(
             reference_rectangles_by_output.get(output_index, [])
