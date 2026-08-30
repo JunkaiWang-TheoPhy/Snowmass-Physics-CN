@@ -224,6 +224,16 @@ def _request_allocations(
     return allocations
 
 
+def _runtime_request_allocations(
+    projected: Sequence[int], *, total: int
+) -> list[int]:
+    """Give each paper finite execution headroom beyond its cost projection."""
+    allocations = [max(1, int(value) * 3) for value in projected]
+    if not allocations or sum(allocations) > total:
+        raise ValueError("runtime request cap cannot cover finite paper headroom")
+    return allocations
+
+
 @contextmanager
 def _paper_launch_lock(article: Path):
     path = article / "run" / "launch.lock"
@@ -532,9 +542,17 @@ def plan_stage(
     ]
     if args.stage == "deepseek_probe" and selected_ids != [FORMAL_PROBE_RECORD_ID]:
         raise RuntimeError(f"formal deepseek probe must be {FORMAL_PROBE_RECORD_ID}")
-    runtime_allocations = _request_allocations(stage_request_cap, selected)
     projected_total = max(len(selected), stage_request_cap // 2)
     projected_allocations = _request_allocations(projected_total, selected)
+    if stage_request_cap < 10 * len(selected):
+        # Tiny unit/probe plans intentionally have a tiny total cap; retain
+        # their explicit bound rather than inventing headroom larger than the
+        # plan can authorize. Production cohorts must use the headroom path.
+        runtime_allocations = _request_allocations(stage_request_cap, selected)
+    else:
+        runtime_allocations = _runtime_request_allocations(
+            projected_allocations, total=stage_request_cap
+        )
     source_by_id = _source_records(args.source_manifest)
     preflight_runner = preflight_runner or _default_preflight_runner
     papers: list[dict[str, Any]] = []
