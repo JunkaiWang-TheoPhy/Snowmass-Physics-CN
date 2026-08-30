@@ -2141,7 +2141,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         finally:
             document.close()
 
-    def test_auto_header_fails_closed_on_ambiguous_majority_vote(self) -> None:
+    def test_auto_header_canonicalizes_tied_variants_deterministically(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf
 
         with tempfile.TemporaryDirectory() as directory:
@@ -2152,16 +2152,19 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             )
             output = root / "ambiguous.pdf"
 
-            with self.assertRaisesRegex(RuntimeError, "Ambiguous canonical running header"):
-                protect_pdf(
-                    source_pdf=source,
-                    translated_pdf=translated,
-                    output_pdf=output,
-                    selected_source_pages=(1, 2, 3, 4, 5),
-                    ir_xml=ir,
-                    auto_header=True,
-                    auto_header_min_recurrence=2,
-                )
+            receipt = protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1, 2, 3, 4, 5),
+                ir_xml=ir,
+                auto_header=True,
+                auto_header_min_recurrence=2,
+            )
+            self.assertTrue(output.is_file())
+            self.assertEqual(
+                receipt["auto_headers"][0]["canonical_target"], "标准页眉"
+            )
 
     def test_auto_header_resolves_only_near_duplicate_tied_variants(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import protect_pdf

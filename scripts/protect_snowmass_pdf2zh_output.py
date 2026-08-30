@@ -803,6 +803,11 @@ def _discover_running_headers(
             and len(tied_candidates) > 1
         )
         if tied and len(source_rectangles) > 2:
+            # A stable source header can legitimately have several model
+            # renderings across pages. The source family is authoritative:
+            # choose the first observed output deterministically, then
+            # overwrite every member of the family with that canonical value.
+            # All candidates remain in the receipt for auditability.
             folded = [
                 _header_similarity_text(str(candidate["display_text"]))
                 for candidate in tied_candidates
@@ -814,13 +819,9 @@ def _discover_running_headers(
                 for index, left in enumerate(folded)
                 for right in folded[index + 1 :]
             )
-            if not near_duplicates:
-                raise RuntimeError(
-                    "Ambiguous canonical running header translation candidates"
-                )
             tied_candidates.sort(
                 key=lambda candidate: (
-                    _header_display_penalty(str(candidate["display_text"])),
+                    (_header_display_penalty(str(candidate["display_text"])) if near_duplicates else 0),
                     min(cast(list[int], candidate["pages"])),
                     str(candidate["display_text"]),
                 )

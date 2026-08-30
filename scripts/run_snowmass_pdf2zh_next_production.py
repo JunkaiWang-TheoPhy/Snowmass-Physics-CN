@@ -502,7 +502,12 @@ def plan_stage(
             / record_id.replace(":", "_")
         )
         run_dir = article / "run"
-        paper_budget = stage_budget * request_allocation / stage_request_cap
+        # Request-count shares are not cost shares: every paper has a fixed
+        # context/translation overhead, so a short paper can legitimately
+        # project above its request-proportional slice. Give each zero-paid
+        # preflight the finite stage cap, then enforce the real aggregate
+        # stage projection below and the shared reservation at launch.
+        paper_budget = stage_budget
         config = ab_runner.RunConfig(
             record_id=record_id,
             source_pdf=source_pdf,
