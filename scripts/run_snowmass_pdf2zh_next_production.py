@@ -13,7 +13,7 @@ import signal
 import subprocess
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -919,12 +919,27 @@ def launch_stage(
     workers = min(2, max(1, int(plan["request"]["pool_max_workers"])))
     outcomes: list[str] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [
-            pool.submit(_launch_one, plan, paper, paid_runner, prepare_runner)
-            for paper in plan["papers"]
-        ]
-        for future in as_completed(futures):
-            outcomes.append(future.result())
+        papers = iter(plan["papers"])
+        pending = set()
+        for _ in range(workers):
+            try:
+                paper = next(papers)
+            except StopIteration:
+                break
+            pending.add(
+                pool.submit(_launch_one, plan, paper, paid_runner, prepare_runner)
+            )
+        while pending:
+            completed, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in completed:
+                outcomes.append(future.result())
+                try:
+                    paper = next(papers)
+                except StopIteration:
+                    continue
+                pending.add(
+                    pool.submit(_launch_one, plan, paper, paid_runner, prepare_runner)
+                )
     return {
         "stage": plan["stage"],
         "launched_count": outcomes.count("launched"),
