@@ -69,6 +69,7 @@ class PlanArgs:
     qps: int = 1
     pool_max_workers: int = 1
     supplemental_glossary_json: Path | None = None
+    record_ids: tuple[str, ...] = ()
 
 
 def _sha256(path: Path) -> str:
@@ -243,11 +244,15 @@ def _paper_pages(args: PlanArgs, record: Mapping[str, Any]) -> str:
 
 
 def _select_paid_stage_records(
-    records: list[dict[str, Any]], stage: str
+    records: list[dict[str, Any]], stage: str, explicit_ids: Sequence[str] = ()
 ) -> list[dict[str, Any]]:
     """Reuse legacy stratification but fold optional shadow back into remainder."""
 
-    selected = list(batch_production.select_stage_records(records, stage))
+    selected = list(
+        batch_production.select_stage_records(
+            records, stage, explicit_ids=tuple(explicit_ids)
+        )
+    )
     if stage == "remainder":
         selected_ids = {str(record["record_id"]) for record in selected}
         selected.extend(
@@ -330,6 +335,7 @@ def _same_plan_request(existing: Mapping[str, Any], args: PlanArgs) -> bool:
         "pages": args.pages,
         "qps": args.qps,
         "pool_max_workers": args.pool_max_workers,
+        "record_ids": list(args.record_ids),
     }
     actual = dict(existing.get("request") or {})
     return actual == expected
@@ -451,7 +457,7 @@ def plan_stage(
     _atomic_json(environment_path, environment)
 
     eligible = batch_production.load_publication_records(args.rights_manifest)
-    selected = _select_paid_stage_records(eligible, args.stage)
+    selected = _select_paid_stage_records(eligible, args.stage, args.record_ids)
     eligible_by_id = {
         ab_runner.normalize_record_id(str(record["record_id"])): record
         for record in eligible
@@ -586,6 +592,7 @@ def plan_stage(
         "pages": args.pages,
         "qps": args.qps,
         "pool_max_workers": args.pool_max_workers,
+        "record_ids": list(args.record_ids),
     }
     plan: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -1065,6 +1072,13 @@ def _parser() -> argparse.ArgumentParser:
     plan.add_argument("--pages", default="all")
     plan.add_argument("--qps", type=int, default=1)
     plan.add_argument("--pool-max-workers", type=int, default=1)
+    plan.add_argument(
+        "--record-id",
+        dest="record_ids",
+        action="append",
+        default=[],
+        help="Explicit publication-allowed record ID; repeat to form a budget-aware cohort",
+    )
     for name in ("launch", "status", "resume", "promote"):
         command = commands.add_parser(name)
         command.add_argument("--plan", type=Path, required=True)
@@ -1076,6 +1090,7 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.command == "plan":
         values = vars(arguments).copy()
         values.pop("command")
+        values["record_ids"] = tuple(values["record_ids"])
         result = plan_stage(PlanArgs(**values))
     elif arguments.command == "launch":
         result = launch_stage(plan_path=arguments.plan)
