@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PDF2ZH_NEXT_VERSION = "2.9.0"
 EXPECTED_BABELDOC_VERSION = "0.6.4"
 UPSTREAM_REQUEST_TIMEOUT_SECONDS = 60
+DEEPSEEK_CONNECTIVITY_TIMEOUT_SECONDS = 10
 MODEL = "deepseek-v4-flash"
 PROJECT_MAXIMUM_RMB = 1000.0
 STAGE_MAXIMUM_RMB = 100.0
@@ -54,6 +55,10 @@ class BudgetExceededError(RuntimeError):
 
 class RequestCapExceededError(RuntimeError):
     """The official engine attempted more requests than the authorized cap."""
+
+
+class DeepSeekConnectivityError(RuntimeError):
+    """The zero-paid DeepSeek reachability check failed."""
 
 
 @dataclass(frozen=True)
@@ -913,6 +918,37 @@ def load_api_key() -> str:
     return key
 
 
+def check_deepseek_connectivity(
+    api_key: str,
+    *,
+    requester: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Fail fast before reserving budget when the official API is unreachable."""
+    if not api_key:
+        raise ValueError("DeepSeek API key must be non-empty")
+    if requester is None:
+        import httpx
+
+        requester = httpx.get
+    try:
+        response = requester(
+            "https://api.deepseek.com/models",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+            timeout=DEEPSEEK_CONNECTIVITY_TIMEOUT_SECONDS,
+            trust_env=False,
+        )
+        status_code = int(getattr(response, "status_code", 0))
+        if not 200 <= status_code < 300:
+            raise DeepSeekConnectivityError(
+                f"DeepSeek connectivity check returned HTTP {status_code}"
+            )
+        return {"status": "passed", "endpoint": "https://api.deepseek.com/models", "status_code": status_code, "zero_paid": True}
+    except DeepSeekConnectivityError:
+        raise
+    except Exception as error:
+        raise RuntimeError("DeepSeek connectivity check failed before paid work") from error
+
+
 def _usage_from_response(response: Any) -> dict[str, int]:
     usage = getattr(response, "usage", None)
     prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
@@ -1688,6 +1724,7 @@ def execute(
         return preflight
 
     api_key = load_api_key()
+    connectivity = check_deepseek_connectivity(api_key)
     if config.project_control_dir is None:
         raise ValueError("paid A/B requires a shared project control directory")
     shared_run_id = hashlib.sha256(
@@ -1710,7 +1747,12 @@ def execute(
         request_cap=request_cap,
         usd_cny_rate=config.usd_cny_rate,
     )
-    running = {**preflight, "status": "running", "started_at": iso_utc()}
+    running = {
+        **preflight,
+        "status": "running",
+        "started_at": iso_utc(),
+        "connectivity": connectivity,
+    }
     atomic_json(config.output_root / "status.json", running)
     try:
         result = run_official_translation(

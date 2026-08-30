@@ -73,6 +73,43 @@ def load_module():
     return module
 
 
+class DeepSeekConnectivityTests(unittest.TestCase):
+    def test_zero_paid_models_check_passes(self) -> None:
+        module = load_module()
+        calls = []
+
+        def requester(url, **kwargs):
+            calls.append((url, kwargs))
+            return SimpleNamespace(status_code=200)
+
+        result = module.check_deepseek_connectivity("secret-key", requester=requester)
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["zero_paid"])
+        self.assertEqual(calls[0][0], "https://api.deepseek.com/models")
+        self.assertEqual(calls[0][1]["timeout"], 10)
+        self.assertFalse(calls[0][1]["trust_env"])
+        self.assertIn("secret-key", calls[0][1]["headers"]["Authorization"])
+
+    def test_non_success_is_fail_closed_without_key_in_error(self) -> None:
+        module = load_module()
+        with self.assertRaisesRegex(RuntimeError, "HTTP 503") as context:
+            module.check_deepseek_connectivity(
+                "secret-key", requester=lambda *_args, **_kwargs: SimpleNamespace(status_code=503)
+            )
+        self.assertNotIn("secret-key", str(context.exception))
+
+    def test_transport_failure_is_sanitized(self) -> None:
+        module = load_module()
+        with self.assertRaisesRegex(RuntimeError, "before paid work") as context:
+            module.check_deepseek_connectivity(
+                "secret-key",
+                requester=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    RuntimeError("Authorization: secret-key; timed out")
+                ),
+            )
+        self.assertNotIn("secret-key", str(context.exception))
+
+
 class TranslationPromptContractTests(unittest.TestCase):
     def test_requires_citation_markers_to_keep_source_order(self) -> None:
         module = load_module()
