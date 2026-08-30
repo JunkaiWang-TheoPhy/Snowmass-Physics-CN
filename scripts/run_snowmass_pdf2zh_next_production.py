@@ -30,7 +30,11 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PROCESS_TIMEOUT_SECONDS = 15 * 60
+# A paper-level render must either produce a finish receipt or fail closed
+# within a bounded interval.  Fifteen minutes allowed an ONNX/layout worker
+# hang to block the whole cohort; three minutes is above the observed normal
+# render time for the short-paper probe while keeping recovery prompt.
+ADAPTER_PROCESS_TIMEOUT_SECONDS = 3 * 60
 STAGES = (
     "deepseek_probe",
     "pilot5",

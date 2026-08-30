@@ -19,6 +19,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -1673,9 +1674,34 @@ def run_official_translation(
     api_key: str,
     gate: RequestBudgetGate,
 ) -> dict[str, Any]:
+    def force_cpu_doclayout_provider() -> None:
+        """Avoid the macOS CoreML ONNX path, which can leave BabelDOC hung."""
+        if sys.platform != "darwin":
+            return
+        try:
+            import onnxruntime
+        except ImportError:
+            return
+        providers = tuple(onnxruntime.get_available_providers())
+        if any(name.lower().startswith("coreml") for name in providers):
+            onnxruntime.get_available_providers = (  # type: ignore[method-assign]
+                lambda: ["CPUExecutionProvider"]
+            )
+
     async def run(
         proxy_base_url: str, bypass_environment_names: list[str]
     ) -> dict[str, Any]:
+        force_cpu_doclayout_provider()
+        # Keep the pinned ONNX/BLAS layout path bounded on macOS.  The
+        # default thread pools can spin indefinitely during BabelDOC teardown
+        # on small PDFs, preventing the finish receipt from being written.
+        for name in (
+            "OMP_NUM_THREADS",
+            "ORT_INTRA_OP_NUM_THREADS",
+            "ORT_INTER_OP_NUM_THREADS",
+            "VECLIB_MAXIMUM_THREADS",
+        ):
+            os.environ.setdefault(name, "1")
         from pdf2zh_next import high_level
 
         settings = _build_official_settings(settings_spec, proxy_base_url)
