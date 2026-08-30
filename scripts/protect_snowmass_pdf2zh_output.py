@@ -2094,6 +2094,71 @@ def _document_citations_match(
     return _citation_permutation_within_source_lines(source_groups, output_groups)
 
 
+def _citation_positions_match(
+    source: fitz.Document,
+    output: fitz.Document,
+    *,
+    excluded_source: dict[int, list[fitz.Rect]],
+    excluded_output: dict[int, list[fitz.Rect]],
+    tolerance: float = 5.0,
+) -> bool:
+    """Accept reflow when each citation remains anchored to its source glyph."""
+    marker_pattern = re.compile(r"^\s*\[\s*\d+(?:\s*[,\-]\s*\d+)*\s*\]\s*[,.;:]?\s*$")
+
+    def collect(document: fitz.Document, excluded: dict[int, list[fitz.Rect]]) -> dict[int, list[tuple[str, fitz.Rect]]]:
+        result: dict[int, list[tuple[str, fitz.Rect]]] = {}
+        for page_index, page in enumerate(document):
+            for block in page.get_text("rawdict", sort=True).get("blocks", []):
+                if block.get("type") != 0:
+                    continue
+                for line in block.get("lines", []):
+                    chars = [
+                        {
+                            "c": str(character.get("c", "")),
+                            "rect": fitz.Rect(*character["bbox"]),
+                        }
+                        for span in line.get("spans", [])
+                        for character in span.get("chars", [])
+                    ]
+                    line_text = "".join(str(item["c"]) for item in chars)
+                    for match in _NUMERIC_CITATION_MARKER.finditer(line_text):
+                        matched = chars[match.start() : match.end()]
+                        if not matched:
+                            continue
+                        rect = fitz.Rect(cast(fitz.Rect, matched[0]["rect"]))
+                        for character in matched[1:]:
+                            rect |= cast(fitz.Rect, character["rect"])
+                        if any(item.contains(rect.tl) for item in excluded.get(page_index, [])):
+                            continue
+                        result.setdefault(page_index, []).append(
+                            (_normalize_numeric_citation_marker(match.group(0)), rect)
+                        )
+        return result
+
+    source_markers = collect(source, excluded_source)
+    output_markers = collect(output, excluded_output)
+    source_count = sum(map(len, source_markers.values()))
+    output_count = sum(map(len, output_markers.values()))
+    if source_count == 0 or source_count != output_count:
+        return False
+    for page_index, expected in source_markers.items():
+        available = list(output_markers.get(page_index, []))
+        if len(expected) != len(available):
+            return False
+        for marker, source_rect in expected:
+            matches = [
+                (index, candidate_rect)
+                for index, (candidate, candidate_rect) in enumerate(available)
+                if candidate == marker
+                and abs(candidate_rect.x0 - source_rect.x0) <= tolerance
+                and abs(candidate_rect.y0 - source_rect.y0) <= tolerance
+            ]
+            if not matches:
+                return False
+            available.pop(matches[0][0])
+    return True
+
+
 def _normalize_numeric_citation_glyphs(
     document: fitz.Document,
 ) -> list[dict[str, object]]:
@@ -2774,6 +2839,29 @@ def _protect_pdf_open_documents(
         document_source_line_groups,
         document_output_line_groups,
     )
+    position_citations_match = False
+    if not document_citations_match:
+        position_citations_match = _citation_positions_match(
+            source,
+            translated,
+            excluded_source={
+                index: [
+                    *raster_rectangles_by_output.get(index, []),
+                    *identity_rectangles_by_output.get(index, []),
+                    *reference_rectangles_by_output.get(index, []),
+                ]
+                for index in range(len(selected_source_pages))
+            },
+            excluded_output={
+                index: [
+                    *raster_rectangles_by_output.get(index, []),
+                    *identity_rectangles_by_output.get(index, []),
+                    *reference_rectangles_by_output.get(index, []),
+                ]
+                for index in range(len(selected_source_pages))
+            },
+        )
+        document_citations_match = position_citations_match
     failures: list[str] = []
     if not document_citations_match:
         failures.append("citation_sequence_mismatch:document")
@@ -2905,6 +2993,7 @@ def _protect_pdf_open_documents(
                 for marker in group
             ],
             "matched": document_citations_match,
+            "position_anchored": position_citations_match,
         },
         "repaired_toc_group_count": repaired_toc_group_count,
         "repaired_toc_rows": repaired_toc_rows,
