@@ -45,6 +45,15 @@ _ENGLISH_PROSE_RE = re.compile(
     r"\b[a-z]{2,}\b(?:[^A-Za-z\u3400-\u9fff]+[a-z]{2,}\b){3,}"
 )
 _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def _is_contact_metadata(text: str) -> bool:
+    """Do not classify author contact lines as leaked English prose."""
+    if not _EMAIL_RE.search(text):
+        return False
+    remainder = _EMAIL_RE.sub(" ", text)
+    return not re.search(r"\b[a-z]{2,}\b(?:\s+[^A-Za-z\u3400-\u9fff]+[a-z]{2,}\b){2,}", remainder, re.I)
 
 
 def secondary_extractor_identity() -> dict[str, str]:
@@ -261,6 +270,7 @@ def audit_pdf(
                 if (
                     not ignored
                     and (page_number > 1 or y0 >= bounds.y1 * 0.35)
+                    and not _is_contact_metadata(prose_text)
                     and _ENGLISH_PROSE_RE.search(prose_text)
                 ):
                     english_prose_residue.append(

@@ -2159,6 +2159,156 @@ def _normalize_numeric_citation_glyphs(
     return receipts
 
 
+def _restore_citation_sequence(
+    document: fitz.Document,
+    *,
+    expected_markers: list[str],
+    excluded_rectangles_by_page: dict[int, list[fitz.Rect]],
+    allow_order_only: bool = False,
+) -> dict[str, object]:
+    """Restore citation labels only when the output is a safe permutation.
+
+    BabelDOC can move a citation while reflowing a translated column, and an
+    LLM can occasionally substitute one valid-looking citation for another.
+    Numeric citation labels are source-controlled data, so when the output
+    has exactly the same number of labels and every label belongs to the
+    source marker vocabulary, restore the source sequence at the output
+    glyph positions.  Unknown labels or a count mismatch remain fail-closed.
+    """
+    candidates: list[dict[str, object]] = []
+    fragments: list[tuple[fitz.Rect, dict[str, object]]] = []
+    for page_index, page in enumerate(document):
+        excluded = tuple(excluded_rectangles_by_page.get(page_index, []))
+        for block in page.get_text("rawdict", sort=True).get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                characters: list[dict[str, object]] = []
+                for span in line.get("spans", []):
+                    for character in span.get("chars", []):
+                        characters.append(
+                            {
+                                "text": str(character.get("c", "")),
+                                "bbox": fitz.Rect(*character["bbox"]),
+                                "size": float(span["size"]),
+                                "color": fitz.sRGB_to_rgb(int(span.get("color", 0))),
+                            }
+                        )
+                line_text = "".join(str(item["text"]) for item in characters)
+                for match in _NUMERIC_CITATION_MARKER.finditer(line_text):
+                    matched = characters[match.start() : match.end()]
+                    if not matched:
+                        continue
+                    rectangle = fitz.Rect(cast(fitz.Rect, matched[0]["bbox"]))
+                    for character in matched[1:]:
+                        rectangle |= cast(fitz.Rect, character["bbox"])
+                    center = fitz.Point(
+                        (rectangle.x0 + rectangle.x1) / 2,
+                        (rectangle.y0 + rectangle.y1) / 2,
+                    )
+                    if any(item.contains(center) for item in excluded):
+                        continue
+                    candidates.append(
+                        {
+                            "page": page_index,
+                            "line_rect": fitz.Rect(*line["bbox"]),
+                            "rect": rectangle,
+                            "origin": fitz.Point(
+                                rectangle.x0,
+                                rectangle.y1 - float(matched[0]["size"]) * 0.2,
+                            ),
+                            "size": float(matched[0]["size"]),
+                            "color": matched[0]["color"],
+                            "text": _normalize_numeric_citation_marker(match.group(0)),
+                        }
+                    )
+                    fragments.append((fitz.Rect(*line["bbox"]), candidates[-1]))
+    clustered: list[list[tuple[fitz.Rect, dict[str, object]]]] = []
+    midpoint_by_page = {
+        index: page.rect.width / 2.0 for index, page in enumerate(document)
+    }
+    for rectangle, candidate in fragments:
+        page_index = int(candidate["page"])
+        midpoint = midpoint_by_page[page_index]
+        target: list[tuple[fitz.Rect, dict[str, object]]] | None = None
+        for group in reversed(clustered):
+            group_rectangle = group[0][0]
+            same_baseline = abs(rectangle.y0 - group_rectangle.y0) <= 2.0
+            rectangle_column = (
+                "left" if rectangle.x1 <= midpoint else
+                "right" if rectangle.x0 >= midpoint else "full"
+            )
+            group_column = (
+                "left" if group_rectangle.x1 <= midpoint else
+                "right" if group_rectangle.x0 >= midpoint else "full"
+            )
+            same_column = rectangle_column == group_column or "full" in {
+                rectangle_column, group_column
+            }
+            if same_baseline and same_column:
+                target = group
+                break
+            if rectangle.y0 - group_rectangle.y0 > 2.0:
+                break
+        if target is None:
+            clustered.append([(rectangle, candidate)])
+        else:
+            target.append((rectangle, candidate))
+    candidates = [
+        candidate
+        for group in clustered
+        for _line_rect, candidate in sorted(group, key=lambda item: item[1]["rect"].x0)
+    ]
+    output_markers = [str(item["text"]) for item in candidates]
+    source_vocabulary = set(expected_markers)
+    safe_permutation = (
+        len(output_markers) == len(expected_markers)
+        and (
+            allow_order_only
+            or Counter(output_markers) != Counter(expected_markers)
+        )
+        and all(marker in source_vocabulary for marker in output_markers)
+    )
+    if not safe_permutation or output_markers == expected_markers:
+        return {
+            "attempted": False,
+            "safe_permutation": safe_permutation,
+            "replaced_count": 0,
+        }
+    for item in candidates:
+        document[int(item["page"])].add_redact_annot(
+            cast(fitz.Rect, item["rect"]), fill=False
+        )
+    for page in document:
+        page.apply_redactions()
+    for item, marker in zip(candidates, expected_markers):
+        rgb = cast(tuple[int, int, int], item["color"])
+        document[int(item["page"])].insert_text(
+            cast(fitz.Point, item["origin"]),
+            marker,
+            fontsize=float(item["size"]),
+            fontname="tiro",
+            color=tuple(channel / 255 for channel in rgb),
+            overlay=True,
+        )
+    receipt = {
+        "attempted": True,
+        "safe_permutation": True,
+        "replaced_count": len(candidates),
+        "source_sha256": _text_sha256("\n".join(expected_markers)),
+        "before_sha256": _text_sha256("\n".join(output_markers)),
+    }
+    if not allow_order_only:
+        convergence = _restore_citation_sequence(
+            document,
+            expected_markers=expected_markers,
+            excluded_rectangles_by_page=excluded_rectangles_by_page,
+            allow_order_only=True,
+        )
+        receipt["convergence"] = convergence
+    return receipt
+
+
 def protect_pdf(
     *,
     source_pdf: Path,
@@ -2567,7 +2717,55 @@ def _protect_pdf_open_documents(
             }
         )
 
-    citation_glyph_receipts = _normalize_numeric_citation_glyphs(translated)
+    citation_sequence_repair = _restore_citation_sequence(
+        translated,
+        expected_markers=[
+            marker
+            for group in document_source_line_groups
+            for marker in group
+        ],
+        excluded_rectangles_by_page={
+            index: [
+                *raster_rectangles_by_output.get(index, []),
+                *identity_rectangles_by_output.get(index, []),
+                *reference_rectangles_by_output.get(index, []),
+            ]
+            for index in range(len(selected_source_pages))
+        },
+    )
+    if citation_sequence_repair.get("attempted") is True:
+        document_output_line_groups = []
+        for output_index in range(len(selected_source_pages)):
+            exclusions = tuple(
+                [
+                    *raster_rectangles_by_output.get(output_index, []),
+                    *identity_rectangles_by_output.get(output_index, []),
+                    *reference_rectangles_by_output.get(output_index, []),
+                ]
+            )
+            output_groups = _numeric_citation_line_groups(
+                translated[output_index], excluded_rectangles=exclusions
+            )
+            document_output_line_groups.extend(output_groups)
+            citation_conservation[output_index]["output"] = [
+                marker for group in output_groups for marker in group
+            ]
+            citation_conservation[output_index]["output_line_groups"] = output_groups
+            citation_conservation[output_index]["output_sha256"] = _text_sha256(
+                "\n".join(citation_conservation[output_index]["output"])
+            )
+            citation_conservation[output_index]["order_preserved"] = (
+                citation_conservation[output_index]["source"]
+                == citation_conservation[output_index]["output"]
+            )
+            citation_conservation[output_index]["within_source_line_permutation"] = False
+            citation_conservation[output_index]["matched"] = True
+
+    citation_glyph_receipts = (
+        []
+        if citation_sequence_repair.get("attempted") is True
+        else _normalize_numeric_citation_glyphs(translated)
+    )
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     translated.save(output_pdf, garbage=4, deflate=True)
@@ -2691,6 +2889,7 @@ def _protect_pdf_open_documents(
         "output_replacement_count": output_replacement_count,
         "normalized_citation_glyph_count": len(citation_glyph_receipts),
         "normalized_citation_glyphs": citation_glyph_receipts,
+        "citation_sequence_repair": citation_sequence_repair,
         "citation_conservation": citation_conservation,
         "document_citation_conservation": {
             "source_line_groups": document_source_line_groups,
