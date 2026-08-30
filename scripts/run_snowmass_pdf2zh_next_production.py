@@ -1071,6 +1071,9 @@ def _validate_paper_seal(
     evidence_hashes = seal.get("evidence_hashes")
     evidence_paths = {
         "finish": article / "run" / "finish.json",
+        # The immutable stage plan owns the zero-paid preflight hash. The
+        # runtime adapter also writes run/preflight.json, but its timestamped
+        # receipt is not the plan-bound evidence used for promotion.
         "preflight": Path(str(paper["preflight_path"])),
         "glossary": article / "run" / "locked-glossary.csv",
         "protection": article / "qc" / "protection.json",

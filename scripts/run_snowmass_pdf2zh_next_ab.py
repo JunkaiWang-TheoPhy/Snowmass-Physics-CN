@@ -387,6 +387,10 @@ def build_safe_settings_spec(
             "skip_scanned_detection": True,
             "only_include_translated_page": True,
             "figure_table_protection_threshold": 0.95,
+            # Contents pages use alternating section/page-number lines.
+            # Keeping them separate lets the local TOC reconciler rebuild
+            # rows without allowing BabelDOC to fuse neighboring entries.
+            "no_merge_alternating_line_numbers": True,
         },
         # pdf2zh-next's non-debug path creates a second multiprocessing layer
         # inside the pinned adapter.  On macOS that layer can finish BabelDOC
