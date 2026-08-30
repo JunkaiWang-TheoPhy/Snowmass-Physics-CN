@@ -158,8 +158,8 @@ def _validate_caps(args: PlanArgs) -> tuple[float, float, int]:
         raise ValueError("stage budget must not exceed project budget")
     if args.qps <= 0 or args.pool_max_workers <= 0:
         raise ValueError("local concurrency values must be positive")
-    if args.pool_max_workers > 4:
-        raise ValueError("paper concurrency must not exceed 4")
+    if args.pool_max_workers > 1:
+        raise ValueError("paper concurrency must not exceed 1")
     return project, stage, request_cap
 
 
@@ -852,7 +852,7 @@ def launch_stage(
     _require_previous_stage_seal(plan)
     paid_runner = paid_runner or _default_paid_runner
     prepare_runner = prepare_runner or _default_prepare_runner
-    workers = min(4, max(1, int(plan["request"]["pool_max_workers"])))
+    workers = min(1, max(1, int(plan["request"]["pool_max_workers"])))
     outcomes: list[str] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [

@@ -206,18 +206,18 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         self.assertEqual(plan["record_ids"], ["arxiv:2203.06843"])
         self.assertEqual(plan["papers"][0]["record_id"], "arxiv:2203.06843")
 
-    def test_validation_allows_four_paper_workers_but_rejects_higher_fanout(self) -> None:
+    def test_validation_keeps_paper_workers_serial_until_shared_proxy_is_safe(self) -> None:
         module = load_module()
 
         self.assertEqual(
             module._validate_caps(
-                self._plan_args(module, "pilot5", pool_max_workers=4)
+                self._plan_args(module, "pilot5", pool_max_workers=1)
             )[:2],
             (50.0, 10.0),
         )
-        with self.assertRaisesRegex(ValueError, "must not exceed 4"):
+        with self.assertRaisesRegex(ValueError, "must not exceed 1"):
             module._validate_caps(
-                self._plan_args(module, "pilot5", pool_max_workers=5)
+                self._plan_args(module, "pilot5", pool_max_workers=2)
             )
 
     def test_request_allocations_follow_page_weight_and_preserve_total(self) -> None:
