@@ -10,6 +10,38 @@ import fitz
 
 
 class Pdf2zhSemanticAuditTests(unittest.TestCase):
+    def test_ignores_glossary_residue_on_reference_continuation_pages(self) -> None:
+        from scripts.audit_snowmass_pdf2zh_semantics import audit_semantics
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pdf = root / "paper.pdf"
+            glossary = root / "glossary.csv"
+            protection = root / "protection.json"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((72, 100), "正文 detector")
+            page.insert_text((72, 200), "References")
+            page.insert_text((72, 300), "[1] detector and dark energy")
+            page = document.new_page()
+            page.insert_text((72, 100), "[2] detector and dark energy")
+            document.save(pdf)
+            document.close()
+            glossary.write_text(
+                "source,target\ndetector,探测器\ndark energy,暗能量\n",
+                encoding="utf-8",
+            )
+            protection.write_text(
+                json.dumps({"verified": True, "protected_regions": []}),
+                encoding="utf-8",
+            )
+            report = audit_semantics(
+                pdf, glossary_csv=glossary, protection_receipt=protection
+            )
+            self.assertEqual(
+                report["failures"], ["untranslated_glossary:detector:page_1"]
+            )
+
     def test_reference_heading_ignores_glossary_residue_after_heading(self) -> None:
         from scripts.audit_snowmass_pdf2zh_semantics import audit_semantics
 

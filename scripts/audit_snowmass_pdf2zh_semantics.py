@@ -65,13 +65,23 @@ def audit_semantics(
     failures: list[str] = []
     findings: list[dict[str, Any]] = []
     with fitz.open(pdf_path) as document:
+        # Once the reference list starts, later pages are bibliography too.
+        # Looking only for a heading on the current page incorrectly treats
+        # English author/title terms on continuation pages as untranslated
+        # prose (observed in the v35 pilot).
+        reference_start_page: int | None = None
+        reference_start_y: float | None = None
         for page_number, page in enumerate(document, 1):
-            blocks = page.get_text("blocks", sort=True)
-            reference_y: float | None = None
-            for block in blocks:
+            for block in page.get_text("blocks", sort=True):
                 block_text = str(block[4]).replace("\x03", " ").strip()
                 if REFERENCE_HEADING.fullmatch(block_text):
-                    reference_y = float(block[1]) if reference_y is None else min(reference_y, float(block[1]))
+                    reference_start_page = page_number
+                    reference_start_y = float(block[1])
+                    break
+            if reference_start_page is not None:
+                break
+        for page_number, page in enumerate(document, 1):
+            blocks = page.get_text("blocks", sort=True)
             for block in blocks:
                 rectangle = fitz.Rect(*block[:4])
                 center = ((rectangle.x0 + rectangle.x1) / 2, (rectangle.y0 + rectangle.y1) / 2)
@@ -89,7 +99,16 @@ def audit_semantics(
                     )
                 ]
                 checks = [("forbidden", value) for value in forbidden]
-                if reference_y is None or rectangle.y0 < reference_y:
+                before_references = (
+                    reference_start_page is None
+                    or page_number < reference_start_page
+                    or (
+                        page_number == reference_start_page
+                        and reference_start_y is not None
+                        and rectangle.y0 < reference_start_y
+                    )
+                )
+                if before_references:
                     checks.extend(("untranslated_glossary", value) for value in source_terms)
                 for kind, value in checks:
                     if not value:
