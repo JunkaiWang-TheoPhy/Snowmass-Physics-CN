@@ -1447,6 +1447,15 @@ def _replace_fixed_text(
         ]
         for line in lines
     ]
+    nonempty = [
+        (line, segments)
+        for line, segments in zip(lines, segmented_lines, strict=True)
+        if segments
+    ]
+    if not nonempty:
+        raise RuntimeError("Fixed replacement target is empty")
+    lines = [line for line, _segments in nonempty]
+    segmented_lines = [segments for _line, segments in nonempty]
     for font_size in (12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0):
         line_widths = [
             [
