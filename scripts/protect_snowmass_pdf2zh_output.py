@@ -262,7 +262,7 @@ def _reference_clips(
                     reference_lines = [
                         (rectangle, text)
                         for rectangle, text in lines
-                        if rectangle.y0 >= heading.y0 - 1.0
+                        if rectangle.y0 >= heading.y1 - 1.0
                     ]
             if not reference_lines:
                 continue
