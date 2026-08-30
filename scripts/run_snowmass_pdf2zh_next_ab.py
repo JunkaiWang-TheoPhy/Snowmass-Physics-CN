@@ -1578,6 +1578,7 @@ def httpx_disable_environment_proxy():
     import httpx
 
     original_client = httpx.Client
+    original_async_client = httpx.AsyncClient
 
     class EnvironmentIndependentClient(original_client):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -1590,11 +1591,21 @@ def httpx_disable_environment_proxy():
                 kwargs["timeout"] = UPSTREAM_REQUEST_TIMEOUT_SECONDS
             super().__init__(*args, **kwargs)
 
+    class EnvironmentIndependentAsyncClient(original_async_client):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            kwargs["trust_env"] = False
+            timeout = kwargs.get("timeout")
+            if timeout is None or timeout > UPSTREAM_REQUEST_TIMEOUT_SECONDS:
+                kwargs["timeout"] = UPSTREAM_REQUEST_TIMEOUT_SECONDS
+            super().__init__(*args, **kwargs)
+
     httpx.Client = EnvironmentIndependentClient
+    httpx.AsyncClient = EnvironmentIndependentAsyncClient
     try:
         yield
     finally:
         httpx.Client = original_client
+        httpx.AsyncClient = original_async_client
 
 
 def run_official_translation(

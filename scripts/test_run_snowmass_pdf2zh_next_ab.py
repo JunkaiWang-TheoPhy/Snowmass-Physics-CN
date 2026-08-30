@@ -12,6 +12,7 @@ import multiprocessing
 import os
 import sys
 import tempfile
+import types
 import unittest
 import urllib.request
 from datetime import datetime, timezone
@@ -108,6 +109,30 @@ class DeepSeekConnectivityTests(unittest.TestCase):
                 ),
             )
         self.assertNotIn("secret-key", str(context.exception))
+
+
+class HttpxTimeoutContractTests(unittest.TestCase):
+    def test_async_client_isolated_and_clamped_to_upstream_timeout(self) -> None:
+        module = load_module()
+        seen = {}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                seen.update(kwargs)
+
+        class FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                seen.update(kwargs)
+
+        fake_httpx = types.ModuleType("httpx")
+        fake_httpx.Client = FakeClient
+        fake_httpx.AsyncClient = FakeAsyncClient
+        with mock.patch.dict(sys.modules, {"httpx": fake_httpx}):
+            with module.httpx_disable_environment_proxy():
+                fake_httpx.AsyncClient(timeout=600, trust_env=True)
+
+        self.assertEqual(seen["timeout"], module.UPSTREAM_REQUEST_TIMEOUT_SECONDS)
+        self.assertFalse(seen["trust_env"])
 
 
 class TranslationPromptContractTests(unittest.TestCase):
