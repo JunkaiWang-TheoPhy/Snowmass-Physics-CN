@@ -215,9 +215,9 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             )[:2],
             (50.0, 10.0),
         )
-        with self.assertRaisesRegex(ValueError, "must not exceed 1"):
+        with self.assertRaisesRegex(ValueError, "must not exceed 2"):
             module._validate_caps(
-                self._plan_args(module, "pilot5", pool_max_workers=2)
+                self._plan_args(module, "pilot5", pool_max_workers=3)
             )
 
     def test_request_allocations_follow_page_weight_and_preserve_total(self) -> None:
