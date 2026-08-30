@@ -398,7 +398,11 @@ def _insert_rasterized_source_clip(
     pixmap = source_page.get_pixmap(matrix=matrix, clip=rectangle, alpha=False)
     output_page.insert_image(
         rectangle,
-        pixmap=pixmap,
+        # Passing a Pixmap lets MuPDF choose an encoded image representation;
+        # on some pages that changes the decoded samples and breaks the
+        # deterministic protection hash. PNG preserves the exact source
+        # raster while remaining self-contained in the output PDF.
+        stream=pixmap.tobytes("png"),
         keep_proportion=False,
         overlay=True,
     )
@@ -449,6 +453,16 @@ def _has_embedded_raster_clip(
         pixmap = fitz.Pixmap(document, xref)
         if hashlib.sha256(pixmap.samples).hexdigest() == expected_pixel_sha256:
             return True
+    # Some MuPDF versions rewrite an inserted image's xref dimensions during
+    # save, even though the visible protected region is exact. Compare the
+    # rendered clip as a deterministic fallback; this still proves the
+    # protected pixels, without coupling QC to xref bookkeeping.
+    rendered = output_page.get_pixmap(
+        matrix=fitz.Matrix(216 / 72, 216 / 72),
+        clip=rectangle,
+        alpha=False,
+    )
+    return hashlib.sha256(rendered.samples).hexdigest() == expected_pixel_sha256
     return False
 
 
