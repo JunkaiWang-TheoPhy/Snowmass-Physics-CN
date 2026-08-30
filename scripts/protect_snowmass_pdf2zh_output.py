@@ -1561,7 +1561,7 @@ _NUMERIC_CITATION_SPAN = re.compile(
 )
 _TOC_SECTION_PREFIX = re.compile(r"^\s*(\d+(?:\.\d+)*)(?=[^\d.]|$)")
 _DEBUG_LABEL_RE = re.compile(
-    r"^(?:plain(?:\x03|\s)text|paragraph\[[^\]]+\]-\[plain(?:\x03|\s)text\]|"
+    r"^(?:plain(?:\x03|\s)text|plaintext|paragraph\[[^\]]+\]-\[plain(?:\x03|\s)text\]|paragraph\[[^\]]+\]-\[plaintext\]|"
     r"formula|figure_caption|isolate_formula|figure|fallback_line|"
     r"pagenumber:\x03?\d+|Form\[[^\]]+\])$",
     re.IGNORECASE,
@@ -1827,7 +1827,13 @@ def _repair_merged_toc_rows(
             next_text = _toc_text(str(next_line["text"]))
             next_rectangle = cast(fitz.Rect, next_line["rect"])
             if (
-                re.match(r"^\s*[.·…]", next_text) is not None
+                (
+                    re.match(r"^\s*[.·…]", next_text) is not None
+                    or (
+                        re.fullmatch(r"\d+", next_text)
+                        and next_rectangle.x0 >= output_page.rect.width * 0.70
+                    )
+                )
                 and next_rectangle.y0 - line_rectangle.y0 <= 24.0
             ):
                 normalized_text = _toc_text(f"{text} {next_text}")
