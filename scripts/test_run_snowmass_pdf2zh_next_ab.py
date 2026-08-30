@@ -234,10 +234,10 @@ class BudgetAndPricingTests(unittest.TestCase):
             (0, 1),
             (math.nan, 1),
             (math.inf, 1),
-            (1000.01, 1),
-            (1000, 0),
-            (1000, math.inf),
-            (1000, 100.01),
+            (100.01, 1),
+            (100, 0),
+            (100, math.inf),
+            (100, 100.01),
             (5, 5.01),
         ):
             with (
@@ -245,7 +245,7 @@ class BudgetAndPricingTests(unittest.TestCase):
                 self.assertRaises(ValueError),
             ):
                 module.validate_budgets(project, stage)
-        self.assertEqual(module.validate_budgets(1000, 100), (1000.0, 100.0))
+        self.assertEqual(module.validate_budgets(100, 100), (100.0, 100.0))
 
     def test_request_cap_is_finite_positive_integer(self) -> None:
         module = load_module()
@@ -426,7 +426,7 @@ class RequestBudgetGateTests(unittest.TestCase):
             gate = module.RequestBudgetGate(
                 ledger_path=Path(temporary) / "ledger.jsonl",
                 stage_max_cost_rmb=1,
-                project_max_cost_rmb=1000,
+                project_max_cost_rmb=100,
                 project_commitment_before_rmb=10,
                 request_cap=1,
                 usd_cny_rate=7.2,
@@ -452,7 +452,7 @@ class RequestBudgetGateTests(unittest.TestCase):
             gate = module.RequestBudgetGate(
                 ledger_path=Path(temporary) / "ledger.jsonl",
                 stage_max_cost_rmb=0.000001,
-                project_max_cost_rmb=1000,
+                project_max_cost_rmb=100,
                 project_commitment_before_rmb=10,
                 request_cap=1,
                 usd_cny_rate=7.2,
@@ -982,7 +982,7 @@ class ZeroPaidPreflightTests(unittest.TestCase):
                 glossary_json=glossary,
                 output_root=root / "out",
                 pages="1",
-                project_max_cost_rmb=1000,
+                project_max_cost_rmb=100,
                 stage_max_cost_rmb=10,
                 stage_max_api_calls=20,
                 qps=1,

@@ -39,7 +39,7 @@ UPSTREAM_REQUEST_TIMEOUT_SECONDS = 60
 DEEPSEEK_CONNECTIVITY_TIMEOUT_SECONDS = 10
 DEEPSEEK_CONNECTIVITY_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0)
 MODEL = "deepseek-v4-flash"
-PROJECT_MAXIMUM_RMB = 1000.0
+PROJECT_MAXIMUM_RMB = 100.0
 STAGE_MAXIMUM_RMB = 100.0
 USD_CNY_RATE = 7.2
 PRICE_CUTOVER_UTC = datetime(2026, 8, 16, 16, 0, tzinfo=timezone.utc)
@@ -1474,7 +1474,11 @@ class DeepSeekBudgetProxy:
                 max_output_tokens=payload.get("max_tokens"),
             )
         except RequestCapExceededError as error:
-            self._write_error(handler, 429, str(error))
+            # pdf2zh-next retries HTTP 429 indefinitely.  A local hard cap is
+            # terminal for this paper, so expose it as a non-retryable client
+            # error; the controller will quarantine the paper and release the
+            # reservation instead of holding a worker forever.
+            self._write_error(handler, 400, str(error))
             return
         except BudgetExceededError as error:
             self._write_error(handler, 402, str(error))
@@ -1963,7 +1967,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=ROOT / "output/snowmass2021/pdf2zh_next_ab/papers/arxiv_2203.07506",
     )
     parser.add_argument("--pages", default=DEFAULT_PAGES)
-    parser.add_argument("--project-max-cost-rmb", type=float, default=1000.0)
+    parser.add_argument("--project-max-cost-rmb", type=float, default=100.0)
     parser.add_argument("--stage-max-cost-rmb", type=float, default=10.0)
     parser.add_argument("--stage-max-api-calls", type=int, default=125)
     parser.add_argument("--qps", type=int, default=2)
