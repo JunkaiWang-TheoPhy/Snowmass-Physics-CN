@@ -1566,6 +1566,13 @@ _DEBUG_LABEL_RE = re.compile(
     r"pagenumber:\x03?\d+|Form\[[^\]]+\])$",
     re.IGNORECASE,
 )
+_DEBUG_LABEL_SEARCH_RE = re.compile(
+    r"(?:titlearagraph\[[^\]]+\]-\[(?:plain(?:\x03|\s)text|plaintext)\]|"
+    r"paragraph\[[^\]]+\]-\[(?:plain(?:\x03|\s)text|plaintext|title)\]|"
+    r"plain(?:\x03|\s)text|plaintext|formula|figure_caption|isolate_formula|"
+    r"figure|fallback_line|pagenumber:\x03?\d+|Form\[[^\]]+\])",
+    re.IGNORECASE,
+)
 
 
 def _visual_text_rows(page: fitz.Page) -> list[list[dict[str, object]]]:
@@ -1614,17 +1621,38 @@ def _remove_debug_labels(document: fitz.Document) -> int:
             for line in block.get("lines", []):
                 text = "".join(str(span.get("text", "")) for span in line.get("spans", []))
                 normalized = text.replace("\x03", " ").strip()
-                if _DEBUG_LABEL_RE.fullmatch(text.strip()) or normalized.startswith("paragraph["):
+                if (
+                    _DEBUG_LABEL_RE.fullmatch(text.strip())
+                    or normalized.startswith("paragraph[")
+                    or _DEBUG_LABEL_SEARCH_RE.search(text)
+                ):
                     has_debug_marker = True
                 lines.append((fitz.Rect(*line["bbox"]), text))
         if not has_debug_marker:
             continue
-        for rectangle, text in lines:
-            normalized = text.replace("\x03", " ").strip()
-            if _DEBUG_LABEL_RE.fullmatch(text.strip()) or _DEBUG_LABEL_RE.fullmatch(normalized):
-                page.add_redact_annot(rectangle, fill=False)
-                removed += 1
-                page_removed += 1
+        # Redact only characters belonging to a debug label. Redacting the
+        # whole extraction line destroys adjacent TOC titles/page numbers
+        # when BabelDOC overlaps metadata with real text.
+        for block in page.get_text("rawdict", sort=True).get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                characters = [
+                    (str(char.get("c", "")), fitz.Rect(*char["bbox"]))
+                    for span in line.get("spans", [])
+                    for char in span.get("chars", [])
+                ]
+                line_text = "".join(char for char, _rect in characters)
+                for match in _DEBUG_LABEL_SEARCH_RE.finditer(line_text):
+                    matched = characters[match.start():match.end()]
+                    if not matched:
+                        continue
+                    rectangle = fitz.Rect(matched[0][1])
+                    for _char, char_rect in matched[1:]:
+                        rectangle |= char_rect
+                    page.add_redact_annot(rectangle, fill=False)
+                    removed += 1
+                    page_removed += 1
         if page_removed:
             page.apply_redactions()
     return removed
