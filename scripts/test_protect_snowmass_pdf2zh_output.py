@@ -12,6 +12,21 @@ import fitz
 
 
 class ProtectPdf2zhOutputTests(unittest.TestCase):
+    def test_removes_only_debug_labels_from_marked_page(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _remove_debug_labels
+
+        document = fitz.open()
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 100), "中文正文", fontname="china-s", fontsize=12)
+        page.insert_text((72, 700), "paragraph[x]-[plain text]", fontsize=8)
+        page.insert_text((72, 715), "formula", fontsize=8)
+        removed = _remove_debug_labels(document)
+        self.assertEqual(removed, 2)
+        self.assertIn("中文正文", page.get_text())
+        self.assertNotIn("paragraph[x]", page.get_text())
+        self.assertNotIn("formula", page.get_text())
+        document.close()
+
     def _make_toc_fixture(
         self,
         root: Path,

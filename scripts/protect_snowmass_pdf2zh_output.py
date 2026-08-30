@@ -1527,6 +1527,12 @@ _NUMERIC_CITATION_SPAN = re.compile(
     _NUMERIC_CITATION_MARKER.pattern + r"\s*[,.;:]?\s*$"
 )
 _TOC_SECTION_PREFIX = re.compile(r"^\s*(\d+(?:\.\d+)*)(?=[^\d.]|$)")
+_DEBUG_LABEL_RE = re.compile(
+    r"^(?:plain(?:\x03|\s)text|paragraph\[[^\]]+\]-\[plain(?:\x03|\s)text\]|"
+    r"formula|figure_caption|isolate_formula|figure|fallback_line|"
+    r"pagenumber:\x03?\d+|Form\[[^\]]+\])$",
+    re.IGNORECASE,
+)
 
 
 def _visual_text_rows(page: fitz.Page) -> list[list[dict[str, object]]]:
@@ -1552,6 +1558,43 @@ def _visual_text_rows(page: fitz.Page) -> list[list[dict[str, object]]]:
     for row in rows:
         row.sort(key=lambda item: cast(fitz.Rect, item["rect"]).x0)
     return rows
+
+
+def _remove_debug_labels(document: fitz.Document) -> int:
+    """Remove BabelDOC debug-only labels before release QC.
+
+    ``basic.debug=True`` is currently required to avoid a nested macOS
+    multiprocessing teardown hang, but the pinned runtime also emits labels
+    such as ``plain text`` and ``Form[...]`` into the PDF text layer.  They
+    are implementation metadata, not paper content.  Only remove exact
+    labels on lines from pages containing a recognizable debug marker; this
+    keeps ordinary English words in the paper untouched.
+    """
+    removed = 0
+    for page in document:
+        lines = []
+        has_debug_marker = False
+        page_removed = 0
+        for block in page.get_text("dict", sort=True).get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                text = "".join(str(span.get("text", "")) for span in line.get("spans", []))
+                normalized = text.replace("\x03", " ").strip()
+                if _DEBUG_LABEL_RE.fullmatch(text.strip()) or normalized.startswith("paragraph["):
+                    has_debug_marker = True
+                lines.append((fitz.Rect(*line["bbox"]), text))
+        if not has_debug_marker:
+            continue
+        for rectangle, text in lines:
+            normalized = text.replace("\x03", " ").strip()
+            if _DEBUG_LABEL_RE.fullmatch(text.strip()) or _DEBUG_LABEL_RE.fullmatch(normalized):
+                page.add_redact_annot(rectangle, fill=False)
+                removed += 1
+                page_removed += 1
+        if page_removed:
+            page.apply_redactions()
+    return removed
 
 
 def _numbered_toc_rows(page: fitz.Page) -> list[dict[str, object]]:
@@ -2449,6 +2492,7 @@ def _protect_pdf_open_documents(
         raise RuntimeError("Translated page count does not match selected source pages")
     if auto_header_min_recurrence < 2:
         raise RuntimeError("Auto header recurrence threshold must be at least 2")
+    debug_label_removal_count = _remove_debug_labels(translated)
 
     auto_header_receipts: list[dict[str, object]] | None = None
     header_families: list[tuple[str, str]] = []
@@ -2975,6 +3019,7 @@ def _protect_pdf_open_documents(
         "canonical_header_count": header_count,
         "fixed_replacement_count": fixed_replacement_count,
         "output_replacement_count": output_replacement_count,
+        "debug_label_removal_count": debug_label_removal_count,
         "normalized_citation_glyph_count": len(citation_glyph_receipts),
         "normalized_citation_glyphs": citation_glyph_receipts,
         "citation_sequence_repair": citation_sequence_repair,
