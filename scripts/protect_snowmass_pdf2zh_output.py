@@ -262,6 +262,8 @@ def _reference_clips(
                 # begin with ``[n]``. Once the heading has been seen, protect
                 # the remaining text on the page as bibliography as well.
                 reference_lines = lines
+            if not reference_lines:
+                continue
             page_clips.append(
                 fitz.Rect(
                     max(0.0, min(rectangle.x0 for rectangle, _ in reference_lines) - 2.0),
