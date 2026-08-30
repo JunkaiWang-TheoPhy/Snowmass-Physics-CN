@@ -30,11 +30,13 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-# A paper-level render must either produce a finish receipt or fail closed
-# within a bounded interval.  Fifteen minutes allowed an ONNX/layout worker
-# hang to block the whole cohort; three minutes is above the observed normal
-# render time for the short-paper probe while keeping recovery prompt.
-ADAPTER_PROCESS_TIMEOUT_SECONDS = 3 * 60
+# The pinned layout model takes about 18 seconds for one page on this Mac.
+# A fixed three-minute ceiling therefore falsely quarantines ordinary papers.
+# Scale the watchdog with the selected page range, but keep a finite ceiling so
+# a genuine worker deadlock still fails closed and releases its reservation.
+ADAPTER_BASE_TIMEOUT_SECONDS = 2 * 60
+ADAPTER_SECONDS_PER_PAGE = 90
+ADAPTER_MAX_TIMEOUT_SECONDS = 2 * 60 * 60
 STAGES = (
     "deepseek_probe",
     "pilot5",
@@ -401,6 +403,25 @@ def _adapter_command(config: ab_runner.RunConfig, *, preflight_only: bool) -> li
     return command
 
 
+def _selected_page_count(pages: str) -> int:
+    """Return the number of pages represented by BabelDOC's page selector."""
+    if str(pages).strip().lower() == "all":
+        # Production plans materialize ``all`` to an explicit range before
+        # launching the adapter.  Keep this conservative for direct callers.
+        return 40
+    total = 0
+    for token in str(pages).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start, end = token.split("-", 1)
+            total += max(0, int(end) - int(start) + 1)
+        else:
+            total += 1
+    return max(1, total)
+
+
 def _run_adapter_subprocess(
     config: ab_runner.RunConfig, *, preflight_only: bool
 ) -> dict[str, Any]:
@@ -412,8 +433,13 @@ def _run_adapter_subprocess(
         text=True,
         start_new_session=True,
     )
+    selected_pages = _selected_page_count(config.pages)
+    timeout_seconds = min(
+        ADAPTER_MAX_TIMEOUT_SECONDS,
+        ADAPTER_BASE_TIMEOUT_SECONDS + selected_pages * ADAPTER_SECONDS_PER_PAGE,
+    )
     try:
-        stdout, stderr = process.communicate(timeout=ADAPTER_PROCESS_TIMEOUT_SECONDS)
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as error:
         # Kill the whole process group: pdf2zh-next may have spawned workers
         # that otherwise outlive the adapter and retain a budget reservation.
@@ -421,7 +447,7 @@ def _run_adapter_subprocess(
         stdout, stderr = process.communicate()
         raise RuntimeError(
             f"pinned pdf2zh-next adapter timed out after "
-            f"{ADAPTER_PROCESS_TIMEOUT_SECONDS}s"
+            f"{timeout_seconds}s"
         ) from error
     result = subprocess.CompletedProcess(
         process.args, process.returncode, stdout=stdout, stderr=stderr

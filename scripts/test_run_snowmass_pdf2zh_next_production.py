@@ -106,6 +106,14 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             },
         )
 
+    def test_selected_page_count_handles_ranges_and_all(self) -> None:
+        module = load_module()
+
+        self.assertEqual(module._selected_page_count("1-4"), 4)
+        self.assertEqual(module._selected_page_count("1-4,7,9-10"), 7)
+        self.assertEqual(module._selected_page_count("all"), 40)
+        self.assertEqual(module._selected_page_count(""), 1)
+
     def _plan_args(self, module, stage: str, **overrides: object):
         values = {
             "stage": stage,
