@@ -322,6 +322,16 @@ def _validate_plan(path: Path) -> dict[str, Any]:
     return plan
 
 
+def _load_plan_for_status(path: Path) -> dict[str, Any]:
+    """Read a locked plan for observability without weakening launch gates."""
+    plan = _load_json(path, label="stage plan")
+    if plan.get("schema_version") != SCHEMA_VERSION:
+        raise RuntimeError("stage plan schema mismatch")
+    if plan.get("plan_sha256") != _plan_payload_hash(plan):
+        raise RuntimeError("stage plan content hash mismatch")
+    return plan
+
+
 def _same_plan_request(existing: Mapping[str, Any], args: PlanArgs) -> bool:
     expected = {
         "stage": args.stage,
@@ -891,7 +901,10 @@ def resume_stage(plan_path: Path) -> dict[str, Any]:
 
 
 def status_stage(plan_path: Path) -> dict[str, Any]:
-    plan = _validate_plan(plan_path)
+    # Status must remain useful after a later code commit changes the current
+    # environment lock. Launch and promotion still use _validate_plan and
+    # therefore continue to fail closed on contract drift.
+    plan = _load_plan_for_status(plan_path)
     outcomes: list[str] = []
     for paper in plan["papers"]:
         article = Path(str(paper["article_dir"]))
