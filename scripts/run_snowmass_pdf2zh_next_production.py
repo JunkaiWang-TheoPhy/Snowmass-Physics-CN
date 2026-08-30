@@ -225,12 +225,15 @@ def _request_allocations(
 
 
 def _runtime_request_allocations(
-    projected: Sequence[int], *, total: int
+    projected: Sequence[int], *, page_counts: Sequence[int]
 ) -> list[int]:
     """Give each paper finite execution headroom beyond its cost projection."""
-    allocations = [max(1, int(value) * 5) for value in projected]
-    if not allocations or sum(allocations) > total:
-        raise ValueError("runtime request cap cannot cover finite paper headroom")
+    if len(projected) != len(page_counts) or not projected:
+        raise ValueError("projected request and page-count allocations must align")
+    allocations = [
+        max(50, int(value) * 5, int(pages) * 8)
+        for value, pages in zip(projected, page_counts, strict=True)
+    ]
     return allocations
 
 
@@ -542,9 +545,9 @@ def plan_stage(
     ]
     if args.stage == "deepseek_probe" and selected_ids != [FORMAL_PROBE_RECORD_ID]:
         raise RuntimeError(f"formal deepseek probe must be {FORMAL_PROBE_RECORD_ID}")
-    # Reserve most of the finite stage request budget for execution headroom:
-    # runtime caps are five times the projected allocation. A sixth/five-sixth
-    # split keeps both sums within the same finite stage cap.
+    # Keep the cost projection conservative; each paper receives an
+    # independent finite runtime cap based on its page count below. The
+    # project RMB budget remains the aggregate spending boundary.
     projected_total = max(len(selected), stage_request_cap // 6)
     projected_allocations = _request_allocations(projected_total, selected)
     if stage_request_cap < 10 * len(selected):
@@ -554,7 +557,8 @@ def plan_stage(
         runtime_allocations = _request_allocations(stage_request_cap, selected)
     else:
         runtime_allocations = _runtime_request_allocations(
-            projected_allocations, total=stage_request_cap
+            projected_allocations,
+            page_counts=[int(record.get("page_count") or 0) for record in selected],
         )
     source_by_id = _source_records(args.source_manifest)
     preflight_runner = preflight_runner or _default_preflight_runner

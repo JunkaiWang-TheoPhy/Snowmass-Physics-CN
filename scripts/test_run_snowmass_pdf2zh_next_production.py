@@ -248,10 +248,12 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
 
     def test_runtime_allocations_leave_finite_headroom_per_paper(self) -> None:
         module = load_module()
-        allocations = module._runtime_request_allocations([10, 25, 5], total=200)
-        self.assertEqual(allocations, [50, 125, 25])
+        allocations = module._runtime_request_allocations(
+            [10, 25, 5], page_counts=[12, 31, 4]
+        )
+        self.assertEqual(allocations, [96, 248, 50])
         with self.assertRaises(ValueError):
-            module._runtime_request_allocations([50, 50], total=100)
+            module._runtime_request_allocations([50], page_counts=[])
 
     def test_plan_assigns_disjoint_stage_cohorts_and_probe_is_pinned(self) -> None:
         module = load_module()
