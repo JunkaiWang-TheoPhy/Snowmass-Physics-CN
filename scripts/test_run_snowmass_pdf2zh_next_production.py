@@ -248,8 +248,8 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
 
     def test_runtime_allocations_leave_finite_headroom_per_paper(self) -> None:
         module = load_module()
-        allocations = module._runtime_request_allocations([10, 25, 5], total=150)
-        self.assertEqual(allocations, [30, 75, 15])
+        allocations = module._runtime_request_allocations([10, 25, 5], total=200)
+        self.assertEqual(allocations, [50, 125, 25])
         with self.assertRaises(ValueError):
             module._runtime_request_allocations([50, 50], total=100)
 

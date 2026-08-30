@@ -228,7 +228,7 @@ def _runtime_request_allocations(
     projected: Sequence[int], *, total: int
 ) -> list[int]:
     """Give each paper finite execution headroom beyond its cost projection."""
-    allocations = [max(1, int(value) * 3) for value in projected]
+    allocations = [max(1, int(value) * 5) for value in projected]
     if not allocations or sum(allocations) > total:
         raise ValueError("runtime request cap cannot cover finite paper headroom")
     return allocations
@@ -543,9 +543,9 @@ def plan_stage(
     if args.stage == "deepseek_probe" and selected_ids != [FORMAL_PROBE_RECORD_ID]:
         raise RuntimeError(f"formal deepseek probe must be {FORMAL_PROBE_RECORD_ID}")
     # Reserve most of the finite stage request budget for execution headroom:
-    # runtime caps are three times the projected allocation. A quarter/three
-    # quarter split keeps both sums within the same finite stage cap.
-    projected_total = max(len(selected), stage_request_cap // 4)
+    # runtime caps are five times the projected allocation. A sixth/five-sixth
+    # split keeps both sums within the same finite stage cap.
+    projected_total = max(len(selected), stage_request_cap // 6)
     projected_allocations = _request_allocations(projected_total, selected)
     if stage_request_cap < 10 * len(selected):
         # Tiny unit/probe plans intentionally have a tiny total cap; retain
