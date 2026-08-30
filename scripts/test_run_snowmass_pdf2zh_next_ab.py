@@ -107,8 +107,26 @@ class DeepSeekConnectivityTests(unittest.TestCase):
                 requester=lambda *_args, **_kwargs: (_ for _ in ()).throw(
                     RuntimeError("Authorization: secret-key; timed out")
                 ),
+                sleeper=lambda _delay: None,
             )
         self.assertNotIn("secret-key", str(context.exception))
+
+    def test_transient_connectivity_failure_retries_before_paid_work(self) -> None:
+        module = load_module()
+        statuses = iter([503, 503, 200])
+        delays = []
+
+        result = module.check_deepseek_connectivity(
+            "secret-key",
+            requester=lambda *_args, **_kwargs: SimpleNamespace(
+                status_code=next(statuses)
+            ),
+            sleeper=delays.append,
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["attempt"], 3)
+        self.assertEqual(delays, [2.0, 5.0])
 
 
 class HttpxTimeoutContractTests(unittest.TestCase):

@@ -425,39 +425,47 @@ def _selected_page_count(pages: str) -> int:
 def _run_adapter_subprocess(
     config: ab_runner.RunConfig, *, preflight_only: bool
 ) -> dict[str, Any]:
-    process = subprocess.Popen(
-        _adapter_command(config, preflight_only=preflight_only),
-        cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    config.output_root.mkdir(parents=True, exist_ok=True)
+    stdout_path = config.output_root / "adapter.stdout.log"
+    stderr_path = config.output_root / "adapter.stderr.log"
+    # Redirect to durable files instead of PIPE.  A long BabelDOC run can
+    # emit enough progress that a parent which waits on the wrong stream
+    # loses the only useful evidence when the watchdog fires.
+    with (
+        stdout_path.open("w", encoding="utf-8") as stdout_stream,
+        stderr_path.open("w", encoding="utf-8") as stderr_stream,
+    ):
+        process = subprocess.Popen(
+            _adapter_command(config, preflight_only=preflight_only),
+            cwd=ROOT,
+            stdout=stdout_stream,
+            stderr=stderr_stream,
+            text=True,
+            start_new_session=True,
+        )
     selected_pages = _selected_page_count(config.pages)
     timeout_seconds = min(
         ADAPTER_MAX_TIMEOUT_SECONDS,
         ADAPTER_BASE_TIMEOUT_SECONDS + selected_pages * ADAPTER_SECONDS_PER_PAGE,
     )
     try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        process.wait(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as error:
         # Kill the whole process group: pdf2zh-next may have spawned workers
         # that otherwise outlive the adapter and retain a budget reservation.
         os.killpg(process.pid, signal.SIGKILL)
-        stdout, stderr = process.communicate()
+        process.wait()
         raise RuntimeError(
             f"pinned pdf2zh-next adapter timed out after "
-            f"{timeout_seconds}s"
+            f"{timeout_seconds}s; stderr={stderr_path.name}"
         ) from error
-    result = subprocess.CompletedProcess(
-        process.args, process.returncode, stdout=stdout, stderr=stderr
-    )
-    if result.returncode != 0:
+    if process.returncode != 0:
+        stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
         raise RuntimeError(
             "pinned pdf2zh-next adapter failed: "
             + (
-                result.stderr.strip().splitlines()[-1]
-                if result.stderr.strip()
+                stderr.strip().splitlines()[-1]
+                if stderr.strip()
                 else "unknown"
             )
         )

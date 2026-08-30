@@ -20,6 +20,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 import tempfile
 import threading
 import uuid
@@ -36,6 +37,7 @@ EXPECTED_PDF2ZH_NEXT_VERSION = "2.9.0"
 EXPECTED_BABELDOC_VERSION = "0.6.4"
 UPSTREAM_REQUEST_TIMEOUT_SECONDS = 60
 DEEPSEEK_CONNECTIVITY_TIMEOUT_SECONDS = 10
+DEEPSEEK_CONNECTIVITY_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0)
 MODEL = "deepseek-v4-flash"
 PROJECT_MAXIMUM_RMB = 1000.0
 STAGE_MAXIMUM_RMB = 100.0
@@ -985,6 +987,7 @@ def check_deepseek_connectivity(
     api_key: str,
     *,
     requester: Callable[..., Any] | None = None,
+    sleeper: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
     """Fail fast before reserving budget when the official API is unreachable."""
     if not api_key:
@@ -993,23 +996,36 @@ def check_deepseek_connectivity(
         import httpx
 
         requester = httpx.get
-    try:
-        response = requester(
-            "https://api.deepseek.com/models",
-            headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
-            timeout=DEEPSEEK_CONNECTIVITY_TIMEOUT_SECONDS,
-            trust_env=False,
-        )
-        status_code = int(getattr(response, "status_code", 0))
-        if not 200 <= status_code < 300:
-            raise DeepSeekConnectivityError(
-                f"DeepSeek connectivity check returned HTTP {status_code}"
+    sleeper = sleeper or time.sleep
+    last_error: Exception | None = None
+    attempts = len(DEEPSEEK_CONNECTIVITY_RETRY_DELAYS_SECONDS) + 1
+    for attempt in range(attempts):
+        try:
+            response = requester(
+                "https://api.deepseek.com/models",
+                headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+                timeout=DEEPSEEK_CONNECTIVITY_TIMEOUT_SECONDS,
+                trust_env=False,
             )
-        return {"status": "passed", "endpoint": "https://api.deepseek.com/models", "status_code": status_code, "zero_paid": True}
-    except DeepSeekConnectivityError:
-        raise
-    except Exception as error:
-        raise RuntimeError("DeepSeek connectivity check failed before paid work") from error
+            status_code = int(getattr(response, "status_code", 0))
+            if not 200 <= status_code < 300:
+                raise DeepSeekConnectivityError(
+                    f"DeepSeek connectivity check returned HTTP {status_code}"
+                )
+            return {
+                "status": "passed",
+                "endpoint": "https://api.deepseek.com/models",
+                "status_code": status_code,
+                "attempt": attempt + 1,
+                "zero_paid": True,
+            }
+        except Exception as error:  # noqa: BLE001 - sanitize all transport errors
+            last_error = error
+            if attempt < attempts - 1:
+                sleeper(DEEPSEEK_CONNECTIVITY_RETRY_DELAYS_SECONDS[attempt])
+    if isinstance(last_error, DeepSeekConnectivityError):
+        raise last_error
+    raise RuntimeError("DeepSeek connectivity check failed before paid work") from last_error
 
 
 def _usage_from_response(response: Any) -> dict[str, int]:
