@@ -262,6 +262,12 @@ def _reference_clips(
                 # begin with ``[n]``. Once the heading has been seen, protect
                 # the remaining text on the page as bibliography as well.
                 reference_lines = lines
+                if heading is not None:
+                    reference_lines = [
+                        (rectangle, text)
+                        for rectangle, text in lines
+                        if rectangle.y0 >= heading.y0 - 1.0
+                    ]
             if not reference_lines:
                 continue
             page_clips.append(
