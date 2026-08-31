@@ -11,6 +11,7 @@ import math
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -19,6 +20,17 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+PINNED_PYTHON = Path(
+    "/Users/Zhuanz/.local/share/snowmass-tools/pdf2zh-next-2.9.0/bin/python"
+)
+if __name__ == "__main__" and PINNED_PYTHON.is_file():
+    if Path(sys.executable).resolve() != PINNED_PYTHON.resolve():
+        os.execv(
+            str(PINNED_PYTHON),
+            [str(PINNED_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]],
+        )
 
 try:
     import run_snowmass_batch_production as batch_production
@@ -55,11 +67,6 @@ PREVIOUS_STAGE = {
 }
 FORMAL_PROBE_RECORD_ID = "arxiv:2203.06843"
 SCHEMA_VERSION = 1
-PINNED_PYTHON = Path(
-    "/Users/Zhuanz/.local/share/snowmass-tools/pdf2zh-next-2.9.0/bin/python"
-)
-
-
 @dataclass(frozen=True)
 class PlanArgs:
     stage: str

@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -33,6 +34,19 @@ def load_module():
 
 
 class Pdf2zhNextProductionTests(unittest.TestCase):
+    def test_cli_reexecutes_into_pinned_environment_under_system_python(self) -> None:
+        system_python = Path("/usr/bin/python3")
+        if not system_python.is_file():
+            self.skipTest("macOS system Python is unavailable")
+        result = subprocess.run(
+            [str(system_python), str(MODULE_PATH), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Fail-closed staged production control", result.stdout)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
