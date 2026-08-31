@@ -77,6 +77,7 @@ class PlanArgs:
     pool_max_workers: int = 1
     supplemental_glossary_json: Path | None = None
     record_ids: tuple[str, ...] = ()
+    source_prefilter: Path | None = None
 
 
 def _sha256(path: Path) -> str:
@@ -187,6 +188,55 @@ def _source_records(path: Path) -> dict[str, dict[str, Any]]:
         if record_id in by_id:
             raise RuntimeError(f"duplicate source identity: {record_id}")
         by_id[record_id] = record
+    return by_id
+
+
+def _validate_low_risk_prefilter(
+    path: Path, selected_ids: Sequence[str]
+) -> dict[str, dict[str, Any]]:
+    """Require every new non-probe paper to come from the live low-risk scan."""
+
+    manifest = _load_json(path, label="source prefilter")
+    records = manifest.get("records")
+    if not isinstance(records, list):
+        raise RuntimeError("source prefilter records are missing")
+    by_id: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get("record_id"), str):
+            raise RuntimeError("source prefilter record is invalid")
+        record_id = ab_runner.normalize_record_id(record["record_id"])
+        if record_id in by_id:
+            raise RuntimeError(f"duplicate source prefilter record: {record_id}")
+        by_id[record_id] = record
+    for record_id in selected_ids:
+        row = by_id.get(record_id)
+        if row is None:
+            raise RuntimeError(f"source prefilter record is missing: {record_id}")
+        if row.get("publication_allowed") is not True:
+            raise RuntimeError(f"source prefilter rights gate failed: {record_id}")
+        if row.get("eligible") is not True:
+            raise RuntimeError(
+                f"source prefilter low-risk gate failed: {record_id}: "
+                + ",".join(map(str, row.get("reasons") or ()))
+            )
+        required = {
+            "pages": lambda value: int(value) <= 10,
+            "images": lambda value: int(value) == 0,
+            "drawings": lambda value: int(value) <= 200,
+            "numeric_citations": lambda value: int(value) <= 10,
+            "citation_ranges": lambda value: int(value) <= 1,
+            "reference_pages": lambda value: int(value) <= 2,
+            "contents_pages": lambda value: int(value) == 0,
+        }
+        for field, predicate in required.items():
+            try:
+                valid = predicate(row.get(field))
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                raise RuntimeError(
+                    f"source prefilter metric gate failed: {record_id}:{field}"
+                )
     return by_id
 
 
@@ -361,6 +411,14 @@ def _same_plan_request(existing: Mapping[str, Any], args: PlanArgs) -> bool:
         "stage": args.stage,
         "rights_manifest": str(args.rights_manifest.resolve()),
         "source_manifest": str(args.source_manifest.resolve()),
+        "source_prefilter": (
+            {
+                "path": str(args.source_prefilter.resolve()),
+                "sha256": _sha256(args.source_prefilter),
+            }
+            if args.source_prefilter is not None
+            else None
+        ),
         "glossary_json": str(args.glossary_json.resolve()),
         "project_control_dir": str(args.project_control_dir.resolve()),
         "project_max_cost_rmb": float(args.project_max_cost_rmb),
@@ -557,6 +615,11 @@ def plan_stage(
     ]
     if args.stage == "deepseek_probe" and selected_ids != [FORMAL_PROBE_RECORD_ID]:
         raise RuntimeError(f"formal deepseek probe must be {FORMAL_PROBE_RECORD_ID}")
+    prefilter_records: dict[str, dict[str, Any]] = {}
+    if args.stage != "deepseek_probe" and args.source_prefilter is not None:
+        prefilter_records = _validate_low_risk_prefilter(
+            args.source_prefilter, selected_ids
+        )
     # Keep the cost projection conservative; each paper receives an
     # independent finite runtime cap based on its page count below. The
     # project RMB budget remains the aggregate spending boundary.
@@ -595,6 +658,10 @@ def plan_stage(
         expected_size = int(identity.get("pdf_bytes") or -1)
         if expected_size != source_pdf.stat().st_size:
             raise RuntimeError(f"trusted source PDF size mismatch: {record_id}")
+        if prefilter_records:
+            prefilter_hash = prefilter_records[record_id].get("sha256")
+            if prefilter_hash != expected_hash:
+                raise RuntimeError(f"source prefilter hash mismatch: {record_id}")
         article = (
             args.output_root
             / "stages"
@@ -692,6 +759,14 @@ def plan_stage(
         "stage": args.stage,
         "rights_manifest": str(args.rights_manifest.resolve()),
         "source_manifest": str(args.source_manifest.resolve()),
+        "source_prefilter": (
+            {
+                "path": str(args.source_prefilter.resolve()),
+                "sha256": _sha256(args.source_prefilter),
+            }
+            if args.source_prefilter is not None
+            else None
+        ),
         "glossary_json": str(args.glossary_json.resolve()),
         "project_control_dir": str(args.project_control_dir.resolve()),
         "project_max_cost_rmb": project_budget,
@@ -1181,6 +1256,12 @@ def _parser() -> argparse.ArgumentParser:
         "--source-manifest",
         type=Path,
         default=ROOT / "output/snowmass2021_sources/manifest.json",
+    )
+    plan.add_argument(
+        "--source-prefilter",
+        type=Path,
+        default=ROOT / "output/snowmass2021/production_control/source-prefilter-v5.json",
+        help="Current zero-cost source-PDF prefilter required for non-probe pilots",
     )
     plan.add_argument("--pdf-root", type=Path, default=ROOT / "tmp/pdfs/snowmass2021")
     plan.add_argument(

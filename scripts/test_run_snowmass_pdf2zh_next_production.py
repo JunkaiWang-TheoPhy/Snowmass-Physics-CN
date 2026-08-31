@@ -114,6 +114,45 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         self.assertEqual(module._selected_page_count("all"), 40)
         self.assertEqual(module._selected_page_count(""), 1)
 
+    def test_new_pilot_requires_live_low_risk_source_prefilter(self) -> None:
+        module = load_module()
+        prefilter = self._write_json(
+            self.root / "source-prefilter.json",
+            {
+                "records": [
+                    {
+                        "record_id": "arxiv:good",
+                        "publication_allowed": True,
+                        "eligible": True,
+                        "pages": 5,
+                        "images": 0,
+                        "drawings": 12,
+                        "numeric_citations": 3,
+                        "citation_ranges": 0,
+                        "reference_pages": 1,
+                        "contents_pages": 0,
+                        "reasons": [],
+                    },
+                    {
+                        "record_id": "arxiv:complex",
+                        "publication_allowed": True,
+                        "eligible": False,
+                        "pages": 16,
+                        "images": 1,
+                        "drawings": 22222,
+                        "numeric_citations": 129,
+                        "citation_ranges": 9,
+                        "reference_pages": 1,
+                        "contents_pages": 1,
+                        "reasons": ["dense_vector_graphics"],
+                    },
+                ]
+            },
+        )
+        module._validate_low_risk_prefilter(prefilter, ("arxiv:good",))
+        with self.assertRaisesRegex(RuntimeError, "low-risk gate failed"):
+            module._validate_low_risk_prefilter(prefilter, ("arxiv:complex",))
+
     def _plan_args(self, module, stage: str, **overrides: object):
         values = {
             "stage": stage,

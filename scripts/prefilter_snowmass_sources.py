@@ -74,7 +74,11 @@ def prefilter(*, rights_path: Path, source_manifest_path: Path, pdf_root: Path) 
             continue
         record_id = record["record_id"]
         source_record = source_by_id.get(record_id)
-        row: dict[str, Any] = {"record_id": record_id, "eligible": False}
+        row: dict[str, Any] = {
+            "record_id": record_id,
+            "publication_allowed": record.get("publication_allowed"),
+            "eligible": False,
+        }
         if not source_record:
             row["reasons"] = ["missing_source_record"]
             rows.append(row)
@@ -110,7 +114,7 @@ def prefilter(*, rights_path: Path, source_manifest_path: Path, pdf_root: Path) 
     candidates = [row for row in rows if row["eligible"]]
     candidates.sort(key=lambda row: (row["pages"], row["images"] + row["drawings"], row["reference_pages"], row["record_id"]))
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "purpose": "zero_cost_low_layout_risk_pilot_prefilter",
         "policy": {
             "figure_interior_text": "source_verbatim",
