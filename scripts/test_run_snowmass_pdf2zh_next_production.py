@@ -964,6 +964,43 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "article environment lock mismatch"):
             module._ensure_article_environment_lock(plan, paper)
 
+    def test_terminated_adapter_reconciles_project_cost_from_request_ledger(self) -> None:
+        module = load_module()
+        request_ledger = self.root / "run" / "api-cost-ledger.jsonl"
+        request_ledger.parent.mkdir(parents=True)
+        request_ledger.write_text('{"kind":"settle"}\n', encoding="utf-8")
+        config = module.ab_runner.RunConfig(
+            record_id="arxiv:test",
+            source_pdf=self.root / "source.pdf",
+            rights_manifest=self.rights_manifest,
+            source_manifest=self.source_manifest,
+            glossary_json=self.glossary,
+            output_root=request_ledger.parent,
+            pages="1",
+            project_max_cost_rmb=100,
+            stage_max_cost_rmb=4,
+            stage_max_api_calls=10,
+            qps=1,
+            pool_max_workers=1,
+            project_control_dir=self.project_control,
+        )
+        reservation = mock.Mock()
+        with (
+            mock.patch.object(
+                module.ab_runner,
+                "SharedProjectReservation",
+                return_value=reservation,
+            ) as reservation_type,
+            mock.patch.object(module, "_sha256", return_value="a" * 64),
+        ):
+            module._reconcile_terminated_adapter(config)
+
+        reservation_type.assert_called_once()
+        reservation.reconcile_terminated.assert_called_once_with(
+            request_ledger_path=request_ledger,
+            expected_request_ledger_sha256="a" * 64,
+        )
+
     def test_promote_requires_previous_stage_seal_and_fresh_paper_seals(self) -> None:
         module = load_module()
         probe = self._seed_record("arxiv:2203.06843")

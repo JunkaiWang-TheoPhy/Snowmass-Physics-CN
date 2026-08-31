@@ -263,6 +263,18 @@ def normalize_record_id(value: str) -> str:
     return str(value).strip().lower()
 
 
+def shared_project_run_id(
+    record_id: str, source_sha256: str, output_root: Path
+) -> str:
+    digest = hashlib.sha256(
+        (
+            f"{normalize_record_id(record_id)}\0"
+            f"{source_sha256}\0{Path(output_root).resolve()}"
+        ).encode()
+    ).hexdigest()[:24]
+    return f"pdf2zh-next-ab-{digest}"
+
+
 def pid_is_alive(value: Any) -> bool:
     try:
         pid = int(value)
@@ -1072,6 +1084,78 @@ class SharedProjectReservation:
                 )
         self.completed = True
         return summary
+
+
+def commit_orphaned_request_ledger_cost(
+    *,
+    control_dir: Path,
+    run_id: str,
+    request_ledger_path: Path,
+) -> dict[str, Any]:
+    """Idempotently correct a zero-cost orphan recovery from request evidence."""
+
+    request_ledger_path = Path(request_ledger_path)
+    summary = summarize_terminated_request_ledger(
+        request_ledger_path,
+        expected_sha256=sha256_file(request_ledger_path),
+    )
+    config = json.loads(
+        (Path(control_dir) / "budget_config.json").read_text(encoding="utf-8")
+    )
+    reservation = SharedProjectReservation(
+        control_dir=Path(control_dir),
+        run_id=run_id,
+        project_max_cost_rmb=float(config["project_max_cost_rmb"]),
+    )
+    request_hash = str(summary["request_ledger_sha256"])
+    actual = float(summary["conservative_cost_rmb"])
+    with reservation._locked():
+        events = reservation._events_locked()
+        _spent, active = reservation._state(events)
+        if any(str(event.get("run_id") or "") == run_id for event in active.values()):
+            raise RuntimeError("orphaned run still has an active reservation")
+        existing = [
+            event
+            for event in events
+            if event.get("kind") == "commit_estimate"
+            and str(event.get("run_id") or "") == run_id
+            and (event.get("reconciliation") or {}).get("request_ledger_sha256")
+            == request_hash
+        ]
+        if existing:
+            return {**summary, "committed": False}
+        settled = [
+            event
+            for event in events
+            if event.get("kind") == "settle"
+            and str(event.get("run_id") or "") == run_id
+        ]
+        if settled:
+            settled_cost = sum(float(event.get("cost_rmb") or 0) for event in settled)
+            if abs(settled_cost - actual) <= 1e-12:
+                return {**summary, "committed": False}
+            raise RuntimeError("orphaned run already has a conflicting settlement")
+        recoveries = [
+            event
+            for event in events
+            if event.get("kind") == "recover_orphan"
+            and str(event.get("run_id") or "") == run_id
+        ]
+        if len(recoveries) != 1:
+            raise RuntimeError("orphaned run requires exactly one recovery event")
+        reservation._append_locked(
+            {
+                "schema_version": 1,
+                "event_id": uuid.uuid4().hex,
+                "kind": "commit_estimate",
+                "run_id": run_id,
+                "reservation_id": str(recoveries[0].get("reservation_id") or ""),
+                "cost_rmb": actual,
+                "uncertainty_key": f"pdf2zh-next:{run_id}:orphan-correction",
+                "reconciliation": summary,
+            }
+        )
+    return {**summary, "committed": True}
 
 
 def runtime_versions() -> dict[str, str]:
@@ -2061,15 +2145,13 @@ def execute(
     connectivity = check_deepseek_connectivity(api_key)
     if config.project_control_dir is None:
         raise ValueError("paid A/B requires a shared project control directory")
-    shared_run_id = hashlib.sha256(
-        (
-            f"{normalize_record_id(config.record_id)}\0"
-            f"{preflight['source']['sha256']}\0{config.output_root.resolve()}"
-        ).encode()
-    ).hexdigest()[:24]
     project_reservation = SharedProjectReservation(
         control_dir=config.project_control_dir,
-        run_id=f"pdf2zh-next-ab-{shared_run_id}",
+        run_id=shared_project_run_id(
+            config.record_id,
+            str(preflight["source"]["sha256"]),
+            config.output_root,
+        ),
         project_max_cost_rmb=project_budget,
     )
     project_reservation.reserve(float(projection["max_cost_rmb"]))

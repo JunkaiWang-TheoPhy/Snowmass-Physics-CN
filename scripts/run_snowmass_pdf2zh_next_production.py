@@ -538,6 +538,27 @@ def _selected_page_count(pages: str) -> int:
     return max(1, total)
 
 
+def _reconcile_terminated_adapter(
+    config: ab_runner.RunConfig,
+) -> Mapping[str, Any] | None:
+    request_ledger = config.output_root / "api-cost-ledger.jsonl"
+    if config.project_control_dir is None or not request_ledger.is_file():
+        return None
+    reservation = ab_runner.SharedProjectReservation(
+        control_dir=config.project_control_dir,
+        run_id=ab_runner.shared_project_run_id(
+            config.record_id,
+            _sha256(config.source_pdf),
+            config.output_root,
+        ),
+        project_max_cost_rmb=config.project_max_cost_rmb,
+    )
+    return reservation.reconcile_terminated(
+        request_ledger_path=request_ledger,
+        expected_request_ledger_sha256=_sha256(request_ledger),
+    )
+
+
 def _run_adapter_subprocess(
     config: ab_runner.RunConfig, *, preflight_only: bool
 ) -> dict[str, Any]:
@@ -574,6 +595,7 @@ def _run_adapter_subprocess(
             # library to drain every already-queued paragraph fallback.
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+            _reconcile_terminated_adapter(config)
             raise RuntimeError(
                 f"pinned pdf2zh-next adapter exhausted its request cap; "
                 f"stderr={stderr_path.name}"
@@ -581,6 +603,7 @@ def _run_adapter_subprocess(
         if time.monotonic() >= deadline:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+            _reconcile_terminated_adapter(config)
             raise RuntimeError(
                 f"pinned pdf2zh-next adapter timed out after "
                 f"{timeout_seconds}s; stderr={stderr_path.name}"

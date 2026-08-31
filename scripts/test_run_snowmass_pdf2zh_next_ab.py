@@ -882,6 +882,80 @@ class LocalBudgetProxyTests(unittest.TestCase):
 
 
 class SharedProjectReservationTests(unittest.TestCase):
+    def test_commits_orphaned_request_ledger_cost_once_after_zero_recovery(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            control = Path(temporary) / "control"
+            control.mkdir()
+            module.atomic_json(
+                control / "budget_config.json",
+                {
+                    "schema_version": 1,
+                    "project_max_cost_rmb": 100,
+                    "authorized_max_cost_rmb": 100,
+                    "usd_cny_rate": 7.2,
+                    "ledger_initialized": True,
+                },
+            )
+            run_id = "pdf2zh-next-ab-orphan"
+            reservation_id = "reservation"
+            (control / "budget_ledger.jsonl").write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {
+                            "schema_version": 1,
+                            "kind": "reserve",
+                            "run_id": run_id,
+                            "reservation_id": reservation_id,
+                            "owner_pid": 999_999_999,
+                            "estimated_cost_rmb": 1.0,
+                        },
+                        {
+                            "schema_version": 1,
+                            "kind": "recover_orphan",
+                            "run_id": run_id,
+                            "reservation_id": reservation_id,
+                            "cost_rmb": 0.0,
+                        },
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            request_ledger = Path(temporary) / "api-cost-ledger.jsonl"
+            request_ledger.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {
+                            "kind": "reserve",
+                            "call_index": 1,
+                            "owner_pid": 999_999_999,
+                            "reserved_cost_rmb": 0.2,
+                        },
+                        {"kind": "settle", "call_index": 1, "cost_rmb": 0.1},
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            first = module.commit_orphaned_request_ledger_cost(
+                control_dir=control,
+                run_id=run_id,
+                request_ledger_path=request_ledger,
+            )
+            second = module.commit_orphaned_request_ledger_cost(
+                control_dir=control,
+                run_id=run_id,
+                request_ledger_path=request_ledger,
+            )
+
+            self.assertTrue(first["committed"])
+            self.assertFalse(second["committed"])
+            self.assertAlmostEqual(module.read_project_commitment(control), 0.1)
+
     def test_read_project_commitment_reconciles_dead_reservations(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
