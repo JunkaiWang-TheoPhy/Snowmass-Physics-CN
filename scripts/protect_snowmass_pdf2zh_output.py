@@ -234,7 +234,13 @@ def _reference_clips(
     # numbered entry as a boundary when a short forward scan finds the next
     # two entries in order; this avoids treating an isolated body citation as
     # the bibliography start.
+    explicit_heading_exists = any(
+        re.fullmatch(r"(?:References?|Bibliography|参考文献|文献)\s*[:：]?", text, re.IGNORECASE)
+        for _page_index, text in numbered_candidates
+    )
     for index, (page_index, line_text) in enumerate(numbered_candidates):
+        if explicit_heading_exists:
+            break
         if _reference_entry_number(line_text) != 1:
             continue
         expected = 2
