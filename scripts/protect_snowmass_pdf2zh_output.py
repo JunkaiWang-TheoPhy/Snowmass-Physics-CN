@@ -1972,6 +1972,51 @@ def _repair_merged_toc_rows(
         if not _DEBUG_LABEL_RE.fullmatch(str(line["text"]).strip())
         and not _DEBUG_LABEL_SEARCH_RE.search(str(line["text"]))
     ]
+    if len(source_entries) >= 5:
+        source_toc_bottom = max(
+            cast(fitz.Rect, entry["rect"]).y1 for entry in source_entries
+        )
+        toc_fragments = [
+            line
+            for line in output_lines
+            if cast(fitz.Rect, line["rect"]).y0 <= source_toc_bottom + 10.0
+        ]
+        combined_text = "".join(
+            str(line["text"])
+            for line in sorted(
+                toc_fragments,
+                key=lambda line: (
+                    cast(fitz.Rect, line["rect"]).y0,
+                    cast(fitz.Rect, line["rect"]).x0,
+                ),
+            )
+        )
+        first_id = re.search(re.escape(str(source_entries[0]["section_id"])), combined_text)
+        if first_id is not None:
+            combined_text = combined_text[first_id.start() :]
+            if len(_toc_title_segments(combined_text, source_entries)) == len(source_entries):
+                combined_rect = fitz.Rect(cast(fitz.Rect, toc_fragments[0]["rect"]))
+                for fragment in toc_fragments[1:]:
+                    combined_rect |= cast(fitz.Rect, fragment["rect"])
+                toc_ids = {id(line) for line in toc_fragments}
+                output_lines = [
+                    line for line in output_lines if id(line) not in toc_ids
+                ]
+                first_source_rect = cast(fitz.Rect, source_entries[0]["rect"])
+                output_lines.append(
+                    {
+                        "text": combined_text,
+                        "rect": fitz.Rect(
+                            combined_rect.x0,
+                            first_source_rect.y0,
+                            combined_rect.x1,
+                            first_source_rect.y1,
+                        ),
+                    }
+                )
+                output_lines.sort(
+                    key=lambda line: cast(fitz.Rect, line["rect"]).y0
+                )
     source_ids = {str(entry["section_id"]) for entry in source_entries}
     enable_nested_line_merge = len(source_entries) >= 5
     fused_lines: list[dict[str, object]] = []
