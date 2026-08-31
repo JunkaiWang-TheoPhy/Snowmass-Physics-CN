@@ -70,8 +70,14 @@ class CitationLockError(RuntimeError):
     """The model changed, reordered, omitted, or invented a citation marker."""
 
 
-_NUMERIC_CITATION_RE = re.compile(
+_NUMERIC_CITATION_PATTERN = (
     r"\[(?:\s*\d+\s*)(?:(?:,|[-–—])\s*\d+\s*)*\]"
+)
+_BABELDOC_PLACEHOLDER_PATTERN = r"\{v\d+\}(?:\:{3}\{v\d+\})?"
+_NUMERIC_CITATION_RE = re.compile(_NUMERIC_CITATION_PATTERN)
+_BABELDOC_PLACEHOLDER_RE = re.compile(_BABELDOC_PLACEHOLDER_PATTERN)
+_STRUCTURAL_ANCHOR_RE = re.compile(
+    rf"(?:{_BABELDOC_PLACEHOLDER_PATTERN}|{_NUMERIC_CITATION_PATTERN})"
 )
 _CITATION_TOKEN_RE = re.compile(r"\[\[SMCIT_\d{6}\]\]")
 
@@ -80,6 +86,8 @@ _CITATION_TOKEN_RE = re.compile(r"\[\[SMCIT_\d{6}\]\]")
 class CitationLock:
     tokens: tuple[str, ...]
     markers: tuple[str, ...]
+    numeric_citation_count: int
+    rich_placeholder_count: int
 
     @property
     def count(self) -> int:
@@ -91,6 +99,7 @@ def _lock_citations_in_text(
     *,
     tokens: list[str],
     markers: list[str],
+    marker_kinds: list[str],
 ) -> str:
     if "[[SMCIT_" in value:
         raise CitationLockError("source text collides with citation lock token")
@@ -99,9 +108,12 @@ def _lock_citations_in_text(
         token = f"[[SMCIT_{len(tokens) + 1:06d}]]"
         tokens.append(token)
         markers.append(match.group(0))
+        marker_kinds.append(
+            "placeholder" if match.group(0).startswith("{v") else "citation"
+        )
         return token
 
-    return _NUMERIC_CITATION_RE.sub(replace, value)
+    return _STRUCTURAL_ANCHOR_RE.sub(replace, value)
 
 
 def lock_numeric_citations(
@@ -112,21 +124,33 @@ def lock_numeric_citations(
     locked = copy.deepcopy(messages)
     tokens: list[str] = []
     markers: list[str] = []
+    marker_kinds: list[str] = []
     for message in locked:
         if str(message.get("role") or "") != "user":
             continue
         content = message.get("content")
         if isinstance(content, str):
             message["content"] = _lock_citations_in_text(
-                content, tokens=tokens, markers=markers
+                content,
+                tokens=tokens,
+                markers=markers,
+                marker_kinds=marker_kinds,
             )
         elif isinstance(content, list):
             for part in content:
                 if isinstance(part, dict) and isinstance(part.get("text"), str):
                     part["text"] = _lock_citations_in_text(
-                        part["text"], tokens=tokens, markers=markers
+                        part["text"],
+                        tokens=tokens,
+                        markers=markers,
+                        marker_kinds=marker_kinds,
                     )
-    return locked, CitationLock(tuple(tokens), tuple(markers))
+    return locked, CitationLock(
+        tuple(tokens),
+        tuple(markers),
+        marker_kinds.count("citation"),
+        marker_kinds.count("placeholder"),
+    )
 
 
 def unlock_numeric_citations_response(
@@ -152,8 +176,10 @@ def unlock_numeric_citations_response(
         if actual_tokens != citation_lock.tokens:
             raise CitationLockError("citation lock tokens changed or reordered")
         without_tokens = _CITATION_TOKEN_RE.sub("", content)
-        if _NUMERIC_CITATION_RE.search(without_tokens):
-            raise CitationLockError("model invented an unlocked citation marker")
+        if _NUMERIC_CITATION_RE.search(without_tokens) or _BABELDOC_PLACEHOLDER_RE.search(
+            without_tokens
+        ):
+            raise CitationLockError("model invented an unlocked structure marker")
         restored = content
         for token, marker in zip(
             citation_lock.tokens, citation_lock.markers, strict=True
@@ -1489,6 +1515,8 @@ class DeepSeekBudgetProxy:
         self._thread: threading.Thread | None = None
         self._metrics_lock = threading.Lock()
         self._locked_marker_count = 0
+        self._locked_numeric_citation_count = 0
+        self._locked_rich_placeholder_count = 0
         self._validated_response_count = 0
         self._failure_count = 0
 
@@ -1503,6 +1531,8 @@ class DeepSeekBudgetProxy:
         with self._metrics_lock:
             return {
                 "locked_marker_count": self._locked_marker_count,
+                "locked_numeric_citation_count": self._locked_numeric_citation_count,
+                "locked_rich_placeholder_count": self._locked_rich_placeholder_count,
                 "validated_response_count": self._validated_response_count,
                 "failure_count": self._failure_count,
             }
@@ -1594,6 +1624,12 @@ class DeepSeekBudgetProxy:
         payload["messages"] = locked_messages
         with self._metrics_lock:
             self._locked_marker_count += citation_lock.count
+            self._locked_numeric_citation_count += (
+                citation_lock.numeric_citation_count
+            )
+            self._locked_rich_placeholder_count += (
+                citation_lock.rich_placeholder_count
+            )
         payload["model"] = MODEL
         payload["stream"] = False
         payload["thinking"] = {"type": "disabled"}

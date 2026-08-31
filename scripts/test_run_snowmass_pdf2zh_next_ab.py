@@ -176,6 +176,41 @@ class TranslationPromptContractTests(unittest.TestCase):
 
 
 class CitationLockTests(unittest.TestCase):
+    def test_locks_babeldoc_rich_placeholders_in_the_same_structure_sequence(self) -> None:
+        module = load_module()
+        locked, structure_lock = module.lock_numeric_citations(
+            [
+                {
+                    "role": "user",
+                    "content": "Claim {v1} [58], formula {v2}:::{v3}, end {v4}.",
+                }
+            ]
+        )
+
+        self.assertEqual(
+            structure_lock.markers,
+            ("{v1}", "[58]", "{v2}:::{v3}", "{v4}"),
+        )
+        self.assertNotIn("{v1}", locked[0]["content"])
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": locked[0]["content"],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+        restored = module.unlock_numeric_citations_response(
+            json.dumps(response).encode(), structure_lock
+        )
+        self.assertIn(
+            "{v2}:::{v3}",
+            json.loads(restored)["choices"][0]["message"]["content"],
+        )
+
     def test_locks_and_restores_numeric_citations_byte_exactly_in_source_order(self) -> None:
         module = load_module()
         messages = [
@@ -667,7 +702,7 @@ class LocalBudgetProxyTests(unittest.TestCase):
                             "messages": [
                                 {
                                     "role": "user",
-                                    "content": "First [58], then [21, 59].",
+                                    "content": "First {v1} [58], then {v2}:::{v3} [21, 59].",
                                 }
                             ]
                         }
@@ -680,8 +715,13 @@ class LocalBudgetProxyTests(unittest.TestCase):
                 metrics = proxy.snapshot()
 
             self.assertNotIn("[58]", forwarded[0]["messages"][0]["content"])
-            self.assertEqual(content, "First [58], then [21, 59].")
-            self.assertEqual(metrics["locked_marker_count"], 2)
+            self.assertEqual(
+                content,
+                "First {v1} [58], then {v2}:::{v3} [21, 59].",
+            )
+            self.assertEqual(metrics["locked_marker_count"], 4)
+            self.assertEqual(metrics["locked_numeric_citation_count"], 2)
+            self.assertEqual(metrics["locked_rich_placeholder_count"], 2)
             self.assertEqual(metrics["validated_response_count"], 1)
             self.assertEqual(metrics["failure_count"], 0)
 
