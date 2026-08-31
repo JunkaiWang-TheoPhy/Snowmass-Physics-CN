@@ -2499,7 +2499,7 @@ def _restore_citation_sequence(
         len(output_markers) == len(expected_markers)
         and (
             allow_order_only
-            or Counter(output_markers) == Counter(expected_markers)
+            or Counter(output_markers) != Counter(expected_markers)
         )
         and all(marker in source_vocabulary for marker in output_markers)
     )
@@ -2597,6 +2597,27 @@ def _restore_missing_citations_from_source(
     collect(translated, list(range(len(selected_source_pages))), True)
     expected = [item[1] for item in source_candidates]
     actual = [item[1] for item in output_candidates]
+    # A citation may legitimately cross an output page boundary after Chinese
+    # reflow.  If the document already contains the complete source sequence,
+    # do not perform page-local “missing” repairs that would duplicate the
+    # citation on the preceding page.
+    if actual == expected:
+        return {"attempted": False, "replaced_count": 0, "reason": "complete_document_sequence"}
+    grouped_actual = [
+        marker
+        for output_index in range(len(selected_source_pages))
+        for group in _numeric_citation_line_groups(
+            translated[output_index],
+            excluded_rectangles=tuple(excluded_rectangles_by_page.get(output_index, [])),
+        )
+        for marker in group
+    ]
+    # The raw character collector intentionally stays conservative, but the
+    # line-group scanner can join a citation split across visual lines (for
+    # example ``[71-`` followed by ``73]``).  If that higher-level view is
+    # already complete, a page-local repair would create a duplicate marker.
+    if grouped_actual == expected:
+        return {"attempted": False, "replaced_count": 0, "reason": "complete_grouped_sequence"}
     missing: list[tuple[int, str, fitz.Rect, float, tuple[float, float, float]]] = []
     for page_index in range(len(selected_source_pages)):
         source_page = [item for item in source_candidates if item[0] == page_index]
