@@ -212,6 +212,32 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertFalse(report["ok"])
             self.assertIn("mixed_script_bottom_fragment:page_1", report["failures"])
 
+    def test_rejects_multiple_unknown_english_fragments_above_bottom_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_pdf = root / "source.pdf"
+            output_pdf = root / "output.pdf"
+            source = fitz.open()
+            source_page = source.new_page(width=595, height=842)
+            source_page.insert_text((72, 700), "Affiliation with a PUI faculty member")
+            source.save(source_pdf)
+            source.close()
+            output = fitz.open()
+            output_page = output.new_page(width=595, height=842)
+            output_page.insert_text(
+                (72, 680),
+                "Affilia 与一个非PUI研究组的合作也使PUI教职人员更有可能……\nber",
+                fontname="china-s",
+                fontsize=10,
+            )
+            output.save(output_pdf)
+            output.close()
+
+            report = audit_pdf(output_pdf, source_pdf=source_pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("cross_page_english_fragment:page_1", report["failures"])
+
     def test_allows_source_url_and_product_name_in_bottom_label(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "url-label.pdf"

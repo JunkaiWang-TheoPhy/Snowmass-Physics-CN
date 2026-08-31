@@ -191,6 +191,7 @@ def audit_pdf(
     low_text_pages: list[int] = []
     isolated_latin_edge_words: list[dict[str, Any]] = []
     mixed_script_bottom_fragments: list[dict[str, Any]] = []
+    cross_page_english_fragments: list[dict[str, Any]] = []
     english_prose_residue: list[dict[str, Any]] = []
     secondary_text_layer_excess: list[dict[str, Any]] = []
     secondary_only_latin_tokens: list[dict[str, Any]] = []
@@ -221,6 +222,7 @@ def audit_pdf(
             "low_text_pages": [],
             "out_of_bounds": [],
             "residue": [],
+            "cross_page_english_fragments": [],
             "english_prose_residue": [],
             "secondary_text_layer_excess": [],
             "contact_sheet_path": None,
@@ -235,6 +237,15 @@ def audit_pdf(
             failures.append(f"page_count_mismatch:{page_count}!={expected_pages}")
         for page_number, page in enumerate(document, 1):
             text = page.get_text("text")
+            source_words = {
+                token.casefold()
+                for token in re.findall(
+                    r"[A-Za-z]{3,}",
+                    source_page_texts[page_number - 1]
+                    if page_number <= len(source_page_texts)
+                    else "",
+                )
+            }
             extractable = len(re.sub(r"\s+", "", text))
             primary_page_text_lengths.append(extractable)
             protected_coverage = (
@@ -297,6 +308,33 @@ def audit_pdf(
                         }
                     )
                     failures.append(f"mixed_script_bottom_fragment:page_{page_number}")
+                if (
+                    not ignored
+                    and y0 >= bounds.y1 * 0.78
+                    and _CJK_RE.search(str(block_text))
+                    and not _URL_RE.search(str(block_text))
+                ):
+                    short_latin = [
+                        token.casefold()
+                        for token in re.findall(r"\b[A-Za-z]{3,}\b", str(block_text))
+                    ]
+                    unknown_fragments = [
+                        token for token in short_latin if token not in source_words
+                    ]
+                    if (
+                        source_words
+                        and len(unknown_fragments) >= 2
+                        and sum(map(len, unknown_fragments)) <= 30
+                    ):
+                        cross_page_english_fragments.append(
+                            {
+                                "page": page_number,
+                                "bbox": [x0, y0, x1, y1],
+                                "tokens": unknown_fragments,
+                                "text": re.sub(r"\s+", " ", str(block_text)).strip()[:200],
+                            }
+                        )
+                        failures.append(f"cross_page_english_fragment:page_{page_number}")
             for block in page.get_text("dict").get("blocks", []):
                 for line in block.get("lines", []):
                     line_text = "".join(
@@ -418,6 +456,7 @@ def audit_pdf(
         "out_of_bounds": out_of_bounds,
         "isolated_latin_edge_words": isolated_latin_edge_words,
         "mixed_script_bottom_fragments": mixed_script_bottom_fragments,
+        "cross_page_english_fragments": cross_page_english_fragments,
         "english_prose_residue": english_prose_residue,
         "secondary_text_layer_excess": secondary_text_layer_excess,
         "secondary_only_latin_tokens": secondary_only_latin_tokens,
