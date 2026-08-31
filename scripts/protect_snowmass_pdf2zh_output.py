@@ -1932,6 +1932,30 @@ def _repair_merged_toc_rows(
         if not _DEBUG_LABEL_RE.fullmatch(str(line["text"]).strip())
         and not _DEBUG_LABEL_SEARCH_RE.search(str(line["text"]))
     ]
+    combined_lines: list[dict[str, object]] = []
+    for line in output_lines:
+        text = _toc_text(str(line["text"]))
+        section_ids = re.findall(r"(?<![\d.])\d+(?:\.\d+)*", text)
+        if (
+            combined_lines
+            and len(set(section_ids)) >= 2
+            and not re.search(r"\d+(?:\.\d+)*", _toc_text(str(combined_lines[-1]["text"])))
+            and len(_toc_text(str(combined_lines[-1]["text"]))) >= 3
+            and cast(fitz.Rect, line["rect"]).y0
+            - cast(fitz.Rect, combined_lines[-1]["rect"]).y0
+            <= 24.0
+        ):
+            previous = combined_lines.pop()
+            combined_lines.append(
+                {
+                    **line,
+                    "text": f"{previous['text']} {line['text']}",
+                    "rect": cast(fitz.Rect, previous["rect"]) | cast(fitz.Rect, line["rect"]),
+                }
+            )
+        else:
+            combined_lines.append(line)
+    output_lines = combined_lines
     consumed_continuation_lines: set[int] = set()
     for line_index, line in enumerate(output_lines):
         if line_index in consumed_continuation_lines:
