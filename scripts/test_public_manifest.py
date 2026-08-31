@@ -11,6 +11,8 @@ import re
 import unittest
 from pathlib import Path
 
+from scripts.build_public_manifest import _safe_public_record
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "site" / "data" / "papers.json"
@@ -57,6 +59,30 @@ def _load_manifest() -> list[dict]:
 
 
 class PublicManifestTests(unittest.TestCase):
+    def test_blocked_record_cannot_inherit_public_translation_fields(self) -> None:
+        record = _safe_public_record(
+            {
+                "record_id": "arxiv:blocked",
+                "publication_allowed": False,
+                "permits_adaptation": False,
+            },
+            {},
+            {},
+            {},
+            {
+                "publication_translation_url": "https://example.invalid/blocked.pdf",
+                "publication_translation_sha256": "a" * 64,
+                "publication_translation_size_bytes": 123,
+                "translation_version": "v1",
+                "translation_published_at": "2026-08-31",
+            },
+        )
+        self.assertIsNone(record["publication_translation_url"])
+        self.assertIsNone(record["publication_translation_sha256"])
+        self.assertIsNone(record["publication_translation_size_bytes"])
+        self.assertIsNone(record["translation_version"])
+        self.assertIsNone(record["translation_published_at"])
+
     def test_record_count(self) -> None:
         records = _load_manifest()
         self.assertEqual(len(records), 541)

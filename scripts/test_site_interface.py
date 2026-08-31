@@ -65,8 +65,8 @@ class SiteInterfaceTest(unittest.TestCase):
         self.assertIn("下载中文试译版 PDF", app)
         self.assertIn("paper.translation_version", app)
         self.assertIn("paper.publication_translation_sha256", app)
-        self.assertIn('for = "/pdfs/*"', netlify)
-        self.assertIn('Cache-Control = "public, max-age=31536000, immutable"', netlify)
+        self.assertIn("paper.publication_allowed === true && paper.publication_translation_url", app)
+        self.assertNotIn('for = "/pdfs/*"', netlify)
 
 
 if __name__ == "__main__":

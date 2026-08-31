@@ -111,6 +111,7 @@ def _safe_public_record(
     translation: dict[str, Any],
 ) -> dict[str, Any]:
     state = _rights_public_state(rights)
+    publication = translation if state["publication_allowed"] is True else {}
     record_id = rights["record_id"]
     title = rights.get("title") or catalog.get("title") or analysis.get("title") or lengths.get("title") or record_id
 
@@ -132,11 +133,11 @@ def _safe_public_record(
         "machine_model": translation.get("machine_model") or rights.get("machine_model"),
         "human_reviewers": translation.get("human_reviewers") or rights.get("human_reviewers") or [],
         **state,
-        "publication_translation_url": translation.get("publication_translation_url"),
-        "publication_translation_sha256": translation.get("publication_translation_sha256"),
-        "publication_translation_size_bytes": translation.get("publication_translation_size_bytes"),
-        "translation_version": translation.get("translation_version"),
-        "translation_published_at": translation.get("translation_published_at"),
+        "publication_translation_url": publication.get("publication_translation_url"),
+        "publication_translation_sha256": publication.get("publication_translation_sha256"),
+        "publication_translation_size_bytes": publication.get("publication_translation_size_bytes"),
+        "translation_version": publication.get("translation_version"),
+        "translation_published_at": publication.get("translation_published_at"),
         "public_updated_at": rights.get("license_checked_at"),
         "publication_year": analysis.get("publication_year"),
         "citation_count": _as_number(analysis.get("citation_count")),

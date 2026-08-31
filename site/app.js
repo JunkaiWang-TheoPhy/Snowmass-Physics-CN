@@ -339,6 +339,9 @@ function renderDetail(recordId, { push = false } = {}) {
   const reviewNames = paper.human_reviewers.length
     ? paper.human_reviewers.map(escapeHTML).join("、")
     : "尚无公开署名审校者";
+  const translationURL = paper.publication_allowed === true && paper.publication_translation_url
+    ? safeURL(paper.publication_translation_url)
+    : null;
 
   elements.detail.innerHTML = `
     <button type="button" class="detail-back" id="detail-back">← 返回筛选结果</button>
@@ -379,8 +382,8 @@ function renderDetail(recordId, { push = false } = {}) {
           ${definitionRow("译文许可证", escapeHTML(paper.translation_license || "尚未指定"))}
           ${definitionRow("机器模型", escapeHTML(paper.machine_model || "尚未生成机器草稿"))}
           ${definitionRow("人工审校者", reviewNames)}
-          ${definitionRow("公开译文", paper.publication_translation_url
-            ? `<a href="${safeURL(paper.publication_translation_url)}" target="_blank" rel="noreferrer">下载中文试译版 PDF ↗</a>`
+          ${definitionRow("公开译文", translationURL
+            ? `<a href="${translationURL}" target="_blank" rel="noreferrer">下载中文试译版 PDF ↗</a>`
             : "尚未公开")}
           ${definitionRow("译本版本", escapeHTML(paper.translation_version || "—"))}
           ${definitionRow("文件大小", formatBytes(paper.publication_translation_size_bytes))}
