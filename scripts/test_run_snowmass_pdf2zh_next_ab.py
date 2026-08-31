@@ -171,8 +171,8 @@ class TranslationPromptContractTests(unittest.TestCase):
     def test_declares_transport_citation_tokens_immutable(self) -> None:
         module = load_module()
 
-        self.assertIn("[[SMCIT_000001]]", module.SYSTEM_PROMPT)
-        self.assertIn("exactly once, in the same order", module.SYSTEM_PROMPT)
+        self.assertIn("Transport citation-anchor tokens are immutable", module.SYSTEM_PROMPT)
+        self.assertIn("exactly once, in the same", module.SYSTEM_PROMPT)
 
 
 class CitationLockTests(unittest.TestCase):

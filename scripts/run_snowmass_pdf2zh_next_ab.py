@@ -443,8 +443,8 @@ Apply the supplied glossary as a hard terminology constraint.
 Preserve every number, unit, equation, symbol, citation marker, URL, DOI, proper name, acronym,
 and rich-text or formula placeholder exactly. Never add facts, explanations, notes, or headings.
 Keep all citation markers in their exact source order; do not reorder clauses across them.
-Transport tokens matching [[SMCIT_000001]] are immutable citation anchors: copy every token
-exactly once, in the same order, and never create a new SMCIT token.
+Transport citation-anchor tokens are immutable: copy every anchor exactly once, in the same
+order, and never create a new citation-anchor token.
 Text belonging to figures, plots, legends, axes, annotations, and tables must remain verbatim in
 the source language. Bibliographic entries and their numbering must remain verbatim; translate
 only ordinary prose and the References heading when it is presented as an independent heading.
