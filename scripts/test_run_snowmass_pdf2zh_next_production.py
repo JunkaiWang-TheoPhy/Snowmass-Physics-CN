@@ -809,6 +809,86 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
                 paid_runner=lambda _config: self.fail("paid runner must not start"),
             )
 
+    def test_plan_inherits_latest_valid_previous_stage_seal_from_sibling_run(self) -> None:
+        module = load_module()
+        probe = self._seed_record("arxiv:2203.06843")
+        pilot = self._seed_record("arxiv:pilot")
+        self._write_manifests([probe, pilot])
+        parent = self.root / "runs"
+        output_root = parent / "pdf2zh_next_production_probe_current_v3"
+        for revision in (1, 2):
+            seal = {
+                "schema_version": 1,
+                "passed": True,
+                "stage": "deepseek_probe",
+                "revision_marker": revision,
+            }
+            seal["stage_seal_sha256"] = module._json_hash(seal)
+            self._write_json(
+                parent
+                / f"pdf2zh_next_production_probe_current_v{revision}"
+                / "stages"
+                / "deepseek_probe"
+                / "stage-seal.json",
+                seal,
+            )
+        with mock.patch.object(
+            module.batch_production, "select_stage_records", return_value=[pilot]
+        ):
+            plan = module.plan_stage(
+                self._plan_args(
+                    module,
+                    "pilot5",
+                    output_root=output_root,
+                    stage_max_api_calls=2,
+                ),
+                preflight_runner=lambda _config: {
+                    "projection": {"request_cap": 2, "max_cost_rmb": 1.25}
+                },
+            )
+
+        inherited = json.loads(
+            (Path(plan["stage_dir"]) / "previous-stage-seal.json").read_text()
+        )
+        self.assertEqual(inherited["revision_marker"], 2)
+
+    def test_plan_does_not_fall_back_past_tampered_latest_previous_seal(self) -> None:
+        module = load_module()
+        probe = self._seed_record("arxiv:2203.06843")
+        pilot = self._seed_record("arxiv:pilot")
+        self._write_manifests([probe, pilot])
+        parent = self.root / "runs"
+        output_root = parent / "pdf2zh_next_production_probe_current_v3"
+        valid = {"schema_version": 1, "passed": True, "stage": "deepseek_probe"}
+        valid["stage_seal_sha256"] = module._json_hash(valid)
+        self._write_json(
+            parent / "pdf2zh_next_production_probe_current_v1" / "stages"
+            / "deepseek_probe" / "stage-seal.json",
+            valid,
+        )
+        self._write_json(
+            parent / "pdf2zh_next_production_probe_current_v2" / "stages"
+            / "deepseek_probe" / "stage-seal.json",
+            {**valid, "stage_seal_sha256": "0" * 64},
+        )
+        with (
+            mock.patch.object(
+                module.batch_production, "select_stage_records", return_value=[pilot]
+            ),
+            self.assertRaisesRegex(RuntimeError, "previous stage seal is invalid"),
+        ):
+            module.plan_stage(
+                self._plan_args(
+                    module,
+                    "pilot5",
+                    output_root=output_root,
+                    stage_max_api_calls=2,
+                ),
+                preflight_runner=lambda _config: {
+                    "projection": {"request_cap": 2, "max_cost_rmb": 1.25}
+                },
+            )
+
     def test_status_is_read_only_for_mismatched_finish(self) -> None:
         module = load_module()
         probe = self._seed_record("arxiv:2203.06843")

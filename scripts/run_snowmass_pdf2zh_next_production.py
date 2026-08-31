@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -65,6 +66,9 @@ PREVIOUS_STAGE = {
     "batch50": "pilot25",
     "remainder": "batch50",
 }
+CURRENT_RUN_DIRECTORY_RE = re.compile(
+    r"^pdf2zh_next_production_probe_current_v(\d+)$"
+)
 FORMAL_PROBE_RECORD_ID = "arxiv:2203.06843"
 SCHEMA_VERSION = 1
 @dataclass(frozen=True)
@@ -861,6 +865,22 @@ def plan_stage(
     previous = PREVIOUS_STAGE.get(args.stage)
     if previous is not None:
         previous_seal = args.output_root / "stages" / previous / "stage-seal.json"
+        if not previous_seal.is_file():
+            siblings: list[tuple[int, Path]] = []
+            for candidate_root in args.output_root.parent.iterdir():
+                match = CURRENT_RUN_DIRECTORY_RE.fullmatch(candidate_root.name)
+                if match and candidate_root.resolve() != args.output_root.resolve():
+                    candidate = (
+                        candidate_root / "stages" / previous / "stage-seal.json"
+                    )
+                    if candidate.is_file():
+                        siblings.append((int(match.group(1)), candidate))
+            if siblings:
+                _, previous_seal = max(siblings, key=lambda item: item[0])
+                candidate_value = _load_json(
+                    previous_seal, label="historical previous stage seal"
+                )
+                _validate_stage_seal(candidate_value, expected_stage=previous)
         if previous_seal.is_file():
             _atomic_json(
                 stage_dir / "previous-stage-seal.json",
