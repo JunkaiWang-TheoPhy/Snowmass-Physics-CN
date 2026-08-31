@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "site" / "data" / "papers.json"
 STATS_PATH = ROOT / "site" / "data" / "stats.json"
 TITLE_MAP_PATH = ROOT / "data" / "snowmass_title_zh.json"
+TRANSLATIONS_PATH = ROOT / "translations" / "snowmass-publications.json"
 
 REQUIRED_FIELDS = {
     "paper_id",
@@ -154,7 +155,12 @@ class PublicManifestTests(unittest.TestCase):
             record for record in _load_manifest()
             if record.get("publication_translation_url")
         ]
-        self.assertEqual(len(published), 11)
+        registry = json.loads(TRANSLATIONS_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(len(published), len(registry))
+        self.assertEqual(
+            {record["record_id"] for record in published},
+            {record["record_id"] for record in registry},
+        )
         expected_prefix = (
             "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/"
         )
