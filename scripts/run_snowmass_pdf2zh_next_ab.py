@@ -73,7 +73,7 @@ class CitationLockError(RuntimeError):
 _NUMERIC_CITATION_PATTERN = (
     r"\[(?:\s*\d+\s*)(?:(?:,|[-–—])\s*\d+\s*)*\]"
 )
-_BABELDOC_PLACEHOLDER_PATTERN = r"\{v\d+\}(?:\:{3}\{v\d+\})?"
+_BABELDOC_PLACEHOLDER_PATTERN = r"\{c\d+\}"
 _NUMERIC_CITATION_RE = re.compile(_NUMERIC_CITATION_PATTERN)
 _BABELDOC_PLACEHOLDER_RE = re.compile(_BABELDOC_PLACEHOLDER_PATTERN)
 _STRUCTURAL_ANCHOR_RE = re.compile(
@@ -95,6 +95,47 @@ class CitationLock:
         return len(self.tokens) + len(self.placeholders)
 
 
+def is_numeric_citation_formula(value: str) -> bool:
+    return _NUMERIC_CITATION_RE.fullmatch(str(value).strip()) is not None
+
+
+def install_babeldoc_citation_placeholder_patch() -> None:
+    """Emit distinct native placeholders for citation-only PDF formulas."""
+
+    from babeldoc.format.pdf.document_il.midend.il_translator import (
+        FormulaPlaceholder,
+        ILTranslator,
+    )
+    from babeldoc.format.pdf.document_il.utils.layout_helper import (
+        get_char_unicode_string,
+    )
+
+    if getattr(ILTranslator, "_snowmass_citation_placeholder_patch", False):
+        return
+    original = ILTranslator.create_formula_placeholder
+
+    def create_formula_placeholder(self, formula, formula_id, paragraph):
+        formula_text = get_char_unicode_string(formula.pdf_character)
+        if is_numeric_citation_formula(formula_text):
+            placeholder = f"{{c{formula_id}}}"
+            regex_pattern = rf"\{{\s*c\s*{formula_id}\s*\}}"
+            if re.search(
+                regex_pattern,
+                str(getattr(paragraph, "unicode", "") or ""),
+                re.IGNORECASE,
+            ):
+                return create_formula_placeholder(
+                    self, formula, formula_id + 1, paragraph
+                )
+            return FormulaPlaceholder(
+                formula_id, formula, placeholder, regex_pattern
+            )
+        return original(self, formula, formula_id, paragraph)
+
+    ILTranslator.create_formula_placeholder = create_formula_placeholder
+    ILTranslator._snowmass_citation_placeholder_patch = True
+
+
 def _lock_citations_in_text(
     value: str,
     *,
@@ -106,7 +147,7 @@ def _lock_citations_in_text(
         raise CitationLockError("source text collides with citation lock token")
 
     def replace(match: re.Match[str]) -> str:
-        if match.group(0).startswith("{v"):
+        if match.group(0).startswith("{c"):
             placeholders.append(match.group(0))
             return match.group(0)
         token = f"[[SMCIT_{len(tokens) + 1:06d}]]"
@@ -1620,6 +1661,7 @@ class DeepSeekBudgetProxy:
                 "locked_marker_count": self._locked_marker_count,
                 "locked_numeric_citation_count": self._locked_numeric_citation_count,
                 "locked_rich_placeholder_count": self._locked_rich_placeholder_count,
+                "locked_citation_placeholder_count": self._locked_rich_placeholder_count,
                 "validated_response_count": self._validated_response_count,
                 "failure_count": self._failure_count,
             }
@@ -1993,6 +2035,8 @@ def run_official_translation(
         ):
             os.environ.setdefault(name, "1")
         from pdf2zh_next import high_level
+
+        install_babeldoc_citation_placeholder_patch()
 
         # BabelDOC's debug mode is also used by the stable direct execution
         # path, but its debug-information middleware writes colored layout

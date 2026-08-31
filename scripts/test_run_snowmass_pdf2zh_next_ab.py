@@ -10,6 +10,7 @@ import json
 import math
 import multiprocessing
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -176,13 +177,54 @@ class TranslationPromptContractTests(unittest.TestCase):
 
 
 class CitationLockTests(unittest.TestCase):
+    def test_identifies_only_numeric_citation_formulas(self) -> None:
+        module = load_module()
+
+        self.assertTrue(module.is_numeric_citation_formula("[58]"))
+        self.assertTrue(module.is_numeric_citation_formula("[21, 59]"))
+        self.assertTrue(module.is_numeric_citation_formula("[30–31]"))
+        self.assertFalse(module.is_numeric_citation_formula("E = mc^2"))
+        self.assertFalse(module.is_numeric_citation_formula("[Eq. 2]"))
+
+    def test_pinned_runtime_emits_c_placeholders_only_for_citation_formulas(self) -> None:
+        pinned_python = Path(
+            "/Users/Zhuanz/.local/share/snowmass-tools/pdf2zh-next-2.9.0/bin/python"
+        )
+        if not pinned_python.is_file():
+            self.skipTest("pinned pdf2zh-next runtime is unavailable")
+        code = f"""
+import importlib.util, sys, types
+p={str(MODULE_PATH)!r}
+s=importlib.util.spec_from_file_location('snowmass_adapter_patch_test', p)
+m=importlib.util.module_from_spec(s); sys.modules[s.name]=m; s.loader.exec_module(m)
+m.install_babeldoc_citation_placeholder_patch()
+from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
+formula=types.SimpleNamespace(pdf_character=list('[58]'))
+paragraph=types.SimpleNamespace(unicode='Claim [58].')
+placeholder=ILTranslator.create_formula_placeholder(types.SimpleNamespace(), formula, 1, paragraph)
+print(placeholder.placeholder)
+engine=types.SimpleNamespace(get_formular_placeholder=lambda i: ('{{v'+str(i)+'}}', '{{\\s*v\\s*'+str(i)+'\\s*}}'))
+ordinary=types.SimpleNamespace(pdf_character=list('E=mc2'))
+ordinary_placeholder=ILTranslator.create_formula_placeholder(types.SimpleNamespace(translate_engine=engine), ordinary, 2, paragraph)
+print(ordinary_placeholder.placeholder)
+"""
+        result = subprocess.run(
+            [str(pinned_python), "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip().splitlines(), ["{c1}", "{v2}"])
+
     def test_locks_babeldoc_rich_placeholders_in_the_same_structure_sequence(self) -> None:
         module = load_module()
         locked, structure_lock = module.lock_numeric_citations(
             [
                 {
                     "role": "user",
-                    "content": "Claim {v1} [58], formula {v2}:::{v3}, end {v4}.",
+                    "content": "Claim {v1} {c2} [58], formula {v2}:::{v3}, cite {c4}.",
                 }
             ]
         )
@@ -190,9 +232,10 @@ class CitationLockTests(unittest.TestCase):
         self.assertEqual(structure_lock.markers, ("[58]",))
         self.assertEqual(
             structure_lock.placeholders,
-            ("{v1}", "{v2}:::{v3}", "{v4}"),
+            ("{c2}", "{c4}"),
         )
         self.assertIn("{v1}", locked[0]["content"])
+        self.assertIn("{c2}", locked[0]["content"])
         response = {
             "choices": [
                 {
@@ -217,7 +260,7 @@ class CitationLockTests(unittest.TestCase):
                 {
                     "message": {
                         "role": "assistant",
-                        "content": "Claim {v4} " + structure_lock.tokens[0] + " end {v1} {v2}:::{v3}",
+                        "content": "Claim {c4} " + structure_lock.tokens[0] + " end {c2} {v1}",
                     }
                 }
             ],
@@ -719,7 +762,7 @@ class LocalBudgetProxyTests(unittest.TestCase):
                             "messages": [
                                 {
                                     "role": "user",
-                                    "content": "First {v1} [58], then {v2}:::{v3} [21, 59].",
+                                    "content": "First {v1} {c2} [58], then {v2} {c4} [21, 59].",
                                 }
                             ]
                         }
@@ -733,9 +776,10 @@ class LocalBudgetProxyTests(unittest.TestCase):
 
             self.assertNotIn("[58]", forwarded[0]["messages"][0]["content"])
             self.assertIn("{v1}", forwarded[0]["messages"][0]["content"])
+            self.assertIn("{c2}", forwarded[0]["messages"][0]["content"])
             self.assertEqual(
                 content,
-                "First {v1} [58], then {v2}:::{v3} [21, 59].",
+                "First {v1} {c2} [58], then {v2} {c4} [21, 59].",
             )
             self.assertEqual(metrics["locked_marker_count"], 4)
             self.assertEqual(metrics["locked_numeric_citation_count"], 2)
