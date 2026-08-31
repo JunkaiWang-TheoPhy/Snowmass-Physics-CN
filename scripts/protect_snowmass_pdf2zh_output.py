@@ -1699,14 +1699,10 @@ def _remove_debug_labels(document: fitz.Document) -> int:
             for _rectangle, text in lines
         )
         if is_contents_page:
-            # Debug spans often overlap real TOC rows.  Character-level
-            # redaction would erase legitimate section titles, so remove only
-            # standalone metadata lines on a Contents page.
-            for rectangle, text in lines:
-                if _DEBUG_LABEL_RE.fullmatch(text.strip()):
-                    page.add_redact_annot(rectangle, fill=(1, 1, 1))
-                    removed += 1
-            page.apply_redactions()
+            # Debug spans often overlap real TOC rows.  Even standalone-label
+            # redaction can erase neighboring title glyphs because MuPDF
+            # merges their geometry.  Leave the page intact and filter these
+            # labels only in the TOC parser below.
             continue
         # Redact only characters belonging to a debug label. Redacting the
         # whole extraction line destroys adjacent TOC titles/page numbers
@@ -1831,7 +1827,35 @@ def _toc_title_segments(
         for index, entry in enumerate(entries)
     ]
     if any(not matches for matches in candidates):
-        return []
+        # Nested identifiers (3.1 followed by 3.1.1) intentionally overlap
+        # textually, so the strict token-boundary matcher cannot find the
+        # child.  Recover only one sequential, source-ordered interpretation;
+        # destination digits are still required for every segment.
+        sequential: list[tuple[int, int]] = []
+        cursor = 0
+        for entry in entries:
+            match = re.search(re.escape(str(entry["section_id"])), clean[cursor:])
+            if match is None:
+                return []
+            start = cursor + match.start()
+            end = cursor + match.end()
+            sequential.append((start, end))
+            cursor = end
+        parsed: list[tuple[dict[str, object], str]] = []
+        for index, entry in enumerate(entries):
+            segment_end = (
+                sequential[index + 1][0]
+                if index + 1 < len(sequential)
+                else len(clean)
+            )
+            title = _strip_toc_segment(
+                clean[sequential[index][1] : segment_end],
+                str(entry["destination"]),
+            )
+            if title is None:
+                return []
+            parsed.append((entry, title))
+        return parsed
     solutions: list[list[tuple[dict[str, object], str]]] = []
 
     def search(index: int, chosen: list[re.Match[str]]) -> None:
@@ -1932,6 +1956,42 @@ def _repair_merged_toc_rows(
         if not _DEBUG_LABEL_RE.fullmatch(str(line["text"]).strip())
         and not _DEBUG_LABEL_SEARCH_RE.search(str(line["text"]))
     ]
+    source_ids = {str(entry["section_id"]) for entry in source_entries}
+    enable_nested_line_merge = len(source_entries) >= 5
+    fused_lines: list[dict[str, object]] = []
+    for line in output_lines:
+        if fused_lines:
+            previous_text = _toc_text(str(fused_lines[-1]["text"]))
+            current_text = _toc_text(str(line["text"]))
+            dotted_ids = (
+                [section_id for section_id in source_ids if "." in section_id]
+                if enable_nested_line_merge
+                else []
+            )
+            previous_hits = sum(
+                bool(_toc_id_matches(previous_text, section_id, allow_fused_left=True))
+                for section_id in dotted_ids
+            )
+            current_hits = sum(
+                bool(_toc_id_matches(current_text, section_id, allow_fused_left=True))
+                for section_id in dotted_ids
+            )
+            if (
+                previous_hits >= 2
+                and current_hits >= 1
+                and cast(fitz.Rect, line["rect"]).y0
+                - cast(fitz.Rect, fused_lines[-1]["rect"]).y0
+                <= 24.0
+            ):
+                fused_lines[-1] = {
+                    **line,
+                    "text": f"{fused_lines[-1]['text']} {line['text']}",
+                    "rect": cast(fitz.Rect, fused_lines[-1]["rect"])
+                    | cast(fitz.Rect, line["rect"]),
+                }
+                continue
+        fused_lines.append(line)
+    output_lines = fused_lines
     combined_lines: list[dict[str, object]] = []
     for line in output_lines:
         text = _toc_text(str(line["text"]))
