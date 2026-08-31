@@ -234,12 +234,11 @@ def _reference_clips(
     # two entries in order; this avoids treating an isolated body citation as
     # the bibliography start.
     for index, (page_index, line_text) in enumerate(numbered_candidates):
-        if not re.match(r"^\[1\]\s+\S", line_text):
+        if _reference_entry_number(line_text) != 1:
             continue
         expected = 2
         for _candidate_page, candidate_text in numbered_candidates[index + 1 : index + 40]:
-            match = re.match(r"^\[(\d+)\]\s+\S", candidate_text)
-            if match and int(match.group(1)) == expected:
+            if _reference_entry_number(candidate_text) == expected:
                 expected += 1
                 if expected == 4:
                     numbered_reference_start = page_index
@@ -250,7 +249,7 @@ def _reference_clips(
                                 str(span.get("text", ""))
                                 for span in start_line.get("spans", [])
                             ).strip()
-                            if re.match(r"^\[1\]\s+\S", start_text):
+                            if _reference_entry_number(start_text) == 1:
                                 numbered_reference_start_y = float(start_line["bbox"][1])
                                 break
                         if numbered_reference_start_y is not None:
@@ -314,7 +313,7 @@ def _reference_clips(
             starts = [
                 index
                 for index, (_, text) in enumerate(lines)
-                if re.match(r"^\[\d+\]\s+\S", text)
+                if _reference_entry_number(text) is not None
             ]
             if not starts and not in_references:
                 continue
@@ -1638,6 +1637,16 @@ _NUMERIC_CITATION_MARKER = re.compile(
 _NUMERIC_CITATION_SPAN = re.compile(
     _NUMERIC_CITATION_MARKER.pattern + r"\s*[,.;:]?\s*$"
 )
+_REFERENCE_ENTRY_PREFIX = re.compile(r"^\s*(?:\[(\d+)\]|(\d+)\.)\s+\S")
+
+
+def _reference_entry_number(text: str) -> int | None:
+    match = _REFERENCE_ENTRY_PREFIX.match(text)
+    if match is None:
+        return None
+    return int(match.group(1) or match.group(2))
+
+
 _TOC_SECTION_PREFIX = re.compile(r"^\s*(\d+(?:\.\d+)*)(?=[^\d.]|$)")
 _DEBUG_LABEL_RE = re.compile(
     r"^(?:plain(?:\x03|\s)text|plaintext|paragraph\[[^\]]+\]-\[plain(?:\x03|\s)text\]|paragraph\[[^\]]+\]-\[plaintext\]|"
