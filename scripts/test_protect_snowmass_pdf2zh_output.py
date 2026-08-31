@@ -1104,6 +1104,25 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertGreater(right.x0, 300)
         self.assertGreaterEqual(right.y0, 92.6)
 
+    def test_reference_continuation_excludes_running_header_and_footer(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        first = document.new_page(width=612, height=842)
+        first.insert_text((72, 500), "References", fontsize=12)
+        first.insert_text((72, 530), "[1] A. Author. First entry.", fontsize=9)
+        second = document.new_page(width=612, height=842)
+        second.insert_text((144, 36), "Repeated running header", fontsize=9)
+        second.insert_text((72, 75), "[2] B. Author. Continuation entry.", fontsize=9)
+        second.insert_text((500, 800), "Page-2", fontsize=9)
+
+        clips = _reference_clips(document)
+
+        self.assertIn(2, clips)
+        self.assertGreaterEqual(min(rect.y0 for rect in clips[2]), 60)
+        self.assertLessEqual(max(rect.y1 for rect in clips[2]), 100)
+        document.close()
+
     def test_reference_clip_keeps_adjacent_doi_tail_in_same_source_block(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _reference_clips
 

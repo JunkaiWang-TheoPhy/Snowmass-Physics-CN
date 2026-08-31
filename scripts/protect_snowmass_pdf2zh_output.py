@@ -352,6 +352,15 @@ def _reference_clips(
                 # begin with ``[n]``. Once the heading has been seen, protect
                 # the remaining text on the page as bibliography as well.
                 reference_lines = lines
+                if heading is None and lines and (
+                    max(rectangle.y1 for rectangle, _text in lines)
+                    <= page.rect.height * 0.08
+                    or min(rectangle.y0 for rectangle, _text in lines)
+                    >= page.rect.height * 0.92
+                ):
+                    # Running headers and page-number footers are restored by
+                    # their own canonicalization path, not bibliography raster.
+                    reference_lines = []
                 if heading is not None:
                     reference_lines = [
                         (rectangle, text)
