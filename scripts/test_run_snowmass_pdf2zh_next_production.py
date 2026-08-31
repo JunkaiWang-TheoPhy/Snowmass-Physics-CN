@@ -236,6 +236,33 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             prefilter, ("arxiv:long",), tier="text_only_long"
         )
 
+    def test_vector_passthrough_long_tier_allows_bounded_vectors_without_images(self) -> None:
+        module = load_module()
+        prefilter = self._write_json(
+            self.root / "vector-long-prefilter.json",
+            {
+                "records": [
+                    {
+                        "record_id": "arxiv:vector-long",
+                        "publication_allowed": True,
+                        "eligible": False,
+                        "risk_tier": "vector_passthrough_long",
+                        "pages": 30,
+                        "images": 0,
+                        "drawings": 500,
+                        "numeric_citations": 150,
+                        "citation_ranges": 10,
+                        "reference_pages": 5,
+                        "contents_pages": 0,
+                        "reasons": ["over_10_pages"],
+                    }
+                ]
+            },
+        )
+        module._validate_low_risk_prefilter(
+            prefilter, ("arxiv:vector-long",), tier="vector_passthrough_long"
+        )
+
     def _plan_args(self, module, stage: str, **overrides: object):
         values = {
             "stage": stage,

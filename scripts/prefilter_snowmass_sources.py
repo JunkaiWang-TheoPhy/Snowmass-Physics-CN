@@ -107,6 +107,16 @@ def classify_risk(metrics: dict[str, Any]) -> str:
         and metrics["contents_pages"] == 0
     ):
         return "text_only_long"
+    if (
+        metrics["pages"] <= 30
+        and metrics["images"] == 0
+        and metrics["drawings"] <= 500
+        and metrics["numeric_citations"] <= 150
+        and metrics["citation_ranges"] <= 10
+        and metrics["reference_pages"] <= 5
+        and metrics["contents_pages"] == 0
+    ):
+        return "vector_passthrough_long"
     return "complex_or_unclassified"
 
 
@@ -172,6 +182,7 @@ def prefilter(*, rights_path: Path, source_manifest_path: Path, pdf_root: Path) 
                 "text_only_medium": {"pages_max": 20, "images": 0, "drawings_max": 50, "numeric_citations_max": 80, "citation_ranges_max": 5, "reference_pages_max": 3, "contents_pages_max": 0},
                 "figure_passthrough_medium": {"pages_max": 20, "images_max": 2, "drawings_max": 500, "numeric_citations_max": 80, "citation_ranges_max": 5, "reference_pages_max": 3, "contents_pages_max": 0, "figure_text": "source_verbatim"},
                 "text_only_long": {"pages_max": 40, "images": 0, "drawings": 0, "numeric_citations_max": 150, "citation_ranges_max": 10, "reference_pages_max": 5, "contents_pages_max": 0},
+                "vector_passthrough_long": {"pages_max": 30, "images": 0, "drawings_max": 500, "numeric_citations_max": 150, "citation_ranges_max": 10, "reference_pages_max": 5, "contents_pages_max": 0, "figure_text": "source_verbatim"},
             },
         },
         "eligible_count": sum(1 for row in rows if row.get("eligible")),
@@ -179,7 +190,7 @@ def prefilter(*, rights_path: Path, source_manifest_path: Path, pdf_root: Path) 
         "candidates": candidates,
         "candidates_by_risk_tier": {
             tier: [row for row in rows if row.get("risk_tier") == tier]
-            for tier in ("low_risk", "text_only_medium", "figure_passthrough_medium", "text_only_long")
+            for tier in ("low_risk", "text_only_medium", "figure_passthrough_medium", "text_only_long", "vector_passthrough_long")
         },
         "records": rows,
     }
