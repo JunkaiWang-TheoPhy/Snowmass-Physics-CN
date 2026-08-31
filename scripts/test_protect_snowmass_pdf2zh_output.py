@@ -127,6 +127,22 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertNotIn("title", page.get_text())
         document.close()
 
+    def test_repairs_visible_html_entities_without_touching_plain_text(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _repair_visible_html_entities
+
+        document = fitz.open()
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 100), "Silverwood &amp; Easther 2019")
+        page.insert_text((72, 130), "ordinary & text")
+        repaired = _repair_visible_html_entities(document)
+        self.assertEqual(repaired, 1)
+        text = page.get_text()
+        self.assertIn("Silverwood", text)
+        self.assertIn("Easther 2019", text)
+        self.assertIn("ordinary & text", text)
+        self.assertNotIn("&amp;", text)
+        document.close()
+
     def _make_toc_fixture(
         self,
         root: Path,

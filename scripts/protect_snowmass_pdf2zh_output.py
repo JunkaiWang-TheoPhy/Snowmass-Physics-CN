@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import re
 import unicodedata
@@ -1764,6 +1765,58 @@ def _remove_debug_labels(document: fitz.Document) -> int:
     return removed
 
 
+def _repair_visible_html_entities(document: fitz.Document) -> int:
+    """Replace visible HTML entities emitted by the translation renderer."""
+
+    repaired = 0
+    entity_pattern = re.compile(r"&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);")
+    for page in document:
+        patches: list[tuple[fitz.Rect, str, float, tuple[float, float, float]]] = []
+        for block in _text_dict(page, sort=True).get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = str(span.get("text", ""))
+                    for match in entity_pattern.finditer(text):
+                        token = match.group(0)
+                        replacement = html.unescape(token)
+                        if replacement == token:
+                            continue
+                        locations = page.search_for(token)
+                        if not locations:
+                            continue
+                        rectangle = locations[0]
+                        rgb = fitz.sRGB_to_rgb(int(span.get("color", 0)))
+                        patches.append(
+                            (
+                                rectangle,
+                                replacement,
+                                float(span.get("size") or 8.0),
+                                tuple(channel / 255 for channel in rgb),
+                            )
+                        )
+        if not patches:
+            continue
+        for rectangle, replacement, size, color in patches:
+            page.add_redact_annot(
+                rectangle,
+                replacement,
+                fontname="china-s" if not replacement.isascii() else "helv",
+                fontsize=size,
+                align=fitz.TEXT_ALIGN_LEFT,
+                fill=(1, 1, 1),
+                text_color=color,
+            )
+        page.apply_redactions()
+        for _rectangle, replacement, _size, _color in patches:
+            inserted = 1 if replacement else 0
+            if inserted <= 0:
+                raise RuntimeError(f"Visible HTML entity repair does not fit: {replacement!r}")
+            repaired += 1
+    return repaired
+
+
 def _numbered_toc_rows(page: fitz.Page) -> list[dict[str, object]]:
     """Return numbered rows only when the page is an explicit contents page."""
 
@@ -2918,6 +2971,7 @@ def _protect_pdf_open_documents(
     if auto_header_min_recurrence < 2:
         raise RuntimeError("Auto header recurrence threshold must be at least 2")
     debug_label_removal_count = _remove_debug_labels(translated)
+    visible_html_entity_repair_count = _repair_visible_html_entities(translated)
 
     auto_header_receipts: list[dict[str, object]] | None = None
     header_families: list[tuple[str, str]] = []
@@ -3467,6 +3521,7 @@ def _protect_pdf_open_documents(
         "fixed_replacement_count": fixed_replacement_count,
         "output_replacement_count": output_replacement_count,
         "debug_label_removal_count": debug_label_removal_count,
+        "visible_html_entity_repair_count": visible_html_entity_repair_count,
         "normalized_citation_glyph_count": len(citation_glyph_receipts),
         "normalized_citation_glyphs": citation_glyph_receipts,
         "citation_sequence_repair": citation_sequence_repair,
