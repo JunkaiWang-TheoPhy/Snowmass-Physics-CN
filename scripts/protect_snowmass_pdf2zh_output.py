@@ -354,7 +354,7 @@ def _reference_clips(
                 reference_lines = lines
                 if heading is None and lines and (
                     max(rectangle.y1 for rectangle, _text in lines)
-                    <= page.rect.height * 0.08
+                    <= page.rect.height * 0.10
                     or min(rectangle.y0 for rectangle, _text in lines)
                     >= page.rect.height * 0.92
                 ):
@@ -487,6 +487,17 @@ def _insert_header(
             x += width
         return
     raise RuntimeError("Canonical running header does not fit its source rectangle")
+
+
+def _header_redaction_band(page: fitz.Page, rectangle: fitz.Rect) -> fitz.Rect:
+    """Cover the full running-header band, including non-text ghost glyphs."""
+
+    return fitz.Rect(
+        page.rect.width * 0.08,
+        max(0.0, rectangle.y0 - 3.0),
+        page.rect.width * 0.92,
+        min(page.rect.height, rectangle.y1 + 3.0),
+    )
 
 
 def _insert_reference_heading(page: fitz.Page, rectangle: fitz.Rect) -> None:
@@ -995,9 +1006,9 @@ def _discover_running_headers(
     return families
 
 
-def _discover_front_matter_lines_strict(
-    source_page: fitz.Page,
-) -> list[dict[str, object]]:
+def _discover_title_rectangle(source_page: fitz.Page) -> fitz.Rect:
+    """Return the source title band used to scrub split-title ghost glyphs."""
+
     page_width = source_page.rect.width
     lines = [
         line
@@ -1005,9 +1016,6 @@ def _discover_front_matter_lines_strict(
         if cast(fitz.Rect, line["rect"]).x0 > page_width * 0.08
         and cast(fitz.Rect, line["rect"]).y0 < source_page.rect.height * 0.6
     ]
-    if not lines:
-        raise RuntimeError("Unable to auto-discover first-page front matter lines")
-
     abstract_candidates = [
         line
         for line in lines
@@ -1033,9 +1041,97 @@ def _discover_front_matter_lines_strict(
         raise RuntimeError("Unable to identify the first-page title region")
     title_font = max(cast(float, line["max_size"]) for line in title_candidates)
     title_lines = [
-        line for line in title_candidates if cast(float, line["max_size"]) >= title_font - 1.0
+        line
+        for line in title_candidates
+        if cast(float, line["max_size"]) >= title_font - 1.0
     ]
+    title_top = min(cast(fitz.Rect, line["rect"]).y0 for line in title_lines)
     title_bottom = max(cast(fitz.Rect, line["rect"]).y1 for line in title_lines)
+    for line in sorted(
+        lines,
+        key=lambda item: cast(fitz.Rect, item["rect"]).y0,
+    ):
+        rectangle = cast(fitz.Rect, line["rect"])
+        if (
+            line not in title_lines
+            and rectangle.y0 >= title_top - 1.0
+            and rectangle.y0 <= title_bottom + 6.0
+            and cast(float, line["max_size"]) >= title_font * 0.65
+            and not _looks_like_date(str(line["text"]))
+            and not _looks_like_affiliation(str(line["text"]))
+            and not _looks_like_email(str(line["text"]))
+        ):
+            title_lines.append(line)
+            title_bottom = max(title_bottom, rectangle.y1)
+    rectangle = fitz.Rect(cast(fitz.Rect, title_lines[0]["rect"]))
+    for line in title_lines[1:]:
+        rectangle |= cast(fitz.Rect, line["rect"])
+    return rectangle
+
+
+def _translated_title_target(page: fitz.Page, rectangle: fitz.Rect) -> str:
+    clip = fitz.Rect(
+        page.rect.width * 0.08,
+        max(0.0, rectangle.y0 - 8.0),
+        page.rect.width * 0.92,
+        min(page.rect.height, rectangle.y1 + 8.0),
+    )
+    candidates: list[str] = []
+    localized_candidates: list[str] = []
+    for block in page.get_text("blocks", clip=clip, sort=True):
+        text = _clean_text(str(block[4]))
+        if text:
+            candidates.append(text)
+            if re.search(r"[\u3400-\u9fff]", text):
+                localized_candidates.append(text)
+    target = "\n".join(localized_candidates or candidates[:1]).strip()
+    if not target:
+        raise RuntimeError("Translated first-page title is missing")
+    return target
+
+
+def _title_redaction_band(page: fitz.Page, rectangle: fitz.Rect) -> fitz.Rect:
+    following_tops = [
+        cast(fitz.Rect, line["rect"]).y0
+        for line in _page_text_lines(page)
+        if cast(fitz.Rect, line["rect"]).y0 > rectangle.y1 + 2.0
+        and cast(fitz.Rect, line["rect"]).y0 < page.rect.height * 0.5
+    ]
+    next_top = min(following_tops) if following_tops else rectangle.y1 + 42.0
+    return fitz.Rect(
+        page.rect.width * 0.08,
+        max(0.0, rectangle.y0 - 5.0),
+        page.rect.width * 0.92,
+        min(page.rect.height, rectangle.y1 + 40.0, next_top - 2.0),
+    )
+
+
+def _discover_front_matter_lines_strict(
+    source_page: fitz.Page,
+) -> list[dict[str, object]]:
+    page_width = source_page.rect.width
+    lines = [
+        line
+        for line in _page_text_lines(source_page)
+        if cast(fitz.Rect, line["rect"]).x0 > page_width * 0.08
+        and cast(fitz.Rect, line["rect"]).y0 < source_page.rect.height * 0.6
+    ]
+    if not lines:
+        raise RuntimeError("Unable to auto-discover first-page front matter lines")
+
+    abstract_candidates = [
+        line
+        for line in lines
+        if str(line["text"]).casefold().startswith(
+            ("abstract", "executive summary")
+        )
+    ]
+    abstract_top = (
+        min(cast(fitz.Rect, line["rect"]).y0 for line in abstract_candidates)
+        if abstract_candidates
+        else source_page.rect.height * 0.5
+    )
+    title_bottom = _discover_title_rectangle(source_page).y1
 
     front_matter_lines = [
         line
@@ -1563,7 +1659,7 @@ def _replace_fixed_text(
             patch |= block_rectangle
     patch = fitz.Rect(patch.x0 - 2, patch.y0 - 2, patch.x1 + 2, patch.y1 + 2)
     page.add_redact_annot(patch, fill=(1, 1, 1))
-    page.apply_redactions()
+    page.apply_redactions(graphics=2)
     lines = target.splitlines() or [target]
     segmented_lines = [
         [
@@ -3001,6 +3097,23 @@ def _protect_pdf_open_documents(
         raise RuntimeError("Auto header recurrence threshold must be at least 2")
     debug_label_removal_count = _remove_debug_labels(translated)
     visible_html_entity_repair_count = _repair_visible_html_entities(translated)
+    title_normalization_receipt: dict[str, object] | None = None
+    if auto_front_matter and 1 in selected_source_pages:
+        output_index = page_map[1]
+        title_rectangle = _discover_title_rectangle(source[0])
+        title_band = _title_redaction_band(source[0], title_rectangle)
+        target_title = _translated_title_target(
+            translated[output_index], title_rectangle
+        )
+        _replace_fixed_text(
+            translated[output_index], title_band, target_title
+        )
+        title_normalization_receipt = {
+            "output_page": output_index + 1,
+            "source_page": 1,
+            "bbox": list(title_band),
+            "target_sha256": _text_sha256(_normalize(target_title)),
+        }
 
     auto_header_receipts: list[dict[str, object]] | None = None
     header_families: list[tuple[str, str]] = []
@@ -3156,15 +3269,10 @@ def _protect_pdf_open_documents(
             output_index, []
         ):
             output_page.add_redact_annot(
-                fitz.Rect(
-                    rectangle.x0 - 2,
-                    rectangle.y0 - 1,
-                    rectangle.x1 + 2,
-                    rectangle.y1 + 0.5,
-                ),
+                _header_redaction_band(output_page, rectangle),
                 fill=(1, 1, 1),
             )
-        output_page.apply_redactions()
+        output_page.apply_redactions(graphics=2)
         for rectangle in [
             *raster_rectangles,
             *identity_rectangles,
@@ -3595,6 +3703,8 @@ def _protect_pdf_open_documents(
             receipt["auto_header"] = auto_header_receipts[0]
     if auto_front_matter_receipt is not None:
         receipt["auto_front_matter"] = auto_front_matter_receipt
+    if title_normalization_receipt is not None:
+        receipt["title_normalization"] = title_normalization_receipt
     return receipt
 
 

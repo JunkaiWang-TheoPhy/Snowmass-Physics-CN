@@ -1173,6 +1173,29 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertLessEqual(clips[1][0].y0, 318.6)
         self.assertGreaterEqual(clips[1][0].y1, 381.0)
 
+    def test_reference_continuation_excludes_header_just_below_eight_percent_band(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        try:
+            first = document.new_page(width=612, height=792)
+            first.insert_text((72, 100), "References", fontsize=12)
+            first.insert_text((72, 130), "[1] First entry", fontsize=10)
+            second = document.new_page(width=612, height=792)
+            second.insert_text(
+                (178, 65),
+                "Snowmass 2021 CEF03 Diversity, Equity & Inclusion",
+                fontsize=10,
+            )
+            second.insert_text((72, 100), "[2] Second entry", fontsize=10)
+
+            clips = _reference_clips(document)
+        finally:
+            document.close()
+
+        self.assertEqual(len(clips[2]), 1)
+        self.assertGreaterEqual(min(clip.y0 for clip in clips[2]), 85.0)
+
     def _make_auto_discovery_fixture(
         self,
         root: Path,
@@ -1180,6 +1203,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         header_variants: list[str],
         source_header_variants: list[str] | None = None,
         repeated_stamp: bool = False,
+        header_ghost: bool = False,
     ) -> tuple[Path, Path, Path]:
         source = root / "auto-source.pdf"
         translated = root / "auto-translated.pdf"
@@ -1303,6 +1327,14 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
                 header_text,
                 fontname="china-s",
             )
+            if header_ghost:
+                translated_page.insert_text((390, 60), "GHOST HEADER")
+                translated_page.draw_line(
+                    fitz.Point(440, 40),
+                    fitz.Point(440, 80),
+                    color=(1, 0, 0),
+                    width=2,
+                )
             if repeated_stamp:
                 translated_page.insert_text(
                     (180, 88),
@@ -2252,6 +2284,105 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertIn("TRANSLATED TITLE", rendered)
         self.assertIn("TRANSLATED ABSTRACT BODY", rendered)
         self.assertNotIn("TRANSLATED AUTHORS", rendered)
+
+    def test_front_matter_normalizes_title_band_and_removes_split_english_ghost(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.pdf"
+            translated = root / "translated.pdf"
+            output = root / "protected.pdf"
+            ir = root / "ir.xml"
+            source_document = fitz.open()
+            source_page = source_document.new_page(width=612, height=792)
+            source_page.insert_textbox(
+                fitz.Rect(90, 90, 522, 120),
+                "Why physics in Africa",
+                fontsize=16,
+            )
+            source_page.insert_text((250, 132), "Latin America?", fontsize=14)
+            source_page.insert_text((150, 180), "A. Author, B. Builder", fontsize=12)
+            source_page.insert_text((120, 205), "Department of Physics, Example University", fontsize=10)
+            source_page.insert_text((270, 260), "Abstract", fontsize=11)
+            source_document.save(source)
+            source_document.close()
+            translated_document = fitz.open()
+            translated_page = translated_document.new_page(width=612, height=792)
+            translated_page.insert_textbox(
+                fitz.Rect(90, 90, 522, 125),
+                "美国为何应关注非洲和拉丁美洲的物理学？",
+                fontname="china-s",
+                fontsize=16,
+            )
+            translated_page.insert_text((250, 132), "Latin America?", fontsize=14)
+            translated_page.draw_line(
+                fitz.Point(300, 75),
+                fitz.Point(300, 165),
+                color=(1, 0, 0),
+                width=2,
+            )
+            translated_page.insert_text((150, 180), "译文作者", fontname="china-s")
+            translated_page.insert_text((270, 260), "摘要", fontname="china-s")
+            translated_document.save(translated)
+            translated_document.close()
+            ir.write_text("<document />", encoding="utf-8")
+
+            protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1,),
+                ir_xml=ir,
+                auto_header=True,
+                auto_front_matter=True,
+            )
+
+            with fitz.open(output) as protected:
+                rendered = protected[0].get_text(sort=True)
+                red_drawings = [
+                    drawing
+                    for drawing in protected[0].get_drawings()
+                    if drawing.get("color") == (1.0, 0.0, 0.0)
+                ]
+
+        self.assertIn("美国为何应关注非洲和拉丁美洲的物理学", rendered)
+        self.assertNotIn("Latin America", rendered)
+        self.assertEqual(red_drawings, [])
+
+    def test_auto_header_scrubs_ghost_text_across_the_full_header_band(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import protect_pdf
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, translated, ir = self._make_auto_discovery_fixture(
+                root,
+                header_variants=["统一页眉", "统一页眉", "统一页眉"],
+                header_ghost=True,
+            )
+            output = root / "protected.pdf"
+            protect_pdf(
+                source_pdf=source,
+                translated_pdf=translated,
+                output_pdf=output,
+                selected_source_pages=(1, 2, 3, 4),
+                ir_xml=ir,
+                auto_header=True,
+                auto_header_min_recurrence=2,
+                auto_front_matter=True,
+            )
+            with fitz.open(output) as protected:
+                rendered = "\n".join(page.get_text(sort=True) for page in protected)
+                red_drawings = [
+                    drawing
+                    for page in protected
+                    for drawing in page.get_drawings()
+                    if drawing.get("color") == (1.0, 0.0, 0.0)
+                ]
+
+        self.assertNotIn("GHOST HEADER", rendered)
+        self.assertEqual(rendered.count("统一页眉"), 3)
+        self.assertEqual(red_drawings, [])
 
     def test_auto_front_matter_allows_a_first_page_without_identity_text(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _discover_front_matter_lines

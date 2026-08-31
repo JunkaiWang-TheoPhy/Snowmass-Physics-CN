@@ -1015,6 +1015,35 @@ def _default_prepare_runner(**arguments: Any) -> Mapping[str, Any]:
     return json.loads(result.stdout)
 
 
+def _ensure_article_environment_lock(
+    plan: Mapping[str, Any], paper: Mapping[str, Any]
+) -> Path:
+    source = Path(str((plan.get("environment_lock") or {}).get("path") or ""))
+    expected = str((plan.get("environment_lock") or {}).get("sha256") or "")
+    if not source.is_file() or _sha256(source) != expected:
+        raise RuntimeError("stage environment lock mismatch")
+    article = Path(str(paper["article_dir"]))
+    target = article / "environment-lock.json"
+    if target.is_file():
+        if _sha256(target) != expected:
+            raise RuntimeError("article environment lock mismatch")
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=target.name + ".", dir=target.parent
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(source.read_bytes())
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, target)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+    return target
+
+
 def _launch_one(
     plan: Mapping[str, Any],
     paper: Mapping[str, Any],
@@ -1037,6 +1066,7 @@ def _launch_one_locked(
     article = Path(str(paper["article_dir"]))
     if _same_quarantine(article, paper):
         return "quarantined"
+    _ensure_article_environment_lock(plan, paper)
     finish_state, finish = _finish_state(paper)
     review_request = article / "qc" / "visual-review-request.json"
     if finish_state == "valid" and review_request.is_file():

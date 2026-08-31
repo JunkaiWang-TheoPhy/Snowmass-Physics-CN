@@ -942,6 +942,27 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             self.assertTrue(first)
             self.assertFalse(second)
 
+    def test_article_environment_lock_is_snapshotted_and_never_overwritten(self) -> None:
+        module = load_module()
+        stage_lock = self.root / "stage-environment-lock.json"
+        stage_lock.write_text('{"lock_sha256":"abc"}\n', encoding="utf-8")
+        article = self.root / "article"
+        plan = {
+            "environment_lock": {
+                "path": str(stage_lock),
+                "sha256": sha256_file(stage_lock),
+            }
+        }
+        paper = {"article_dir": str(article)}
+
+        module._ensure_article_environment_lock(plan, paper)
+
+        snapshot = article / "environment-lock.json"
+        self.assertEqual(snapshot.read_bytes(), stage_lock.read_bytes())
+        snapshot.write_text('{"lock_sha256":"tampered"}\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "article environment lock mismatch"):
+            module._ensure_article_environment_lock(plan, paper)
+
     def test_promote_requires_previous_stage_seal_and_fresh_paper_seals(self) -> None:
         module = load_module()
         probe = self._seed_record("arxiv:2203.06843")
