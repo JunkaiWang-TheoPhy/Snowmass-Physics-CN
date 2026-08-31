@@ -2499,7 +2499,7 @@ def _restore_citation_sequence(
         len(output_markers) == len(expected_markers)
         and (
             allow_order_only
-            or Counter(output_markers) != Counter(expected_markers)
+            or Counter(output_markers) == Counter(expected_markers)
         )
         and all(marker in source_vocabulary for marker in output_markers)
     )
