@@ -12,6 +12,21 @@ import fitz
 
 
 class ProtectPdf2zhOutputTests(unittest.TestCase):
+    def test_text_dict_excludes_embedded_image_payloads(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _text_dict
+
+        document = fitz.open()
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 72), "text")
+        pixmap = fitz.Pixmap(fitz.csRGB, (0, 0, 2, 2), False)
+        pixmap.clear_with(0xFFFFFF)
+        page.insert_image(fitz.Rect(72, 90, 100, 118), pixmap=pixmap)
+        blocks = _text_dict(page)
+        self.assertTrue(blocks["blocks"])
+        self.assertTrue(all(block.get("type") == 0 for block in blocks["blocks"]))
+        self.assertTrue(all("image" not in block for block in blocks["blocks"]))
+        document.close()
+
     def test_restores_a_source_citation_omitted_by_translation(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import (
             _restore_missing_citations_from_source,

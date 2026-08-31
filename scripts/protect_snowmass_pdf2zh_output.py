@@ -104,6 +104,24 @@ def _top_rect(
     return fitz.Rect(x0, page.rect.height - y1, x1, page.rect.height - y0)
 
 
+def _text_dict(
+    page: fitz.Page,
+    *,
+    sort: bool = True,
+    clip: fitz.Rect | None = None,
+) -> dict[str, object]:
+    """Extract text geometry without materializing embedded image payloads.
+
+    ``page.get_text("dict")`` includes image blocks and their encoded bytes.
+    Protection/QC only needs text lines and bounding boxes, so including those
+    payloads causes needless PNG encoding, memory growth, and long seal times
+    on papers with large figures.
+    """
+
+    textpage = page.get_textpage(clip=clip, flags=fitz.TEXTFLAGS_TEXT)
+    return textpage.extractDICT(sort=sort)
+
+
 def _coalesce(rectangles: list[fitz.Rect]) -> list[fitz.Rect]:
     merged: list[fitz.Rect] = []
     for rectangle in rectangles:
@@ -201,7 +219,7 @@ def _reference_clips(
     for page_index, page in enumerate(source):
         textpage = textpages.get(page_index) if textpages else None
         heading_rects: list[fitz.Rect] = []
-        blocks = textpage.extractDICT(sort=True) if textpage is not None else page.get_text("dict", sort=True)
+        blocks = _text_dict(page, sort=True)
         for block in blocks.get("blocks", []):
             if block.get("type") != 0:
                 continue
@@ -220,11 +238,7 @@ def _reference_clips(
             continue
         page_clips: list[fitz.Rect] = []
         all_text_rectangles: list[fitz.Rect] = []
-        blocks = (
-            textpage.extractDICT(sort=True)
-            if textpage is not None
-            else page.get_text("dict", sort=True)
-        )
+        blocks = _text_dict(page, sort=True)
         for block in blocks.get("blocks", []):
             if block.get("type") != 0:
                 continue
@@ -511,11 +525,7 @@ def _page_text_blocks(
     page: fitz.Page, textpage: object | None = None
 ) -> list[dict[str, object]]:
     blocks: list[dict[str, object]] = []
-    text_blocks = (
-        textpage.extractDICT()
-        if textpage is not None
-        else page.get_text("dict")
-    )
+    text_blocks = _text_dict(page, sort=False)
     for block in text_blocks.get("blocks", []):
         if block.get("type") != 0:
             continue
@@ -554,7 +564,7 @@ def _page_text_blocks(
 
 def _page_text_lines(page: fitz.Page) -> list[dict[str, object]]:
     lines: list[dict[str, object]] = []
-    for block in page.get_text("dict").get("blocks", []):
+    for block in _text_dict(page, sort=False).get("blocks", []):
         if block.get("type") != 0:
             continue
         block_rectangle = fitz.Rect(*block["bbox"])
@@ -1615,7 +1625,7 @@ def _remove_debug_labels(document: fitz.Document) -> int:
         lines = []
         has_debug_marker = False
         page_removed = 0
-        for block in page.get_text("dict", sort=True).get("blocks", []):
+        for block in _text_dict(page, sort=True).get("blocks", []):
             if block.get("type") != 0:
                 continue
             for line in block.get("lines", []):
@@ -2074,11 +2084,7 @@ def _numeric_citation_line_groups(
 ) -> list[list[str]]:
     fragments: list[tuple[fitz.Rect, list[str]]] = []
     pending_fragment: tuple[fitz.Rect, str] | None = None
-    text_blocks = (
-        textpage.extractDICT(sort=True)
-        if textpage is not None
-        else page.get_text("dict", sort=True)
-    )
+    text_blocks = _text_dict(page, sort=True)
     for block in text_blocks.get("blocks", []):
         if block.get("type") != 0:
             continue
@@ -2277,7 +2283,7 @@ def _normalize_numeric_citation_glyphs(
     receipts: list[dict[str, object]] = []
     for page_index, page in enumerate(document):
         candidates: list[dict[str, object]] = []
-        for block in page.get_text("dict", sort=True).get("blocks", []):
+        for block in _text_dict(page, sort=True).get("blocks", []):
             if block.get("type") != 0:
                 continue
             for line in block.get("lines", []):
@@ -3172,9 +3178,9 @@ def _protect_pdf_open_documents(
             )
             matching_spans = [
                 span
-                for block in protected[output_index]
-                .get_text("dict", clip=clip, sort=True)
-                .get("blocks", [])
+                for block in _text_dict(
+                    protected[output_index], clip=clip, sort=True
+                ).get("blocks", [])
                 for line in block.get("lines", [])
                 for span in line.get("spans", [])
                 if str(citation["text"]).strip() in str(span.get("text", ""))
