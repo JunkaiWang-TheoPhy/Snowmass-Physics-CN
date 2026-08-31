@@ -23,6 +23,7 @@ DEFAULT_CATALOG = ROOT / "output/snowmass2021/snowmass2021_whitepapers.json"
 DEFAULT_ANALYSIS = ROOT / "output/snowmass2021/analysis/enriched_papers.json"
 DEFAULT_LENGTHS = ROOT / "output/snowmass2021/analysis/length_records.json"
 DEFAULT_TITLES_ZH = ROOT / "data/snowmass_title_zh.json"
+DEFAULT_TRANSLATIONS = ROOT / "translations/snowmass-publications.json"
 DEFAULT_OUT_DIR = ROOT / "site/data"
 
 
@@ -109,8 +110,11 @@ def _safe_public_record(
     analysis: dict[str, Any],
     lengths: dict[str, Any],
     title_zh: dict[str, Any],
+    translation: dict[str, Any],
 ) -> dict[str, Any]:
     state = _rights_public_state(rights)
+    if translation and not state["publication_allowed"]:
+        raise ValueError(f"translation publication is not rights-cleared: {rights['record_id']}")
     record_id = rights["record_id"]
     title = rights.get("title") or catalog.get("title") or analysis.get("title") or lengths.get("title") or record_id
 
@@ -130,12 +134,16 @@ def _safe_public_record(
         "source_license_url": rights.get("source_license_url"),
         "permits_adaptation": rights.get("permits_adaptation"),
         "license_decision": rights.get("license_decision"),
-        "translation_status": rights.get("translation_status", "not-started"),
-        "translation_license": rights.get("translation_license"),
-        "machine_model": rights.get("machine_model"),
-        "human_reviewers": rights.get("human_reviewers") or [],
+        "translation_status": translation.get("translation_status") or rights.get("translation_status", "not-started"),
+        "translation_license": translation.get("translation_license") or rights.get("translation_license"),
+        "machine_model": translation.get("machine_model") or rights.get("machine_model"),
+        "human_reviewers": translation.get("human_reviewers") or rights.get("human_reviewers") or [],
         **state,
-        "publication_translation_url": None,
+        "publication_translation_url": translation.get("publication_translation_url"),
+        "publication_translation_sha256": translation.get("publication_translation_sha256"),
+        "publication_translation_size_bytes": translation.get("publication_translation_size_bytes"),
+        "translation_version": translation.get("translation_version"),
+        "translation_published_at": translation.get("translation_published_at"),
         "public_updated_at": rights.get("license_checked_at"),
         "publication_year": analysis.get("publication_year"),
         "citation_count": _as_number(analysis.get("citation_count")),
@@ -216,6 +224,7 @@ def build_manifest(
     analysis_path: Path = DEFAULT_ANALYSIS,
     lengths_path: Path = DEFAULT_LENGTHS,
     titles_zh_path: Path = DEFAULT_TITLES_ZH,
+    translations_path: Path = DEFAULT_TRANSLATIONS,
     out_dir: Path = DEFAULT_OUT_DIR,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rights_records = _read_json(rights_path)
@@ -230,6 +239,11 @@ def build_manifest(
         {**item, "machine_model": title_model}
         for item in title_payload.get("translations", [])
     ])
+    translation_records = (
+        _by_record_id(_read_json(translations_path))
+        if translations_path.is_file()
+        else {}
+    )
     rights_ids = {str(item["record_id"]).casefold() for item in rights_records}
     title_ids = set(title_records)
     if rights_ids != title_ids:
@@ -249,6 +263,7 @@ def build_manifest(
             analysis_records.get(key, {}),
             length_records.get(key, {}),
             title_records[key],
+            translation_records.get(key, {}),
         ))
 
     records.sort(key=lambda item: (item["title"].casefold(), item["record_id"].casefold()))
@@ -272,6 +287,7 @@ def main() -> None:
     parser.add_argument("--analysis", type=Path, default=DEFAULT_ANALYSIS)
     parser.add_argument("--lengths", type=Path, default=DEFAULT_LENGTHS)
     parser.add_argument("--titles-zh", type=Path, default=DEFAULT_TITLES_ZH)
+    parser.add_argument("--translations", type=Path, default=DEFAULT_TRANSLATIONS)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args()
     records, stats = build_manifest(
@@ -280,6 +296,7 @@ def main() -> None:
         analysis_path=args.analysis,
         lengths_path=args.lengths,
         titles_zh_path=args.titles_zh,
+        translations_path=args.translations,
         out_dir=args.out_dir,
     )
     print(json.dumps({

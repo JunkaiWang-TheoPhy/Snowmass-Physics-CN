@@ -40,6 +40,10 @@ REQUIRED_FIELDS = {
     "publication_basis",
     "publication_conditions",
     "publication_translation_url",
+    "publication_translation_sha256",
+    "publication_translation_size_bytes",
+    "translation_version",
+    "translation_published_at",
     "public_updated_at",
 }
 
@@ -144,6 +148,21 @@ class PublicManifestTests(unittest.TestCase):
         self.assertEqual(stats["publication_counts"]["allowed"], sum(
             bool(record["publication_allowed"]) for record in records
         ))
+
+    def test_public_translation_downloads_use_release_assets(self) -> None:
+        published = [
+            record for record in _load_manifest()
+            if record.get("publication_translation_url")
+        ]
+        self.assertEqual(len(published), 11)
+        expected_prefix = (
+            "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/"
+        )
+        for record in published:
+            self.assertTrue(
+                record["publication_translation_url"].startswith(expected_prefix),
+                record["record_id"],
+            )
 
 
 if __name__ == "__main__":
