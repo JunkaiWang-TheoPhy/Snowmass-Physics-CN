@@ -182,6 +182,33 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             prefilter, ("arxiv:medium",), tier="text_only_medium"
         )
 
+    def test_figure_passthrough_tier_limits_graphics_and_keeps_them_verbatim(self) -> None:
+        module = load_module()
+        prefilter = self._write_json(
+            self.root / "figure-prefilter.json",
+            {
+                "records": [
+                    {
+                        "record_id": "arxiv:figure",
+                        "publication_allowed": True,
+                        "eligible": False,
+                        "risk_tier": "figure_passthrough_medium",
+                        "pages": 8,
+                        "images": 2,
+                        "drawings": 12,
+                        "numeric_citations": 26,
+                        "citation_ranges": 0,
+                        "reference_pages": 1,
+                        "contents_pages": 0,
+                        "reasons": ["many_numeric_citations"],
+                    }
+                ]
+            },
+        )
+        module._validate_low_risk_prefilter(
+            prefilter, ("arxiv:figure",), tier="figure_passthrough_medium"
+        )
+
     def _plan_args(self, module, stage: str, **overrides: object):
         values = {
             "stage": stage,
