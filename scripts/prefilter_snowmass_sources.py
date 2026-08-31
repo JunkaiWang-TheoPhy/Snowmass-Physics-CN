@@ -35,6 +35,8 @@ def inspect_pdf(path: Path) -> dict[str, Any]:
         numeric_citations = 0
         citation_ranges = 0
         reference_pages = 0
+        contents_pages = 0
+        contents_entries = 0
         for page in document:
             text = page.get_text("text")
             images += len(page.get_images(full=True))
@@ -45,6 +47,9 @@ def inspect_pdf(path: Path) -> dict[str, Any]:
             citation_ranges += sum(1 for citation in citations if re.search(r"[-–—]", citation))
             if "references" in text.casefold() or "bibliography" in text.casefold():
                 reference_pages += 1
+            if re.search(r"^\s*(?:contents|table of contents)\s*$", text, re.I | re.M):
+                contents_pages += 1
+                contents_entries += len(re.findall(r"^\s*\d+(?:\.\d+)*\s+\S+", text, re.M))
     return {
         "pages": pages,
         "images": images,
@@ -53,6 +58,8 @@ def inspect_pdf(path: Path) -> dict[str, Any]:
         "numeric_citations": numeric_citations,
         "citation_ranges": citation_ranges,
         "reference_pages": reference_pages,
+        "contents_pages": contents_pages,
+        "contents_entries": contents_entries,
         "sha256": sha256(path),
     }
 
@@ -96,6 +103,8 @@ def prefilter(*, rights_path: Path, source_manifest_path: Path, pdf_root: Path) 
             reasons.append("many_numeric_citations")
         if metrics["citation_ranges"] > 1:
             reasons.append("complex_citation_ranges")
+        if metrics["contents_pages"] > 0:
+            reasons.append("contents_page_requires_toc_lane")
         row.update(metrics, eligible=not reasons, reasons=reasons)
         rows.append(row)
     candidates = [row for row in rows if row["eligible"]]
@@ -106,7 +115,7 @@ def prefilter(*, rights_path: Path, source_manifest_path: Path, pdf_root: Path) 
         "policy": {
             "figure_interior_text": "source_verbatim",
             "captions_outside_figures": "translatable",
-            "thresholds": {"pages_max": 10, "reference_pages_max": 2, "images_max": 12, "drawings_max": 200, "numeric_citations_max": 10, "citation_ranges_max": 1},
+            "thresholds": {"pages_max": 10, "reference_pages_max": 2, "images_max": 12, "drawings_max": 200, "numeric_citations_max": 10, "citation_ranges_max": 1, "contents_pages_max": 0},
         },
         "eligible_count": sum(1 for row in rows if row.get("eligible")),
         "publication_allowed_count": len(rows),
