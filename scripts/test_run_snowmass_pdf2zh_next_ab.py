@@ -14,6 +14,7 @@ import sys
 import tempfile
 import types
 import unittest
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,6 +167,68 @@ class TranslationPromptContractTests(unittest.TestCase):
         module = load_module()
 
         self.assertIn("Translate prose quotations", module.SYSTEM_PROMPT)
+
+    def test_declares_transport_citation_tokens_immutable(self) -> None:
+        module = load_module()
+
+        self.assertIn("[[SMCIT_000001]]", module.SYSTEM_PROMPT)
+        self.assertIn("exactly once, in the same order", module.SYSTEM_PROMPT)
+
+
+class CitationLockTests(unittest.TestCase):
+    def test_locks_and_restores_numeric_citations_byte_exactly_in_source_order(self) -> None:
+        module = load_module()
+        messages = [
+            {"role": "system", "content": "Preserve citations."},
+            {
+                "role": "user",
+                "content": "First [58]; second [21, 59]; range [30–31].",
+            },
+        ]
+
+        locked, citation_lock = module.lock_numeric_citations(messages)
+
+        locked_text = locked[1]["content"]
+        self.assertNotIn("[58]", locked_text)
+        self.assertEqual(citation_lock.markers, ("[58]", "[21, 59]", "[30–31]"))
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": locked_text.replace("First", "第一").replace("second", "第二"),
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+        restored = module.unlock_numeric_citations_response(
+            json.dumps(response).encode("utf-8"), citation_lock
+        )
+        restored_text = json.loads(restored)["choices"][0]["message"]["content"]
+        self.assertIn("[58]", restored_text)
+        self.assertIn("[21, 59]", restored_text)
+        self.assertIn("[30–31]", restored_text)
+
+    def test_rejects_missing_reordered_or_invented_citation_markers(self) -> None:
+        module = load_module()
+        locked, citation_lock = module.lock_numeric_citations(
+            [{"role": "user", "content": "A [58], then B [21]."}]
+        )
+        tokens = citation_lock.tokens
+        for content in (
+            f"A {tokens[1]}, then B {tokens[0]}.",
+            f"A {tokens[0]} only.",
+            f"A {tokens[0]}, then B {tokens[1]} and invented [99].",
+        ):
+            response = {
+                "choices": [{"message": {"role": "assistant", "content": content}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+            with self.assertRaises(module.CitationLockError):
+                module.unlock_numeric_citations_response(
+                    json.dumps(response).encode("utf-8"), citation_lock
+                )
 
 
 class RightsGateTests(unittest.TestCase):
@@ -565,6 +628,120 @@ class RequestBudgetGateTests(unittest.TestCase):
 
 
 class LocalBudgetProxyTests(unittest.TestCase):
+    def test_proxy_locks_citations_before_forwarding_and_restores_exact_markers(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            forwarded: list[dict] = []
+
+            def forward(body: bytes, _api_key: str):
+                payload = json.loads(body)
+                forwarded.append(payload)
+                locked_text = payload["messages"][-1]["content"]
+                response = {
+                    "choices": [
+                        {"message": {"role": "assistant", "content": locked_text}}
+                    ],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 10,
+                        "total_tokens": 20,
+                    },
+                }
+                return 200, {"Content-Type": "application/json"}, json.dumps(response).encode()
+
+            gate = module.RequestBudgetGate(
+                ledger_path=Path(temporary) / "ledger.jsonl",
+                stage_max_cost_rmb=1,
+                project_max_cost_rmb=10,
+                project_commitment_before_rmb=0,
+                request_cap=1,
+                usd_cny_rate=7.2,
+            )
+            with module.DeepSeekBudgetProxy(
+                api_key="test-key", gate=gate, forwarder=forward
+            ) as proxy:
+                request = urllib.request.Request(
+                    proxy.base_url + "/chat/completions",
+                    data=json.dumps(
+                        {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": "First [58], then [21, 59].",
+                                }
+                            ]
+                        }
+                    ).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    content = json.loads(response.read())["choices"][0]["message"]["content"]
+                metrics = proxy.snapshot()
+
+            self.assertNotIn("[58]", forwarded[0]["messages"][0]["content"])
+            self.assertEqual(content, "First [58], then [21, 59].")
+            self.assertEqual(metrics["locked_marker_count"], 2)
+            self.assertEqual(metrics["validated_response_count"], 1)
+            self.assertEqual(metrics["failure_count"], 0)
+
+    def test_proxy_fails_closed_when_model_reorders_citation_tokens(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            def forward(body: bytes, _api_key: str):
+                payload = json.loads(body)
+                tokens = module._CITATION_TOKEN_RE.findall(
+                    payload["messages"][0]["content"]
+                )
+                response = {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": f"B {tokens[1]}, A {tokens[0]}",
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 10,
+                        "total_tokens": 20,
+                    },
+                }
+                return 200, {"Content-Type": "application/json"}, json.dumps(response).encode()
+
+            gate = module.RequestBudgetGate(
+                ledger_path=Path(temporary) / "ledger.jsonl",
+                stage_max_cost_rmb=1,
+                project_max_cost_rmb=10,
+                project_commitment_before_rmb=0,
+                request_cap=1,
+                usd_cny_rate=7.2,
+            )
+            with module.DeepSeekBudgetProxy(
+                api_key="test-key", gate=gate, forwarder=forward
+            ) as proxy:
+                request = urllib.request.Request(
+                    proxy.base_url + "/chat/completions",
+                    data=json.dumps(
+                        {
+                            "messages": [
+                                {"role": "user", "content": "A [58], B [21]."}
+                            ]
+                        }
+                    ).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(request, timeout=5)
+                metrics = proxy.snapshot()
+
+            self.assertEqual(caught.exception.code, 400)
+            caught.exception.close()
+            self.assertEqual(gate.snapshot()["api_calls"], 1)
+            self.assertEqual(metrics["failure_count"], 1)
+
     def test_proxy_forces_model_output_cap_and_non_thinking_mode(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:

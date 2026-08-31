@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import csv
 import fcntl
 import hashlib
@@ -18,6 +19,7 @@ import io
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -62,6 +64,105 @@ class RequestCapExceededError(RuntimeError):
 
 class DeepSeekConnectivityError(RuntimeError):
     """The zero-paid DeepSeek reachability check failed."""
+
+
+class CitationLockError(RuntimeError):
+    """The model changed, reordered, omitted, or invented a citation marker."""
+
+
+_NUMERIC_CITATION_RE = re.compile(
+    r"\[(?:\s*\d+\s*)(?:(?:,|[-–—])\s*\d+\s*)*\]"
+)
+_CITATION_TOKEN_RE = re.compile(r"\[\[SMCIT_\d{6}\]\]")
+
+
+@dataclass(frozen=True)
+class CitationLock:
+    tokens: tuple[str, ...]
+    markers: tuple[str, ...]
+
+    @property
+    def count(self) -> int:
+        return len(self.tokens)
+
+
+def _lock_citations_in_text(
+    value: str,
+    *,
+    tokens: list[str],
+    markers: list[str],
+) -> str:
+    if "[[SMCIT_" in value:
+        raise CitationLockError("source text collides with citation lock token")
+
+    def replace(match: re.Match[str]) -> str:
+        token = f"[[SMCIT_{len(tokens) + 1:06d}]]"
+        tokens.append(token)
+        markers.append(match.group(0))
+        return token
+
+    return _NUMERIC_CITATION_RE.sub(replace, value)
+
+
+def lock_numeric_citations(
+    messages: list[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], CitationLock]:
+    """Replace user citation markers with unique immutable transport tokens."""
+
+    locked = copy.deepcopy(messages)
+    tokens: list[str] = []
+    markers: list[str] = []
+    for message in locked:
+        if str(message.get("role") or "") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            message["content"] = _lock_citations_in_text(
+                content, tokens=tokens, markers=markers
+            )
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    part["text"] = _lock_citations_in_text(
+                        part["text"], tokens=tokens, markers=markers
+                    )
+    return locked, CitationLock(tuple(tokens), tuple(markers))
+
+
+def unlock_numeric_citations_response(
+    response_body: bytes, citation_lock: CitationLock
+) -> bytes:
+    """Validate lock conservation and restore exact source citation bytes."""
+
+    if citation_lock.count == 0:
+        return response_body
+    try:
+        payload = json.loads(response_body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CitationLockError("citation-locked response is not JSON") from error
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise CitationLockError("citation-locked response has no choices")
+    for choice in choices:
+        message = choice.get("message") if isinstance(choice, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str):
+            raise CitationLockError("citation-locked response content is missing")
+        actual_tokens = tuple(_CITATION_TOKEN_RE.findall(content))
+        if actual_tokens != citation_lock.tokens:
+            raise CitationLockError("citation lock tokens changed or reordered")
+        without_tokens = _CITATION_TOKEN_RE.sub("", content)
+        if _NUMERIC_CITATION_RE.search(without_tokens):
+            raise CitationLockError("model invented an unlocked citation marker")
+        restored = content
+        for token, marker in zip(
+            citation_lock.tokens, citation_lock.markers, strict=True
+        ):
+            restored = restored.replace(token, marker, 1)
+        message["content"] = restored
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 @dataclass(frozen=True)
@@ -342,6 +443,8 @@ Apply the supplied glossary as a hard terminology constraint.
 Preserve every number, unit, equation, symbol, citation marker, URL, DOI, proper name, acronym,
 and rich-text or formula placeholder exactly. Never add facts, explanations, notes, or headings.
 Keep all citation markers in their exact source order; do not reorder clauses across them.
+Transport tokens matching [[SMCIT_000001]] are immutable citation anchors: copy every token
+exactly once, in the same order, and never create a new SMCIT token.
 Text belonging to figures, plots, legends, axes, annotations, and tables must remain verbatim in
 the source language. Bibliographic entries and their numbering must remain verbatim; translate
 only ordinary prose and the References heading when it is presented as an independent heading.
@@ -1384,6 +1487,10 @@ class DeepSeekBudgetProxy:
         self._forwarder = forwarder or self._forward_to_deepseek
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
+        self._metrics_lock = threading.Lock()
+        self._locked_marker_count = 0
+        self._validated_response_count = 0
+        self._failure_count = 0
 
     @property
     def base_url(self) -> str:
@@ -1391,6 +1498,14 @@ class DeepSeekBudgetProxy:
             raise RuntimeError("DeepSeek budget proxy is not running")
         port = int(self._server.server_address[1])
         return f"http://127.0.0.1:{port}/v1"
+
+    def snapshot(self) -> dict[str, int]:
+        with self._metrics_lock:
+            return {
+                "locked_marker_count": self._locked_marker_count,
+                "validated_response_count": self._validated_response_count,
+                "failure_count": self._failure_count,
+            }
 
     @staticmethod
     def _forward_to_deepseek(
@@ -1469,6 +1584,16 @@ class DeepSeekBudgetProxy:
         ):
             self._write_error(handler, 400, "request must contain a messages list")
             return
+        try:
+            locked_messages, citation_lock = lock_numeric_citations(
+                payload["messages"]
+            )
+        except CitationLockError as error:
+            self._write_error(handler, 400, str(error))
+            return
+        payload["messages"] = locked_messages
+        with self._metrics_lock:
+            self._locked_marker_count += citation_lock.count
         payload["model"] = MODEL
         payload["stream"] = False
         payload["thinking"] = {"type": "disabled"}
@@ -1514,6 +1639,19 @@ class DeepSeekBudgetProxy:
                     reservation, error_type=type(error).__name__
                 )
             else:
+                try:
+                    response_body = unlock_numeric_citations_response(
+                        response_body, citation_lock
+                    )
+                except CitationLockError as error:
+                    self._gate.settle_request(reservation, usage)
+                    with self._metrics_lock:
+                        self._failure_count += 1
+                    self._write_error(handler, 400, str(error))
+                    return
+                if citation_lock.count:
+                    with self._metrics_lock:
+                        self._validated_response_count += 1
                 self._gate.settle_request(reservation, usage)
         else:
             self._gate.commit_uncertain(
@@ -1782,7 +1920,9 @@ def run_official_translation(
         httpx_disable_environment_proxy(),
         DeepSeekBudgetProxy(api_key=api_key, gate=gate) as proxy,
     ):
-        return asyncio.run(run(proxy.base_url, bypass_environment_names))
+        result = asyncio.run(run(proxy.base_url, bypass_environment_names))
+        result["citation_lock"] = proxy.snapshot()
+        return result
 
 
 def execute(
@@ -1941,6 +2081,7 @@ def execute(
                 "localhost_bypass_environment_names"
             ],
             "request_transport": result["request_transport"],
+            "citation_lock": result["citation_lock"],
         }
         settled_project_cost = float(
             finish["budget_actual"]["stage_committed_cost_rmb"]
