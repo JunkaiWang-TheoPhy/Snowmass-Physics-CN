@@ -1,0 +1,19 @@
+{
+  "cover_pdf_path": "snowmass-2203.06164.zh-CN.cover.pdf",
+  "cover_pdf_sha256": "fef8224ac6b9a8f81f2101d5cc00d0771e84af7f653232413afae3482d44b902",
+  "output_pdf_path": "snowmass-2203.06164.zh-CN.pdf",
+  "packaged_on": "2026-08-31",
+  "packaged_pdf_sha256": "fa55b73185bcdc3b24a6aebfa70fa7c081f1af1c438a1afafb0fd49315aac7d1",
+  "packaging_contract_version": 4,
+  "qc_receipt_hashes": {
+    "semantic": "1e89df8ae3b1a597b8908ce94a4666920d3b50e5bc6485c5b7ea425e5b0c3f8f",
+    "structural": "52fa0f240f541c5953e032225791c320c47b5f039a395b44708b908dace4349d",
+    "visual": "e2343400db61adf2436b6f042f2e41c13133623b917156c772ddce06ae886029"
+  },
+  "receipt_path": "snowmass-2203.06164.zh-CN.json",
+  "record_id": "arxiv:2203.06164",
+  "source_pdf_path": "arxiv_2203.06164.debug.no_watermark.zh.mono.protected.pdf",
+  "source_pdf_sha256": "c33c5e895d3eacfbadcd989be94817ad75d6e9025b0abacbfcecf14fba99069f",
+  "translation_page_url": "https://snowmass-physics-cn.netlify.app/paper/2203.06164/",
+  "version": "v1-production-20260831"
+}

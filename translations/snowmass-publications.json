@@ -22,5 +22,89 @@
     "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.07564/v24-layout-fix/snowmass-2203.07564.zh-CN.pdf",
     "publication_translation_sha256": "a898f247f28137e1db547f7cbee13eb41d6d57040adf8909b4f062fda971b786",
     "publication_translation_size_bytes": 29331179
+  },
+  {
+    "record_id": "arxiv:2204.07285",
+    "translation_status": "machine-draft",
+    "translation_license": "CC-BY-4.0",
+    "machine_model": "deepseek-v4-flash",
+    "human_reviewers": [],
+    "translation_version": "v1-production-20260831",
+    "translation_published_at": "2026-08-31",
+    "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2204.07285/v1/snowmass-2204.07285.zh-CN.pdf",
+    "publication_translation_sha256": "1afeb4f2286d6531ba8a5aeebde9f9fc95ec6eb5a36aad747eed2a8fff5bd89d",
+    "publication_translation_size_bytes": 29998588
+  },
+  {
+    "record_id": "arxiv:2203.06164",
+    "translation_status": "machine-draft",
+    "translation_license": "CC-BY-4.0",
+    "machine_model": "deepseek-v4-flash",
+    "human_reviewers": [],
+    "translation_version": "v1-production-20260831",
+    "translation_published_at": "2026-08-31",
+    "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.06164/v1/snowmass-2203.06164.zh-CN.pdf",
+    "publication_translation_sha256": "fa55b73185bcdc3b24a6aebfa70fa7c081f1af1c438a1afafb0fd49315aac7d1",
+    "publication_translation_size_bytes": 30213820
+  },
+  {
+    "record_id": "arxiv:2203.09585",
+    "translation_status": "machine-draft",
+    "translation_license": "CC-BY-4.0",
+    "machine_model": "deepseek-v4-flash",
+    "human_reviewers": [],
+    "translation_version": "v1-production-20260831",
+    "translation_published_at": "2026-08-31",
+    "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.09585/v1/snowmass-2203.09585.zh-CN.pdf",
+    "publication_translation_sha256": "ceadabec2961807356d33a88279dfc62f8d36c3f2602a3622f6bb83db3f2ad28",
+    "publication_translation_size_bytes": 42623919
+  },
+  {
+    "record_id": "arxiv:2204.01919",
+    "translation_status": "machine-draft",
+    "translation_license": "CC-BY-4.0",
+    "machine_model": "deepseek-v4-flash",
+    "human_reviewers": [],
+    "translation_version": "v1-production-20260831",
+    "translation_published_at": "2026-08-31",
+    "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2204.01919/v1/snowmass-2204.01919.zh-CN.pdf",
+    "publication_translation_sha256": "ea24d426fb65022389b339193320b570746406980a55970f5c52191b725f1c9f",
+    "publication_translation_size_bytes": 30134972
+  },
+  {
+    "record_id": "arxiv:2203.09944",
+    "translation_status": "machine-draft",
+    "translation_license": "CC-BY-4.0",
+    "machine_model": "deepseek-v4-flash",
+    "human_reviewers": [],
+    "translation_version": "v1-production-20260831",
+    "translation_published_at": "2026-08-31",
+    "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.09944/v1/snowmass-2203.09944.zh-CN.pdf",
+    "publication_translation_sha256": "d128fdc2750b5c072d0c8f638593d705adc051c230f0a1adedde9d2ac24f5afb",
+    "publication_translation_size_bytes": 30139026
+  },
+  {
+    "record_id": "arxiv:2203.08276",
+    "translation_status": "machine-draft",
+    "translation_license": "CC-BY-4.0",
+    "machine_model": "deepseek-v4-flash",
+    "human_reviewers": [],
+    "translation_version": "v1-production-20260831",
+    "translation_published_at": "2026-08-31",
+    "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.08276/v1/snowmass-2203.08276.zh-CN.pdf",
+    "publication_translation_sha256": "7627727c52a80022178fd34c3ff223be4ade813c51e6b86befe98efc22555cf7",
+    "publication_translation_size_bytes": 30526383
+  },
+  {
+    "record_id": "arxiv:2203.08809",
+    "translation_status": "machine-draft",
+    "translation_license": "CC-BY-4.0",
+    "machine_model": "deepseek-v4-flash",
+    "human_reviewers": [],
+    "translation_version": "v1-production-20260831",
+    "translation_published_at": "2026-08-31",
+    "publication_translation_url": "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.08809/v1/snowmass-2203.08809.zh-CN.pdf",
+    "publication_translation_sha256": "80a099d1c9e7450c060ca33e852d6e87167ba14f220863404cef1bbd972b8101",
+    "publication_translation_size_bytes": 31911344
   }
 ]
