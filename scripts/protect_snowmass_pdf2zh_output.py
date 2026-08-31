@@ -327,18 +327,37 @@ def _reference_clips(
             if starts:
                 first_reference_line = min(starts)
                 if heading is not None:
+                    prefix_text = " ".join(
+                        text for _, text in lines[:first_reference_line]
+                    ).casefold()
+                    preserve_prefix = bool(
+                        re.search(
+                            r"(?:https?://|doi\s*:|doi\.org|arxiv\s*:)",
+                            prefix_text,
+                        )
+                        and lines[:first_reference_line]
+                        and min(
+                            rectangle.x0
+                            for rectangle, _text in lines[:first_reference_line]
+                        )
+                        > heading.x0 + 100.0
+                    )
                     # A page can contain body prose and the bibliography
                     # in one extractor block.  A URL in the body must not
                     # make the body part of the source-only raster clip.
-                    reference_lines = [
-                        (rectangle, text)
-                        for rectangle, text in lines
-                        if rectangle.y0 >= heading.y0 - 1.0
-                        or (
-                            rectangle.x0 > heading.x0 + 100.0
-                            and _reference_entry_number(text) is not None
-                        )
-                    ]
+                    reference_lines = (
+                        lines
+                        if preserve_prefix
+                        else [
+                            (rectangle, text)
+                            for rectangle, text in lines
+                            if rectangle.y0 >= heading.y0 - 1.0
+                            or (
+                                rectangle.x0 > heading.x0 + 100.0
+                                and _reference_entry_number(text) is not None
+                            )
+                        ]
+                    )
                 else:
                     prefix_text = " ".join(
                         text for _, text in lines[:first_reference_line]
@@ -2272,6 +2291,7 @@ def _repair_merged_toc_rows(
         line_rectangle = cast(fitz.Rect, line["rect"])
         line_section = _TOC_SECTION_PREFIX.match(_toc_text(text))
         normalized_text = _toc_text(text)
+        has_separate_destination = False
         if line_section is not None and line_index + 1 < len(output_lines):
             next_line = output_lines[line_index + 1]
             next_text = _toc_text(str(next_line["text"]))
@@ -2289,6 +2309,10 @@ def _repair_merged_toc_rows(
                 normalized_text = _toc_text(f"{text} {next_text}")
                 line_rectangle |= next_rectangle
                 consumed_continuation_lines.add(line_index + 1)
+                has_separate_destination = bool(
+                    re.fullmatch(r"\d+", next_text)
+                    and next_rectangle.x0 >= output_page.rect.width * 0.70
+                )
         if line_section is None:
             if re.match(r"^\s*[.·…]", normalized_text) is None:
                 continue
@@ -2313,6 +2337,10 @@ def _repair_merged_toc_rows(
             first_section_id = line_section.group(1)
             line_y_tolerance = 8.0
         if not first_section_id:
+            continue
+        if has_separate_destination:
+            # The title and right-aligned destination are already separate
+            # visual rows. Repair only genuinely fused TOC text.
             continue
         candidate_groups: list[
             tuple[list[dict[str, object]], list[tuple[dict[str, object], str]]]

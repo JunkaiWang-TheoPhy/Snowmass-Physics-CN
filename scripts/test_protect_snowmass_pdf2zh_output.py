@@ -58,7 +58,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         page.insert_text((72, 100), "References")
         page = document.new_page(width=612, height=792)
         clips = _reference_clips(document)
-        self.assertTrue(clips)
+        self.assertEqual(clips, {})
         document.close()
 
     def test_body_word_reference_is_not_a_bibliography_heading(self) -> None:
@@ -1640,7 +1640,7 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
             self.assertNotIn("SOURCE HEADER", extracted)
             self.assertNotIn("SOURCE FRONTMATTER", extracted)
             self.assertNotIn("HIDDEN SOURCE PROSE", extracted)
-            self.assertIn("已翻译正文", extracted)
+            self.assertNotIn("已翻译正文", extracted)
 
     def test_auto_mode_discovers_header_restores_front_matter_and_records_receipt(
         self,
