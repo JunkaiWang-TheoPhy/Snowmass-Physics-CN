@@ -151,43 +151,28 @@ class PublicManifestTests(unittest.TestCase):
             bool(record["publication_allowed"]) for record in records
         ))
 
-    def test_published_pilot_has_versioned_verified_pdf(self) -> None:
+    def test_legacy_pilot_without_current_receipt_is_not_advertised(self) -> None:
         record = next(
             item for item in _load_manifest()
             if item["record_id"] == "arxiv:2203.07506"
         )
-        self.assertEqual(record["translation_status"], "machine-draft")
-        self.assertEqual(record["machine_model"], "deepseek-v4-flash")
-        self.assertEqual(record["translation_version"], "v0.1")
-        self.assertRegex(record["publication_translation_sha256"], r"^[0-9a-f]{64}$")
-        self.assertEqual(record["publication_translation_size_bytes"], 14_165_001)
-        self.assertEqual(record["translation_published_at"], "2026-08-12")
-        self.assertEqual(
-            record["publication_translation_url"],
-            "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/"
-            "translations-2026-08-31-v1/snowmass-2203.07506.zh-CN.pdf",
-        )
+        self.assertIsNone(record["publication_translation_url"])
+        self.assertIsNone(record["publication_translation_sha256"])
+        self.assertIsNone(record["publication_translation_size_bytes"])
+        self.assertIsNone(record["translation_version"])
+        self.assertIsNone(record["translation_published_at"])
 
-    def test_belle_ii_layout_fix_has_versioned_verified_pdf(self) -> None:
+    def test_legacy_layout_fix_without_contract_v4_receipt_is_not_advertised(self) -> None:
         record = next(
             item for item in _load_manifest()
             if item["record_id"] == "arxiv:2203.07564"
         )
         self.assertTrue(record["publication_allowed"])
-        self.assertEqual(record["translation_status"], "machine-draft")
-        self.assertEqual(record["machine_model"], "deepseek-v4-flash")
-        self.assertEqual(record["translation_version"], "v24-layout-fix")
-        self.assertEqual(
-            record["publication_translation_sha256"],
-            "a898f247f28137e1db547f7cbee13eb41d6d57040adf8909b4f062fda971b786",
-        )
-        self.assertEqual(record["publication_translation_size_bytes"], 29331179)
-        self.assertEqual(record["translation_published_at"], "2026-08-14")
-        self.assertEqual(
-            record["publication_translation_url"],
-            "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/"
-            "translations-2026-08-31-v1/snowmass-2203.07564.zh-CN.pdf",
-        )
+        self.assertIsNone(record["publication_translation_url"])
+        self.assertIsNone(record["publication_translation_sha256"])
+        self.assertIsNone(record["publication_translation_size_bytes"])
+        self.assertIsNone(record["translation_version"])
+        self.assertIsNone(record["translation_published_at"])
 
     def test_all_public_translation_downloads_use_release_assets(self) -> None:
         published = [
