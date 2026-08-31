@@ -162,6 +162,11 @@ class TranslationPromptContractTests(unittest.TestCase):
             module.SYSTEM_PROMPT,
         )
 
+    def test_requires_translation_of_prose_quotations(self) -> None:
+        module = load_module()
+
+        self.assertIn("Translate prose quotations", module.SYSTEM_PROMPT)
+
 
 class RightsGateTests(unittest.TestCase):
     def setUp(self) -> None:

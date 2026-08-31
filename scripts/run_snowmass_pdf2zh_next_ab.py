@@ -345,6 +345,7 @@ Keep all citation markers in their exact source order; do not reorder clauses ac
 Text belonging to figures, plots, legends, axes, annotations, and tables must remain verbatim in
 the source language. Bibliographic entries and their numbering must remain verbatim; translate
 only ordinary prose and the References heading when it is presented as an independent heading.
+Translate prose quotations even when they begin with bracketed letters or preserve original case.
 Return only the requested translated text."""
 
 
