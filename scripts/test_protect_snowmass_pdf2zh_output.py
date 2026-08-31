@@ -84,6 +84,19 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertGreaterEqual(clips[1][0].y0, 480)
         document.close()
 
+    def test_references_in_contents_do_not_start_bibliography(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 100), "CONTENTS")
+        page.insert_text((72, 130), "References")
+        page.insert_text((500, 130), "10")
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 100), "正文")
+        self.assertEqual(_reference_clips(document), {})
+        document.close()
+
     def test_removes_only_debug_labels_from_marked_page(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _remove_debug_labels
 

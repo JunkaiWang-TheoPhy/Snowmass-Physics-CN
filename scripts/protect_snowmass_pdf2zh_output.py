@@ -274,6 +274,22 @@ def _reference_clips(
             if heading_rects
             else None
         )
+        contents_on_page = any(
+            _clean_text(
+                "".join(
+                    str(span.get("text", ""))
+                    for line in block.get("lines", [])
+                    for span in line.get("spans", [])
+                )
+            ).casefold()
+            in {"contents", "table of contents", "目录"}
+            for block in blocks.get("blocks", [])
+            if block.get("type") == 0
+        )
+        if contents_on_page:
+            # A Contents entry commonly contains the literal word
+            # “References”; it is not the bibliography boundary.
+            heading = None
         if heading is not None:
             in_references = True
         if numbered_reference_start == page_index:
