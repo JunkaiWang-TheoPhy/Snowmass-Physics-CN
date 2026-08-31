@@ -708,7 +708,17 @@ def _validate_release_asset(record: Mapping[str, Any], asset: Mapping[str, Any])
     if str(asset.get("state", "")).strip() != "uploaded":
         raise RuntimeError(f"release asset state mismatch for {asset_name}")
     browser_url = str(asset.get("browser_download_url", "")).strip()
-    if browser_url != str(record["release_url"]):
+    expected_url = str(record["release_url"])
+    repository_origin, separator, _ = expected_url.partition("/releases/download/")
+    draft_url = bool(separator) and bool(
+        re.fullmatch(
+            re.escape(repository_origin)
+            + r"/releases/download/untagged-[0-9a-f]+/"
+            + re.escape(asset_name),
+            browser_url,
+        )
+    )
+    if browser_url != expected_url and not draft_url:
         raise RuntimeError(f"release asset URL mismatch for {asset_name}")
     return {
         "name": asset_name,
@@ -1124,11 +1134,42 @@ class ShellCommandRunner:
                 allow_failure=True,
             )
             if result.returncode != 0:
-                text = (result.stderr or "") + (result.stdout or "")
-                if "HTTP 404" in text:
-                    return {"exists": False, "is_draft": True, "assets": []}
-                raise RuntimeError(text.strip() or f"gh api failed for {payload['github_tag']}")
-            data = json.loads(result.stdout or "{}")
+                primary_error = (result.stderr or "") + (result.stdout or "")
+                result = self._run(
+                    [
+                        "gh",
+                        "api",
+                        f"repos/{payload['github_repo']}/releases?per_page=100",
+                    ],
+                    cwd=cwd,
+                    allow_failure=True,
+                )
+                if result.returncode != 0:
+                    if "HTTP 404" in primary_error:
+                        return {"exists": False, "is_draft": True, "assets": []}
+                    raise RuntimeError(
+                        primary_error.strip()
+                        or ((result.stderr or "") + (result.stdout or "")).strip()
+                        or f"gh api failed for {payload['github_tag']}"
+                    )
+                releases = json.loads(result.stdout or "[]")
+                data = next(
+                    (
+                        release
+                        for release in releases
+                        if release.get("tag_name") == payload["github_tag"]
+                    ),
+                    None,
+                )
+                if data is None:
+                    if "HTTP 404" in primary_error:
+                        return {"exists": False, "is_draft": True, "assets": []}
+                    raise RuntimeError(
+                        primary_error.strip()
+                        or f"gh api failed for {payload['github_tag']}"
+                    )
+            else:
+                data = json.loads(result.stdout or "{}")
             return {
                 "exists": True,
                 "is_draft": bool(data.get("draft", data.get("isDraft", True))),

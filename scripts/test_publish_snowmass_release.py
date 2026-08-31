@@ -846,6 +846,108 @@ class PublishSnowmassReleaseTests(unittest.TestCase):
         )
         self.assertFalse(result["exists"])
 
+    def test_shell_runner_github_release_get_finds_draft_via_release_list(self) -> None:
+        module = load_module()
+        calls: list[list[str]] = []
+
+        def fake_run(argv, *, cwd, allow_failure=False):
+            command = list(argv)
+            calls.append(command)
+            if command[-1].endswith(f"/releases/tags/{self.github_tag}"):
+                return subprocess.CompletedProcess(
+                    argv, 1, stdout="", stderr="HTTP 404: Not Found"
+                )
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "tag_name": self.github_tag,
+                            "draft": True,
+                            "assets": [],
+                            "url": "https://api.github.test/releases/1",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+
+        runner = module.ShellCommandRunner(run_command=fake_run)
+        result = runner(
+            "github.release.get",
+            {"github_repo": self.github_repo, "github_tag": self.github_tag},
+        )
+
+        self.assertTrue(result["exists"])
+        self.assertTrue(result["is_draft"])
+        self.assertEqual(result["assets"], [])
+        self.assertEqual(
+            calls[1],
+            ["gh", "api", f"repos/{self.github_repo}/releases?per_page=100"],
+        )
+
+    def test_shell_runner_github_release_get_recovers_primary_transport_failure_from_list(self) -> None:
+        module = load_module()
+
+        def fake_run(argv, *, cwd, allow_failure=False):
+            command = list(argv)
+            if command[-1].endswith(f"/releases/tags/{self.github_tag}"):
+                return subprocess.CompletedProcess(
+                    argv, 1, stdout="", stderr="Get https://api.github.test: EOF"
+                )
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "tag_name": self.github_tag,
+                            "draft": True,
+                            "assets": [],
+                            "url": "https://api.github.test/releases/1",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+
+        result = module.ShellCommandRunner(run_command=fake_run)(
+            "github.release.get",
+            {"github_repo": self.github_repo, "github_tag": self.github_tag},
+        )
+
+        self.assertTrue(result["exists"])
+        self.assertTrue(result["is_draft"])
+
+    def test_release_asset_validation_accepts_github_draft_download_url(self) -> None:
+        module = load_module()
+        asset_name = "snowmass-2203.10060.zh-CN.pdf"
+        digest = "a" * 64
+        record = {
+            "asset_name": asset_name,
+            "asset_size_bytes": 123,
+            "packaged_pdf_sha256": digest,
+            "release_url": (
+                f"https://github.com/{self.github_repo}/releases/download/"
+                f"{self.github_tag}/{asset_name}"
+            ),
+        }
+        asset = {
+            "name": asset_name,
+            "size": 123,
+            "digest": f"sha256:{digest}",
+            "state": "uploaded",
+            "browser_download_url": (
+                f"https://github.com/{self.github_repo}/releases/download/"
+                f"untagged-55320a06fb1f8549579a/{asset_name}"
+            ),
+        }
+
+        validated = module._validate_release_asset(record, asset)
+
+        self.assertEqual(validated["browser_download_url"], asset["browser_download_url"])
+
     def test_shell_runner_http_verification_issues_requests_and_fails_on_manifest_mismatch(self) -> None:
         module = load_module()
         receipt_path = self.write_receipt()
