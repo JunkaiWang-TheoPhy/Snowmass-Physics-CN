@@ -347,6 +347,32 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertTrue(report["ok"])
             self.assertEqual(report["english_prose_residue"], [])
 
+    def test_rejects_isolated_ordinary_english_adverb_in_chinese_prose(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "isolated-adverb.pdf"
+            document = fitz.open()
+            first = document.new_page(width=595, height=842)
+            first.insert_textbox(
+                (72, 100, 520, 300),
+                "这是中文首页的正常学术正文。" * 10,
+                fontname="china-s",
+                fontsize=12,
+            )
+            second = document.new_page(width=595, height=842)
+            second.insert_textbox(
+                (72, 180, 520, 300),
+                "学生主要——但并非 exclusively——来自拉丁美洲。",
+                fontname="china-s",
+                fontsize=12,
+            )
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertFalse(report["ok"])
+            self.assertIn("english_prose_residue:page_2", report["failures"])
+
     def test_rejects_english_only_prose_block_after_first_page(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "fragment.pdf"

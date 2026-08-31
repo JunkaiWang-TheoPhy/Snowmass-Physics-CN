@@ -120,6 +120,7 @@ def _translation_contract_sha256() -> str:
         ROOT / "scripts/snowmass_qc_contract.py",
         ROOT / "scripts/snowmass_publication_qc.py",
         ROOT / "scripts/package_snowmass_translation_pdf.py",
+        ROOT / "translations/snowmass-hard-constraints.json",
     )
     return _json_hash({str(path): _sha256(path) for path in paths})
 

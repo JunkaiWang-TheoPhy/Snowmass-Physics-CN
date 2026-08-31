@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def sha256(path: Path) -> str:
@@ -12,6 +13,42 @@ def sha256(path: Path) -> str:
 
 
 class SealPdf2zhNextPaperTests(unittest.TestCase):
+    def test_loads_record_scoped_post_protection_replacements(self) -> None:
+        from scripts import seal_snowmass_pdf2zh_next_paper as module
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            article = root / "article"
+            self._json(
+                article / "run" / "finish.json",
+                {"record_id": "arxiv:2203.10060"},
+            )
+            constraints = self._json(
+                root / "constraints.json",
+                {
+                    "schema_version": 1,
+                    "records": {
+                        "arxiv:2203.10060": {
+                            "post_protection_replacements": [
+                                {
+                                    "page": 7,
+                                    "source": "exclusively",
+                                    "target": "全部学员",
+                                }
+                            ]
+                        }
+                    },
+                },
+            )
+            with mock.patch.object(module, "HARD_CONSTRAINTS_PATH", constraints):
+                replacements = module._record_output_replacements(
+                    article, (1, 2, 3, 4, 5, 6, 7)
+                )
+
+        self.assertEqual(
+            replacements,
+            ((7, "exclusively", "全部学员"),),
+        )
     def _json(self, path: Path, value: dict[str, object]) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")

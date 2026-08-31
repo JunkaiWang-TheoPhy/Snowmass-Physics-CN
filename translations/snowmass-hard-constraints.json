@@ -16,6 +16,16 @@
     }
   },
   "records": {
+    "arxiv:2203.10060": {
+      "post_protection_replacements": [
+        {
+          "page": 7,
+          "source": "exclusively",
+          "target": "全部学员",
+          "reason": "Visual and language QA found one isolated ordinary English adverb inside otherwise Chinese prose; this source-exact deterministic replacement preserves the sentence meaning without changing citations, numbers, names, or layout structure."
+        }
+      ]
+    },
     "arxiv:2203.07224": {
       "exact_translations": [
         {

@@ -33,6 +33,7 @@ SYSTEM_CJK_FONT = Path("/System/Library/Fonts/STHeiti Medium.ttc")
 MOUNTAIN_ASSET = ROOT / "site/assets/snowmass-mountain.png"
 QR_ASSET = ROOT / "site/assets/snowmass-site-qr.png"
 PACKAGING_CONTRACT_VERSION = 4
+HARD_CONSTRAINTS_PATH = ROOT / "translations/snowmass-hard-constraints.json"
 
 
 def _sha256(path: Path) -> str:
@@ -71,6 +72,41 @@ def _relative(article: Path, path: Path, *, label: str) -> str:
         return resolved.relative_to(root).as_posix()
     except ValueError as error:
         raise RuntimeError(f"{label} escapes article directory") from error
+
+
+def _record_output_replacements(
+    article: Path, selected_source_pages: tuple[int, ...]
+) -> tuple[tuple[int, str, str], ...]:
+    finish = _load(article / "run" / "finish.json", label="translation finish")
+    record_id = adapter.normalize_record_id(str(finish.get("record_id") or ""))
+    constraints = _load(HARD_CONSTRAINTS_PATH, label="hard constraints")
+    record = (constraints.get("records") or {}).get(record_id) or {}
+    entries = record.get("post_protection_replacements") or []
+    if not isinstance(entries, list):
+        raise RuntimeError("post-protection replacements must be a list")
+    replacements: list[tuple[int, str, str]] = []
+    seen: set[tuple[int, str]] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise RuntimeError("post-protection replacement must be an object")
+        page = entry.get("page")
+        source = str(entry.get("source") or "").strip()
+        target = str(entry.get("target") or "").strip()
+        if (
+            isinstance(page, bool)
+            or not isinstance(page, int)
+            or page not in selected_source_pages
+            or not source
+            or not target
+            or source == target
+        ):
+            raise RuntimeError("post-protection replacement is invalid")
+        identity = (page, source)
+        if identity in seen:
+            raise RuntimeError("duplicate post-protection replacement")
+        seen.add(identity)
+        replacements.append((page, source, target))
+    return tuple(sorted(replacements, key=lambda item: (item[0], item[1])))
 
 
 def _require_hash(path: Path, expected: Any, *, label: str) -> str:
@@ -364,6 +400,9 @@ def prepare_paper_qc(
     qc_dir = article / "qc"
     protection_path = qc_dir / "protection.json"
     auto_header = len(selected_source_pages) > 2
+    record_output_replacements = _record_output_replacements(
+        article, selected_source_pages
+    )
     protection_receipt = protect_pdf(
         source_pdf=source_pdf,
         translated_pdf=raw_pdf,
@@ -374,7 +413,10 @@ def prepare_paper_qc(
         auto_front_matter=True,
         auto_header_min_recurrence=2,
         verbatim_texts=tuple(verbatim_texts),
-        output_replacements=tuple(output_placeholder_repairs),
+        output_replacements=(
+            *tuple(output_placeholder_repairs),
+            *record_output_replacements,
+        ),
     )
     _atomic_json(protection_path, protection_receipt)
     if protection_receipt.get("verified") is not True:

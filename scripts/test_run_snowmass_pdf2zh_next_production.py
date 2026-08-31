@@ -800,6 +800,7 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         paths = {Path(call.args[0]).name for call in digest.call_args_list}
         self.assertIn("audit_snowmass_translation_pdf.py", paths)
         self.assertIn("snowmass_qc_contract.py", paths)
+        self.assertIn("snowmass-hard-constraints.json", paths)
 
     def test_launch_requires_previous_stage_seal(self) -> None:
         module = load_module()
