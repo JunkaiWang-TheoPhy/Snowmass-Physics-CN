@@ -1693,6 +1693,21 @@ def _remove_debug_labels(document: fitz.Document) -> int:
                 lines.append((fitz.Rect(*line["bbox"]), text))
         if not has_debug_marker:
             continue
+        is_contents_page = any(
+            _clean_text(text).casefold()
+            in {"contents", "table of contents", "目录"}
+            for _rectangle, text in lines
+        )
+        if is_contents_page:
+            # Debug spans often overlap real TOC rows.  Character-level
+            # redaction would erase legitimate section titles, so remove only
+            # standalone metadata lines on a Contents page.
+            for rectangle, text in lines:
+                if _DEBUG_LABEL_RE.fullmatch(text.strip()):
+                    page.add_redact_annot(rectangle, fill=(1, 1, 1))
+                    removed += 1
+            page.apply_redactions()
+            continue
         # Redact only characters belonging to a debug label. Redacting the
         # whole extraction line destroys adjacent TOC titles/page numbers
         # when BabelDOC overlaps metadata with real text.
@@ -1911,7 +1926,12 @@ def _repair_merged_toc_rows(
         return [], 0
     repaired: list[dict[str, object]] = []
     group_count = 0
-    output_lines = _page_text_lines(output_page)
+    output_lines = [
+        line
+        for line in _page_text_lines(output_page)
+        if not _DEBUG_LABEL_RE.fullmatch(str(line["text"]).strip())
+        and not _DEBUG_LABEL_SEARCH_RE.search(str(line["text"]))
+    ]
     consumed_continuation_lines: set[int] = set()
     for line_index, line in enumerate(output_lines):
         if line_index in consumed_continuation_lines:
