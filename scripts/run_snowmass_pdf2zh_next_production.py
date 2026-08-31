@@ -115,6 +115,11 @@ def _translation_contract_sha256() -> str:
         Path(ab_runner.__file__).resolve(),
         Path(paper_sealer.__file__).resolve(),
         ROOT / "scripts/protect_snowmass_pdf2zh_output.py",
+        ROOT / "scripts/audit_snowmass_translation_pdf.py",
+        ROOT / "scripts/audit_snowmass_pdf2zh_semantics.py",
+        ROOT / "scripts/snowmass_qc_contract.py",
+        ROOT / "scripts/snowmass_publication_qc.py",
+        ROOT / "scripts/package_snowmass_translation_pdf.py",
     )
     return _json_hash({str(path): _sha256(path) for path in paths})
 

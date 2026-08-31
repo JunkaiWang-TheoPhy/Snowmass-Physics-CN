@@ -46,6 +46,7 @@ _ENGLISH_PROSE_RE = re.compile(
 )
 _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_CODE_IDENTIFIER_RE = re.compile(r"\b(?:[A-Za-z_]\w*::)+[A-Za-z_]\w*\b")
 
 
 def _is_contact_metadata(text: str) -> bool:
@@ -272,6 +273,7 @@ def audit_pdf(
             for block in blocks:
                 x0, y0, x1, y1, block_text = block[:5]
                 prose_text = _URL_RE.sub(" ", str(block_text))
+                prose_text = _CODE_IDENTIFIER_RE.sub(" ", prose_text)
                 center_x = (x0 + x1) / 2
                 center_y = (y0 + y1) / 2
                 ignored = any(

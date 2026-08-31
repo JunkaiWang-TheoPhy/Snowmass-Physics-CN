@@ -321,6 +321,32 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertTrue(report["ok"])
             self.assertEqual(report["english_prose_residue"], [])
 
+    def test_allows_cpp_namespace_identifiers_before_chinese_prose(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "cpp-identifiers.pdf"
+            document = fitz.open()
+            first = document.new_page(width=595, height=842)
+            first.insert_textbox(
+                (72, 100, 520, 300),
+                "这是中文首页的正常学术正文，用于确认页面具有足够的可提取文本。" * 8,
+                fontname="china-s",
+                fontsize=12,
+            )
+            second = document.new_page(width=595, height=842)
+            second.insert_textbox(
+                (72, 180, 520, 260),
+                "std::parallel::execution（std::par）自 C++17 标准以来一直是 C++ 的一部分。",
+                fontname="china-s",
+                fontsize=12,
+            )
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["english_prose_residue"], [])
+
     def test_rejects_english_only_prose_block_after_first_page(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "fragment.pdf"

@@ -788,6 +788,19 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             module.paper_launch_fingerprint(changed),
         )
 
+    def test_translation_contract_fingerprint_includes_structural_audit_code(self) -> None:
+        module = load_module()
+        with mock.patch.object(
+            module,
+            "_sha256",
+            side_effect=lambda path: hashlib.sha256(str(path).encode()).hexdigest(),
+        ) as digest:
+            module._translation_contract_sha256()
+
+        paths = {Path(call.args[0]).name for call in digest.call_args_list}
+        self.assertIn("audit_snowmass_translation_pdf.py", paths)
+        self.assertIn("snowmass_qc_contract.py", paths)
+
     def test_launch_requires_previous_stage_seal(self) -> None:
         module = load_module()
         probe = self._seed_record("arxiv:2203.06843")
