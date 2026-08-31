@@ -12,6 +12,7 @@ import os
 import signal
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
@@ -463,17 +464,28 @@ def _run_adapter_subprocess(
         ADAPTER_MAX_TIMEOUT_SECONDS,
         ADAPTER_BASE_TIMEOUT_SECONDS + selected_pages * ADAPTER_SECONDS_PER_PAGE,
     )
-    try:
-        process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as error:
-        # Kill the whole process group: pdf2zh-next may have spawned workers
-        # that otherwise outlive the adapter and retain a budget reservation.
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-        raise RuntimeError(
-            f"pinned pdf2zh-next adapter timed out after "
-            f"{timeout_seconds}s; stderr={stderr_path.name}"
-        ) from error
+    deadline = time.monotonic() + timeout_seconds
+    while process.poll() is None:
+        if "DeepSeek request cap exhausted" in stderr_path.read_text(
+            encoding="utf-8", errors="replace"
+        ):
+            # A hard local request cap is terminal for this paper.  Stop the
+            # complete process group immediately instead of waiting for the
+            # library to drain every already-queued paragraph fallback.
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise RuntimeError(
+                f"pinned pdf2zh-next adapter exhausted its request cap; "
+                f"stderr={stderr_path.name}"
+            )
+        if time.monotonic() >= deadline:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise RuntimeError(
+                f"pinned pdf2zh-next adapter timed out after "
+                f"{timeout_seconds}s; stderr={stderr_path.name}"
+            )
+        time.sleep(0.25)
     if process.returncode != 0:
         stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
         raise RuntimeError(
