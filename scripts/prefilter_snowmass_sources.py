@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -31,12 +32,17 @@ def inspect_pdf(path: Path) -> dict[str, Any]:
         images = 0
         drawings = 0
         words = 0
+        numeric_citations = 0
+        citation_ranges = 0
         reference_pages = 0
         for page in document:
             text = page.get_text("text")
             images += len(page.get_images(full=True))
             drawings += len(page.get_drawings())
             words += len(page.get_text("words"))
+            citations = re.findall(r"\[(?:\d+)(?:\s*[-–—,]\s*\d+)*\]", text)
+            numeric_citations += len(citations)
+            citation_ranges += sum(1 for citation in citations if re.search(r"[-–—]", citation))
             if "references" in text.casefold() or "bibliography" in text.casefold():
                 reference_pages += 1
     return {
@@ -44,6 +50,8 @@ def inspect_pdf(path: Path) -> dict[str, Any]:
         "images": images,
         "drawings": drawings,
         "words": words,
+        "numeric_citations": numeric_citations,
+        "citation_ranges": citation_ranges,
         "reference_pages": reference_pages,
         "sha256": sha256(path),
     }
@@ -84,6 +92,10 @@ def prefilter(*, rights_path: Path, source_manifest_path: Path, pdf_root: Path) 
             reasons.append("many_embedded_images")
         if metrics["drawings"] > 200:
             reasons.append("dense_vector_graphics")
+        if metrics["numeric_citations"] > 10:
+            reasons.append("many_numeric_citations")
+        if metrics["citation_ranges"] > 1:
+            reasons.append("complex_citation_ranges")
         row.update(metrics, eligible=not reasons, reasons=reasons)
         rows.append(row)
     candidates = [row for row in rows if row["eligible"]]
@@ -94,7 +106,7 @@ def prefilter(*, rights_path: Path, source_manifest_path: Path, pdf_root: Path) 
         "policy": {
             "figure_interior_text": "source_verbatim",
             "captions_outside_figures": "translatable",
-            "thresholds": {"pages_max": 10, "reference_pages_max": 2, "images_max": 12, "drawings_max": 200},
+            "thresholds": {"pages_max": 10, "reference_pages_max": 2, "images_max": 12, "drawings_max": 200, "numeric_citations_max": 10, "citation_ranges_max": 1},
         },
         "eligible_count": sum(1 for row in rows if row.get("eligible")),
         "publication_allowed_count": len(rows),

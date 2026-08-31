@@ -29,6 +29,8 @@ class PrefilterTests(unittest.TestCase):
             self.assertEqual(result["eligible_count"], 1)
             self.assertEqual(result["candidates"][0]["record_id"], "arxiv:1")
             self.assertEqual(result["policy"]["figure_interior_text"], "source_verbatim")
+            self.assertEqual(result["candidates"][0]["numeric_citations"], 1)
+            self.assertEqual(result["candidates"][0]["citation_ranges"], 0)
 
 
 if __name__ == "__main__":
