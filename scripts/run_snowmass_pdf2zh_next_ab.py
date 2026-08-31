@@ -392,10 +392,9 @@ def build_safe_settings_spec(
             # rows without allowing BabelDOC to fuse neighboring entries.
             "no_merge_alternating_line_numbers": True,
         },
-        # pdf2zh-next's non-debug path creates a second multiprocessing layer
-        # inside the pinned adapter.  On macOS that layer can finish BabelDOC
-        # work but never return its finish event.  ``debug`` here selects the
-        # direct BabelDOC path; it does not relax any translation/QC contract.
+        # Keep debug mode enabled because it selects the stable direct path on
+        # macOS.  run_official_translation disables its debug injectors before
+        # rendering, so this flag never becomes a release artifact.
         "basic": {"debug": True},
     }
 
@@ -1732,6 +1731,31 @@ def run_official_translation(
         ):
             os.environ.setdefault(name, "1")
         from pdf2zh_next import high_level
+
+        # BabelDOC's debug mode is also used by the stable direct execution
+        # path, but its debug-information middleware writes colored layout
+        # rectangles and labels into the PDF.  Suppress only those injectors;
+        # retain the direct path and its watchdog behavior.
+        from babeldoc.format.pdf.document_il.midend.add_debug_information import (
+            AddDebugInformation,
+        )
+        from babeldoc.format.pdf.document_il.midend.detect_scanned_file import (
+            DetectScannedFile,
+        )
+        from babeldoc.format.pdf.document_il.midend.layout_parser import LayoutParser
+        from babeldoc.format.pdf.document_il.midend.paragraph_finder import (
+            ParagraphFinder,
+        )
+        from babeldoc.format.pdf.document_il.midend.table_parser import TableParser
+
+        for debug_class, method_name in (
+            (AddDebugInformation, "process"),
+            (DetectScannedFile, "_save_debug_box_to_page"),
+            (LayoutParser, "_save_debug_box_to_page"),
+            (ParagraphFinder, "add_debug_info"),
+            (TableParser, "_save_debug_box_to_page"),
+        ):
+            setattr(debug_class, method_name, lambda self, *args, **kwargs: None)
 
         settings = _build_official_settings(settings_spec, proxy_base_url)
         finish_event: Mapping[str, Any] | None = None

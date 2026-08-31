@@ -32,6 +32,8 @@ class PrefilterTests(unittest.TestCase):
             self.assertEqual(result["candidates"][0]["numeric_citations"], 1)
             self.assertEqual(result["candidates"][0]["citation_ranges"], 0)
             self.assertEqual(result["candidates"][0]["contents_pages"], 0)
+            self.assertEqual(result["candidates"][0]["risk_tier"], "low_risk")
+            self.assertIn("low_risk", result["candidates_by_risk_tier"])
 
 
 if __name__ == "__main__":

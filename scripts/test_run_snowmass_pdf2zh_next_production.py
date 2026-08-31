@@ -131,6 +131,7 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
                         "citation_ranges": 0,
                         "reference_pages": 1,
                         "contents_pages": 0,
+                        "risk_tier": "low_risk",
                         "reasons": [],
                     },
                     {
@@ -144,6 +145,7 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
                         "citation_ranges": 9,
                         "reference_pages": 1,
                         "contents_pages": 1,
+                        "risk_tier": "complex_or_unclassified",
                         "reasons": ["dense_vector_graphics"],
                     },
                 ]
@@ -152,6 +154,33 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
         module._validate_low_risk_prefilter(prefilter, ("arxiv:good",))
         with self.assertRaisesRegex(RuntimeError, "low-risk gate failed"):
             module._validate_low_risk_prefilter(prefilter, ("arxiv:complex",))
+
+    def test_text_only_medium_tier_allows_longer_text_without_images(self) -> None:
+        module = load_module()
+        prefilter = self._write_json(
+            self.root / "medium-prefilter.json",
+            {
+                "records": [
+                    {
+                        "record_id": "arxiv:medium",
+                        "publication_allowed": True,
+                        "eligible": False,
+                        "risk_tier": "text_only_medium",
+                        "pages": 14,
+                        "images": 0,
+                        "drawings": 0,
+                        "numeric_citations": 19,
+                        "citation_ranges": 2,
+                        "reference_pages": 2,
+                        "contents_pages": 0,
+                        "reasons": ["over_10_pages", "many_numeric_citations"],
+                    }
+                ]
+            },
+        )
+        module._validate_low_risk_prefilter(
+            prefilter, ("arxiv:medium",), tier="text_only_medium"
+        )
 
     def _plan_args(self, module, stage: str, **overrides: object):
         values = {
@@ -291,6 +320,11 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             [10, 25, 5], page_counts=[12, 31, 4]
         )
         self.assertEqual(allocations, [96, 248, 50])
+        bounded = module._runtime_request_allocations(
+            [10, 25, 5], page_counts=[12, 31, 4], total_cap=128
+        )
+        self.assertEqual(sum(bounded), 128)
+        self.assertTrue(all(actual >= minimum for actual, minimum in zip(bounded, [10, 25, 5])))
         with self.assertRaises(ValueError):
             module._runtime_request_allocations([50], page_counts=[])
 

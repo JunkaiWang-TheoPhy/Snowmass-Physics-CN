@@ -78,6 +78,7 @@ class PlanArgs:
     supplemental_glossary_json: Path | None = None
     record_ids: tuple[str, ...] = ()
     source_prefilter: Path | None = None
+    source_prefilter_tier: str = "low_risk"
 
 
 def _sha256(path: Path) -> str:
@@ -192,9 +193,12 @@ def _source_records(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def _validate_low_risk_prefilter(
-    path: Path, selected_ids: Sequence[str]
+    path: Path, selected_ids: Sequence[str], *, tier: str = "low_risk"
 ) -> dict[str, dict[str, Any]]:
-    """Require every new non-probe paper to come from the live low-risk scan."""
+    """Require every new non-probe paper to come from a live risk tier scan."""
+
+    if tier not in {"low_risk", "text_only_medium"}:
+        raise ValueError(f"unsupported source prefilter tier: {tier}")
 
     manifest = _load_json(path, label="source prefilter")
     records = manifest.get("records")
@@ -214,18 +218,23 @@ def _validate_low_risk_prefilter(
             raise RuntimeError(f"source prefilter record is missing: {record_id}")
         if row.get("publication_allowed") is not True:
             raise RuntimeError(f"source prefilter rights gate failed: {record_id}")
-        if row.get("eligible") is not True:
+        if tier == "low_risk" and row.get("eligible") is not True:
             raise RuntimeError(
                 f"source prefilter low-risk gate failed: {record_id}: "
                 + ",".join(map(str, row.get("reasons") or ()))
             )
+        if row.get("risk_tier") != tier:
+            raise RuntimeError(
+                f"source prefilter {tier} gate failed: {record_id}: "
+                f"actual={row.get('risk_tier')}"
+            )
         required = {
-            "pages": lambda value: int(value) <= 10,
+            "pages": lambda value: int(value) <= (10 if tier == "low_risk" else 20),
             "images": lambda value: int(value) == 0,
-            "drawings": lambda value: int(value) <= 200,
-            "numeric_citations": lambda value: int(value) <= 10,
-            "citation_ranges": lambda value: int(value) <= 1,
-            "reference_pages": lambda value: int(value) <= 2,
+            "drawings": lambda value: int(value) <= (200 if tier == "low_risk" else 50),
+            "numeric_citations": lambda value: int(value) <= (10 if tier == "low_risk" else 80),
+            "citation_ranges": lambda value: int(value) <= (1 if tier == "low_risk" else 5),
+            "reference_pages": lambda value: int(value) <= (2 if tier == "low_risk" else 3),
             "contents_pages": lambda value: int(value) == 0,
         }
         for field, predicate in required.items():
@@ -276,16 +285,31 @@ def _request_allocations(
 
 
 def _runtime_request_allocations(
-    projected: Sequence[int], *, page_counts: Sequence[int]
+    projected: Sequence[int], *, page_counts: Sequence[int], total_cap: int | None = None
 ) -> list[int]:
-    """Give each paper finite execution headroom beyond its cost projection."""
+    """Give each paper finite headroom without exceeding the stage cap."""
     if len(projected) != len(page_counts) or not projected:
         raise ValueError("projected request and page-count allocations must align")
     allocations = [
         max(50, int(value) * 5, int(pages) * 8)
         for value, pages in zip(projected, page_counts, strict=True)
     ]
-    return allocations
+    if total_cap is None:
+        return allocations
+    if total_cap < sum(projected):
+        raise ValueError("runtime cap cannot be below projected request total")
+    bounded = [int(value) for value in projected]
+    remaining = total_cap - sum(bounded)
+    for index in sorted(
+        range(len(allocations)),
+        key=lambda item: (-(allocations[item] - bounded[item]), item),
+    ):
+        extra = min(allocations[index] - bounded[index], remaining)
+        bounded[index] += extra
+        remaining -= extra
+        if remaining == 0:
+            break
+    return bounded
 
 
 @contextmanager
@@ -419,6 +443,7 @@ def _same_plan_request(existing: Mapping[str, Any], args: PlanArgs) -> bool:
             if args.source_prefilter is not None
             else None
         ),
+        "source_prefilter_tier": args.source_prefilter_tier,
         "glossary_json": str(args.glossary_json.resolve()),
         "project_control_dir": str(args.project_control_dir.resolve()),
         "project_max_cost_rmb": float(args.project_max_cost_rmb),
@@ -618,7 +643,7 @@ def plan_stage(
     prefilter_records: dict[str, dict[str, Any]] = {}
     if args.stage != "deepseek_probe" and args.source_prefilter is not None:
         prefilter_records = _validate_low_risk_prefilter(
-            args.source_prefilter, selected_ids
+            args.source_prefilter, selected_ids, tier=args.source_prefilter_tier
         )
     # Keep the cost projection conservative; each paper receives an
     # independent finite runtime cap based on its page count below. The
@@ -634,6 +659,7 @@ def plan_stage(
         runtime_allocations = _runtime_request_allocations(
             projected_allocations,
             page_counts=[int(record.get("page_count") or 0) for record in selected],
+            total_cap=stage_request_cap,
         )
     source_by_id = _source_records(args.source_manifest)
     preflight_runner = preflight_runner or _default_preflight_runner
@@ -767,6 +793,7 @@ def plan_stage(
             if args.source_prefilter is not None
             else None
         ),
+        "source_prefilter_tier": args.source_prefilter_tier,
         "glossary_json": str(args.glossary_json.resolve()),
         "project_control_dir": str(args.project_control_dir.resolve()),
         "project_max_cost_rmb": project_budget,
@@ -1262,6 +1289,12 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=ROOT / "output/snowmass2021/production_control/source-prefilter-v5.json",
         help="Current zero-cost source-PDF prefilter required for non-probe pilots",
+    )
+    plan.add_argument(
+        "--source-prefilter-tier",
+        choices=("low_risk", "text_only_medium"),
+        default="low_risk",
+        help="Risk tier required for non-probe pilot candidates",
     )
     plan.add_argument("--pdf-root", type=Path, default=ROOT / "tmp/pdfs/snowmass2021")
     plan.add_argument(
