@@ -320,13 +320,27 @@ def _reference_clips(
                 continue
             if starts:
                 first_reference_line = min(starts)
-                prefix_text = " ".join(
-                    text for _, text in lines[:first_reference_line]
-                ).casefold()
-                preserve_prefix = bool(
-                    re.search(r"(?:https?://|doi\s*:|doi\.org|arxiv\s*:)", prefix_text)
-                )
-                reference_lines = lines if preserve_prefix else lines[first_reference_line:]
+                if heading is not None:
+                    # A page can contain body prose and the bibliography
+                    # in one extractor block.  A URL in the body must not
+                    # make the body part of the source-only raster clip.
+                    reference_lines = [
+                        (rectangle, text)
+                        for rectangle, text in lines
+                        if rectangle.y0 >= heading.y0 - 1.0
+                        or (
+                            rectangle.x0 > heading.x0 + 100.0
+                            and _reference_entry_number(text) is not None
+                        )
+                    ]
+                else:
+                    prefix_text = " ".join(
+                        text for _, text in lines[:first_reference_line]
+                    ).casefold()
+                    preserve_prefix = bool(
+                        re.search(r"(?:https?://|doi\s*:|doi\.org|arxiv\s*:)", prefix_text)
+                    )
+                    reference_lines = lines if preserve_prefix else lines[first_reference_line:]
             else:
                 # Author-year bibliographies and continuation pages do not
                 # begin with ``[n]``. Once the heading has been seen, protect
