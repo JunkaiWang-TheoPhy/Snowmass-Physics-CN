@@ -187,11 +187,12 @@ class CitationLockTests(unittest.TestCase):
             ]
         )
 
+        self.assertEqual(structure_lock.markers, ("[58]",))
         self.assertEqual(
-            structure_lock.markers,
-            ("{v1}", "[58]", "{v2}:::{v3}", "{v4}"),
+            structure_lock.placeholders,
+            ("{v1}", "{v2}:::{v3}", "{v4}"),
         )
-        self.assertNotIn("{v1}", locked[0]["content"])
+        self.assertIn("{v1}", locked[0]["content"])
         response = {
             "choices": [
                 {
@@ -210,6 +211,22 @@ class CitationLockTests(unittest.TestCase):
             "{v2}:::{v3}",
             json.loads(restored)["choices"][0]["message"]["content"],
         )
+
+        reordered = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Claim {v4} " + structure_lock.tokens[0] + " end {v1} {v2}:::{v3}",
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+        with self.assertRaises(module.CitationLockError):
+            module.unlock_numeric_citations_response(
+                json.dumps(reordered).encode(), structure_lock
+            )
 
     def test_locks_and_restores_numeric_citations_byte_exactly_in_source_order(self) -> None:
         module = load_module()
@@ -715,6 +732,7 @@ class LocalBudgetProxyTests(unittest.TestCase):
                 metrics = proxy.snapshot()
 
             self.assertNotIn("[58]", forwarded[0]["messages"][0]["content"])
+            self.assertIn("{v1}", forwarded[0]["messages"][0]["content"])
             self.assertEqual(
                 content,
                 "First {v1} [58], then {v2}:::{v3} [21, 59].",

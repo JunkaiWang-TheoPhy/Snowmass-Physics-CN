@@ -86,12 +86,13 @@ _CITATION_TOKEN_RE = re.compile(r"\[\[SMCIT_\d{6}\]\]")
 class CitationLock:
     tokens: tuple[str, ...]
     markers: tuple[str, ...]
+    placeholders: tuple[str, ...]
     numeric_citation_count: int
     rich_placeholder_count: int
 
     @property
     def count(self) -> int:
-        return len(self.tokens)
+        return len(self.tokens) + len(self.placeholders)
 
 
 def _lock_citations_in_text(
@@ -99,18 +100,18 @@ def _lock_citations_in_text(
     *,
     tokens: list[str],
     markers: list[str],
-    marker_kinds: list[str],
+    placeholders: list[str],
 ) -> str:
     if "[[SMCIT_" in value:
         raise CitationLockError("source text collides with citation lock token")
 
     def replace(match: re.Match[str]) -> str:
+        if match.group(0).startswith("{v"):
+            placeholders.append(match.group(0))
+            return match.group(0)
         token = f"[[SMCIT_{len(tokens) + 1:06d}]]"
         tokens.append(token)
         markers.append(match.group(0))
-        marker_kinds.append(
-            "placeholder" if match.group(0).startswith("{v") else "citation"
-        )
         return token
 
     return _STRUCTURAL_ANCHOR_RE.sub(replace, value)
@@ -124,7 +125,7 @@ def lock_numeric_citations(
     locked = copy.deepcopy(messages)
     tokens: list[str] = []
     markers: list[str] = []
-    marker_kinds: list[str] = []
+    placeholders: list[str] = []
     for message in locked:
         if str(message.get("role") or "") != "user":
             continue
@@ -134,7 +135,7 @@ def lock_numeric_citations(
                 content,
                 tokens=tokens,
                 markers=markers,
-                marker_kinds=marker_kinds,
+                placeholders=placeholders,
             )
         elif isinstance(content, list):
             for part in content:
@@ -143,13 +144,14 @@ def lock_numeric_citations(
                         part["text"],
                         tokens=tokens,
                         markers=markers,
-                        marker_kinds=marker_kinds,
+                        placeholders=placeholders,
                     )
     return locked, CitationLock(
         tuple(tokens),
         tuple(markers),
-        marker_kinds.count("citation"),
-        marker_kinds.count("placeholder"),
+        tuple(placeholders),
+        len(tokens),
+        len(placeholders),
     )
 
 
@@ -176,10 +178,11 @@ def unlock_numeric_citations_response(
         if actual_tokens != citation_lock.tokens:
             raise CitationLockError("citation lock tokens changed or reordered")
         without_tokens = _CITATION_TOKEN_RE.sub("", content)
-        if _NUMERIC_CITATION_RE.search(without_tokens) or _BABELDOC_PLACEHOLDER_RE.search(
-            without_tokens
-        ):
-            raise CitationLockError("model invented an unlocked structure marker")
+        if _NUMERIC_CITATION_RE.search(without_tokens):
+            raise CitationLockError("model invented an unlocked citation marker")
+        actual_placeholders = tuple(_BABELDOC_PLACEHOLDER_RE.findall(without_tokens))
+        if actual_placeholders != citation_lock.placeholders:
+            raise CitationLockError("rich placeholders changed or reordered")
         restored = content
         for token, marker in zip(
             citation_lock.tokens, citation_lock.markers, strict=True
