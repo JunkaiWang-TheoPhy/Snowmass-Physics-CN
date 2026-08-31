@@ -7,10 +7,26 @@ from pathlib import Path
 import fitz
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from prefilter_snowmass_sources import prefilter
+from prefilter_snowmass_sources import classify_risk, prefilter
 
 
 class PrefilterTests(unittest.TestCase):
+    def test_citation_dense_passthrough_tier_unlocks_bounded_medium_papers(self):
+        self.assertEqual(
+            classify_risk(
+                {
+                    "pages": 20,
+                    "images": 2,
+                    "drawings": 500,
+                    "numeric_citations": 200,
+                    "citation_ranges": 20,
+                    "reference_pages": 3,
+                    "contents_pages": 0,
+                }
+            ),
+            "citation_dense_passthrough_medium",
+        )
+
     def test_figures_are_measured_for_risk_only_and_short_paper_can_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

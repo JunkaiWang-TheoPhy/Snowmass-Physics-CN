@@ -263,6 +263,35 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             prefilter, ("arxiv:vector-long",), tier="vector_passthrough_long"
         )
 
+    def test_citation_dense_passthrough_tier_keeps_figures_verbatim(self) -> None:
+        module = load_module()
+        prefilter = self._write_json(
+            self.root / "citation-dense-prefilter.json",
+            {
+                "records": [
+                    {
+                        "record_id": "arxiv:citation-dense",
+                        "publication_allowed": True,
+                        "eligible": False,
+                        "risk_tier": "citation_dense_passthrough_medium",
+                        "pages": 20,
+                        "images": 2,
+                        "drawings": 500,
+                        "numeric_citations": 200,
+                        "citation_ranges": 20,
+                        "reference_pages": 3,
+                        "contents_pages": 0,
+                        "reasons": ["many_numeric_citations"],
+                    }
+                ]
+            },
+        )
+        module._validate_low_risk_prefilter(
+            prefilter,
+            ("arxiv:citation-dense",),
+            tier="citation_dense_passthrough_medium",
+        )
+
     def _plan_args(self, module, stage: str, **overrides: object):
         values = {
             "stage": stage,

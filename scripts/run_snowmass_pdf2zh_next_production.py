@@ -197,7 +197,7 @@ def _validate_low_risk_prefilter(
 ) -> dict[str, dict[str, Any]]:
     """Require every new non-probe paper to come from a live risk tier scan."""
 
-    if tier not in {"low_risk", "text_only_medium", "figure_passthrough_medium", "text_only_long", "vector_passthrough_long"}:
+    if tier not in {"low_risk", "text_only_medium", "figure_passthrough_medium", "text_only_long", "vector_passthrough_long", "citation_dense_passthrough_medium"}:
         raise ValueError(f"unsupported source prefilter tier: {tier}")
 
     manifest = _load_json(path, label="source prefilter")
@@ -231,9 +231,9 @@ def _validate_low_risk_prefilter(
         required = {
             "pages": lambda value: int(value) <= (10 if tier == "low_risk" else 40 if tier == "text_only_long" else 30 if tier == "vector_passthrough_long" else 20),
             "images": lambda value: int(value) <= (0 if tier in {"low_risk", "text_only_medium", "text_only_long", "vector_passthrough_long"} else 2),
-            "drawings": lambda value: int(value) <= (200 if tier == "low_risk" else 50 if tier == "text_only_medium" else 500 if tier in {"figure_passthrough_medium", "vector_passthrough_long"} else 0),
-            "numeric_citations": lambda value: int(value) <= (10 if tier == "low_risk" else 150 if tier in {"text_only_long", "vector_passthrough_long"} else 80),
-            "citation_ranges": lambda value: int(value) <= (1 if tier == "low_risk" else 10 if tier in {"text_only_long", "vector_passthrough_long"} else 5),
+            "drawings": lambda value: int(value) <= (200 if tier == "low_risk" else 50 if tier == "text_only_medium" else 500 if tier in {"figure_passthrough_medium", "vector_passthrough_long", "citation_dense_passthrough_medium"} else 0),
+            "numeric_citations": lambda value: int(value) <= (10 if tier == "low_risk" else 200 if tier == "citation_dense_passthrough_medium" else 150 if tier in {"text_only_long", "vector_passthrough_long"} else 80),
+            "citation_ranges": lambda value: int(value) <= (1 if tier == "low_risk" else 20 if tier == "citation_dense_passthrough_medium" else 10 if tier in {"text_only_long", "vector_passthrough_long"} else 5),
             "reference_pages": lambda value: int(value) <= (2 if tier == "low_risk" else 5 if tier in {"text_only_long", "vector_passthrough_long"} else 3),
             "contents_pages": lambda value: int(value) == 0,
         }
@@ -1292,7 +1292,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     plan.add_argument(
         "--source-prefilter-tier",
-        choices=("low_risk", "text_only_medium", "figure_passthrough_medium", "text_only_long", "vector_passthrough_long"),
+        choices=("low_risk", "text_only_medium", "figure_passthrough_medium", "text_only_long", "vector_passthrough_long", "citation_dense_passthrough_medium"),
         default="low_risk",
         help="Risk tier required for non-probe pilot candidates",
     )

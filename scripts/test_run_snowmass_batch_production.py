@@ -1811,6 +1811,10 @@ class BatchResumeTests(unittest.TestCase):
                 mock.patch.object(module, "_refill_article") as refill_article,
                 mock.patch.object(
                     module,
+                    "_prepare_deterministic_pdf_qc",
+                ) as prepare_deterministic_pdf_qc,
+                mock.patch.object(
+                    module,
                     "evaluate_article_qc",
                     return_value={"ok": True, "failures": []},
                 ) as evaluate_qc,
@@ -1820,6 +1824,7 @@ class BatchResumeTests(unittest.TestCase):
                 result = module._package_only_result(config, record)
 
             refill_article.assert_called_once_with(config, article)
+            prepare_deterministic_pdf_qc.assert_called_once_with(config, article)
             evaluate_qc.assert_called_once_with(article)
             self.assertEqual(result["status"], "packaged")
 
