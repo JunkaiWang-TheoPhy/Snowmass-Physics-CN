@@ -20,7 +20,7 @@ function row(term, value) { return `<dt>${escapeHTML(term)}</dt><dd>${value}</dd
 function renderPaper(paper, position, total) {
   const authorization = AUTH[paper.authorization_status] || paper.authorization_status || "尚未核验";
   const translation = TRANSLATION[paper.translation_status] || paper.translation_status || "状态未知";
-  const translationURL = paper.publication_allowed === true && paper.translation_status === "published" && paper.publication_translation_url ? safeURL(paper.publication_translation_url) : null;
+  const translationURL = paper.publication_allowed === true && paper.publication_translation_url ? safeURL(paper.publication_translation_url) : null;
   const conditions = (paper.publication_conditions || []).map((item) => `<li>${escapeHTML(CONDITIONS[item] || item)}</li>`).join("") || "<li>当前记录未列出额外条件。</li>";
   const topics = (paper.topics || []).map((item) => `<li>${escapeHTML(item)}</li>`).join("") || "<li>专题信息待补充。</li>";
   const permalink = `${location.origin}/paper/${paperSlug(paper)}/`;
