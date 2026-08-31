@@ -231,6 +231,20 @@ class PackagedPdfAuditTests(unittest.TestCase):
             self.assertTrue(report["ok"])
             self.assertNotIn("mixed_script_bottom_fragment:page_1", report["failures"])
 
+    def test_allows_two_word_technical_term_in_bottom_caption(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "technical-term.pdf"
+            document = fitz.open()
+            page = document.new_page(width=595, height=842)
+            page.insert_text((72, 740), "此理论属于 cohomological type。", fontname="china-s", fontsize=10)
+            document.save(pdf)
+            document.close()
+
+            report = audit_pdf(pdf)
+
+            self.assertTrue(report["ok"])
+            self.assertNotIn("mixed_script_bottom_fragment:page_1", report["failures"])
+
     def test_allows_scientific_unit_token_in_bottom_caption(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "unit-caption.pdf"

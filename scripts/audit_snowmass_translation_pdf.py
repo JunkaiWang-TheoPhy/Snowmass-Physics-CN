@@ -286,6 +286,7 @@ def audit_pdf(
                     and y0 >= bounds.y1 * 0.82
                     and _CJK_RE.search(str(block_text))
                     and _MIXED_FRAGMENT_RE.search(str(block_text))
+                    and len(re.findall(r"\b[a-z]{2,}\b", str(block_text), re.I)) >= 3
                     and not _URL_RE.search(str(block_text))
                 ):
                     mixed_script_bottom_fragments.append(
