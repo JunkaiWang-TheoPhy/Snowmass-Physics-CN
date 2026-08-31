@@ -138,8 +138,8 @@ class PublicManifestTests(unittest.TestCase):
         self.assertEqual(record["translation_published_at"], "2026-08-12")
         self.assertEqual(
             record["publication_translation_url"],
-            "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.07506/v0.1/"
-            "snowmass-2203.07506.zh-CN.pdf",
+            "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/"
+            "translations-2026-08-31-v1/snowmass-2203.07506.zh-CN.pdf",
         )
 
     def test_belle_ii_layout_fix_has_versioned_verified_pdf(self) -> None:
@@ -159,9 +159,24 @@ class PublicManifestTests(unittest.TestCase):
         self.assertEqual(record["translation_published_at"], "2026-08-14")
         self.assertEqual(
             record["publication_translation_url"],
-            "https://snowmass-physics-cn.netlify.app/pdfs/arxiv/2203.07564/"
-            "v24-layout-fix/snowmass-2203.07564.zh-CN.pdf",
+            "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/"
+            "translations-2026-08-31-v1/snowmass-2203.07564.zh-CN.pdf",
         )
+
+    def test_all_public_translation_downloads_use_release_assets(self) -> None:
+        published = [
+            record for record in _load_manifest()
+            if record.get("publication_translation_url")
+        ]
+        self.assertTrue(published)
+        expected_prefix = (
+            "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/"
+        )
+        for record in published:
+            self.assertTrue(
+                record["publication_translation_url"].startswith(expected_prefix),
+                record["record_id"],
+            )
 
 
 if __name__ == "__main__":
