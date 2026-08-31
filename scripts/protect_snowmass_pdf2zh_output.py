@@ -216,6 +216,48 @@ def _reference_clips(
 ) -> dict[int, list[fitz.Rect]]:
     clips: dict[int, list[fitz.Rect]] = {}
     in_references = False
+    numbered_reference_start: int | None = None
+    numbered_reference_start_y: float | None = None
+    numbered_candidates: list[tuple[int, str]] = []
+    for page_index, page in enumerate(source):
+        for block in _text_dict(page, sort=True).get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                line_text = "".join(
+                    str(span.get("text", "")) for span in line.get("spans", [])
+                ).strip()
+                if line_text:
+                    numbered_candidates.append((page_index, line_text))
+    # A few source papers omit the bibliography heading entirely.  Only use a
+    # numbered entry as a boundary when a short forward scan finds the next
+    # two entries in order; this avoids treating an isolated body citation as
+    # the bibliography start.
+    for index, (page_index, line_text) in enumerate(numbered_candidates):
+        if not re.match(r"^\[1\]\s+\S", line_text):
+            continue
+        expected = 2
+        for _candidate_page, candidate_text in numbered_candidates[index + 1 : index + 40]:
+            match = re.match(r"^\[(\d+)\]\s+\S", candidate_text)
+            if match and int(match.group(1)) == expected:
+                expected += 1
+                if expected == 4:
+                    numbered_reference_start = page_index
+                    start_block = _text_dict(source[page_index], sort=True).get("blocks", [])
+                    for start_block_item in start_block:
+                        for start_line in start_block_item.get("lines", []):
+                            start_text = "".join(
+                                str(span.get("text", ""))
+                                for span in start_line.get("spans", [])
+                            ).strip()
+                            if re.match(r"^\[1\]\s+\S", start_text):
+                                numbered_reference_start_y = float(start_line["bbox"][1])
+                                break
+                        if numbered_reference_start_y is not None:
+                            break
+                    break
+        if numbered_reference_start is not None:
+            break
     for page_index, page in enumerate(source):
         textpage = textpages.get(page_index) if textpages else None
         heading_rects: list[fitz.Rect] = []
@@ -233,6 +275,8 @@ def _reference_clips(
             else None
         )
         if heading is not None:
+            in_references = True
+        if numbered_reference_start == page_index:
             in_references = True
         if not in_references:
             continue
@@ -277,6 +321,15 @@ def _reference_clips(
                         (rectangle, text)
                         for rectangle, text in lines
                         if rectangle.y0 >= heading.y1 - 1.0
+                    ]
+                elif (
+                    numbered_reference_start == page_index
+                    and numbered_reference_start_y is not None
+                ):
+                    reference_lines = [
+                        (rectangle, text)
+                        for rectangle, text in lines
+                        if rectangle.y0 >= numbered_reference_start_y - 1.0
                     ]
             if not reference_lines:
                 continue

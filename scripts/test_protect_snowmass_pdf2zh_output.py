@@ -70,6 +70,20 @@ class ProtectPdf2zhOutputTests(unittest.TestCase):
         self.assertEqual(_reference_clips(document), {})
         document.close()
 
+    def test_reference_clips_detect_numbered_bibliography_without_heading(self) -> None:
+        from scripts.protect_snowmass_pdf2zh_output import _reference_clips
+
+        document = fitz.open()
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 100), "Conclusion text")
+        page.insert_text((72, 500), "[1] A. Author, Journal of Physics 10, 1 (2020).")
+        page.insert_text((72, 530), "[2] B. Builder, Review of Physics 11, 2 (2021).")
+        page.insert_text((72, 560), "[3] C. Coder, Physics Letters 12, 3 (2022).")
+        clips = _reference_clips(document)
+        self.assertIn(1, clips)
+        self.assertGreaterEqual(clips[1][0].y0, 480)
+        document.close()
+
     def test_removes_only_debug_labels_from_marked_page(self) -> None:
         from scripts.protect_snowmass_pdf2zh_output import _remove_debug_labels
 
