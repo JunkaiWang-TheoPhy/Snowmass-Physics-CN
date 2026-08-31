@@ -197,7 +197,7 @@ def _validate_low_risk_prefilter(
 ) -> dict[str, dict[str, Any]]:
     """Require every new non-probe paper to come from a live risk tier scan."""
 
-    if tier not in {"low_risk", "text_only_medium", "figure_passthrough_medium"}:
+    if tier not in {"low_risk", "text_only_medium", "figure_passthrough_medium", "text_only_long"}:
         raise ValueError(f"unsupported source prefilter tier: {tier}")
 
     manifest = _load_json(path, label="source prefilter")
@@ -229,12 +229,12 @@ def _validate_low_risk_prefilter(
                 f"actual={row.get('risk_tier')}"
             )
         required = {
-            "pages": lambda value: int(value) <= (10 if tier == "low_risk" else 20),
-            "images": lambda value: int(value) <= (0 if tier != "figure_passthrough_medium" else 2),
-            "drawings": lambda value: int(value) <= (200 if tier == "low_risk" else 50 if tier == "text_only_medium" else 500),
-            "numeric_citations": lambda value: int(value) <= (10 if tier == "low_risk" else 80),
-            "citation_ranges": lambda value: int(value) <= (1 if tier == "low_risk" else 5),
-            "reference_pages": lambda value: int(value) <= (2 if tier == "low_risk" else 3),
+            "pages": lambda value: int(value) <= (10 if tier == "low_risk" else 20 if tier != "text_only_long" else 40),
+            "images": lambda value: int(value) <= (0 if tier in {"low_risk", "text_only_medium", "text_only_long"} else 2),
+            "drawings": lambda value: int(value) <= (200 if tier == "low_risk" else 50 if tier == "text_only_medium" else 500 if tier == "figure_passthrough_medium" else 0),
+            "numeric_citations": lambda value: int(value) <= (10 if tier == "low_risk" else 80 if tier != "text_only_long" else 150),
+            "citation_ranges": lambda value: int(value) <= (1 if tier == "low_risk" else 5 if tier != "text_only_long" else 10),
+            "reference_pages": lambda value: int(value) <= (2 if tier == "low_risk" else 3 if tier != "text_only_long" else 5),
             "contents_pages": lambda value: int(value) == 0,
         }
         for field, predicate in required.items():
@@ -1292,7 +1292,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     plan.add_argument(
         "--source-prefilter-tier",
-        choices=("low_risk", "text_only_medium", "figure_passthrough_medium"),
+        choices=("low_risk", "text_only_medium", "figure_passthrough_medium", "text_only_long"),
         default="low_risk",
         help="Risk tier required for non-probe pilot candidates",
     )

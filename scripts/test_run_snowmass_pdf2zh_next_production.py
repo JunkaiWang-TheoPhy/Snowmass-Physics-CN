@@ -209,6 +209,33 @@ class Pdf2zhNextProductionTests(unittest.TestCase):
             prefilter, ("arxiv:figure",), tier="figure_passthrough_medium"
         )
 
+    def test_text_only_long_tier_allows_long_zero_graphics_papers(self) -> None:
+        module = load_module()
+        prefilter = self._write_json(
+            self.root / "long-text-prefilter.json",
+            {
+                "records": [
+                    {
+                        "record_id": "arxiv:long",
+                        "publication_allowed": True,
+                        "eligible": False,
+                        "risk_tier": "text_only_long",
+                        "pages": 40,
+                        "images": 0,
+                        "drawings": 0,
+                        "numeric_citations": 120,
+                        "citation_ranges": 8,
+                        "reference_pages": 5,
+                        "contents_pages": 0,
+                        "reasons": ["over_10_pages"],
+                    }
+                ]
+            },
+        )
+        module._validate_low_risk_prefilter(
+            prefilter, ("arxiv:long",), tier="text_only_long"
+        )
+
     def _plan_args(self, module, stage: str, **overrides: object):
         values = {
             "stage": stage,
