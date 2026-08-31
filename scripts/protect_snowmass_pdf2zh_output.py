@@ -1625,7 +1625,7 @@ _NUMERIC_CITATION_SPAN = re.compile(
 _TOC_SECTION_PREFIX = re.compile(r"^\s*(\d+(?:\.\d+)*)(?=[^\d.]|$)")
 _DEBUG_LABEL_RE = re.compile(
     r"^(?:plain(?:\x03|\s)text|plaintext|paragraph\[[^\]]+\]-\[plain(?:\x03|\s)text\]|paragraph\[[^\]]+\]-\[plaintext\]|"
-    r"formula|figure_caption|isolate_formula|figure|fallback_line|"
+    r"title|formula|figure_caption|isolate_formula|figure|fallback_line|"
     r"pagenumber:\x03?\d+|Form\[[^\]]+\])$",
     re.IGNORECASE,
 )
@@ -1706,7 +1706,14 @@ def _remove_debug_labels(document: fitz.Document) -> int:
                     for char in span.get("chars", [])
                 ]
                 line_text = "".join(char for char, _rect in characters)
-                for match in _DEBUG_LABEL_SEARCH_RE.finditer(line_text):
+                matches = list(_DEBUG_LABEL_SEARCH_RE.finditer(line_text))
+                if _DEBUG_LABEL_RE.fullmatch(line_text.strip()) and not matches:
+                    matches.append(
+                        re.match(r"(?s)^.*$", line_text)
+                    )
+                for match in matches:
+                    if match is None:
+                        continue
                     matched = characters[match.start():match.end()]
                     if not matched:
                         continue
