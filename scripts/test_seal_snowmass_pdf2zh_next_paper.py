@@ -49,6 +49,29 @@ class SealPdf2zhNextPaperTests(unittest.TestCase):
             replacements,
             ((7, "exclusively", "全部学员"),),
         )
+
+    def test_record_replacements_are_optional_when_model_already_translated_source(self) -> None:
+        import fitz
+        from scripts import seal_snowmass_pdf2zh_next_paper as module
+
+        with tempfile.TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "translated.pdf"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text(
+                (72, 100),
+                "学生主要——但不仅限于——来自拉丁美洲。",
+                fontname="china-s",
+            )
+            document.save(pdf)
+            document.close()
+
+            present = module._present_output_replacements(
+                pdf,
+                ((1, "exclusively", "全部学员"),),
+            )
+
+        self.assertEqual(present, ())
     def _json(self, path: Path, value: dict[str, object]) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")

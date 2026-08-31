@@ -109,6 +109,22 @@ def _record_output_replacements(
     return tuple(sorted(replacements, key=lambda item: (item[0], item[1])))
 
 
+def _present_output_replacements(
+    raw_pdf: Path,
+    replacements: tuple[tuple[int, str, str], ...],
+) -> tuple[tuple[int, str, str], ...]:
+    import fitz
+
+    present: list[tuple[int, str, str]] = []
+    with fitz.open(raw_pdf) as document:
+        for page_number, source, target in replacements:
+            if page_number > document.page_count:
+                raise RuntimeError("post-protection replacement page is unavailable")
+            if document[page_number - 1].search_for(source):
+                present.append((page_number, source, target))
+    return tuple(present)
+
+
 def _require_hash(path: Path, expected: Any, *, label: str) -> str:
     if not Path(path).is_file():
         raise RuntimeError(f"missing {label}")
@@ -400,8 +416,9 @@ def prepare_paper_qc(
     qc_dir = article / "qc"
     protection_path = qc_dir / "protection.json"
     auto_header = len(selected_source_pages) > 2
-    record_output_replacements = _record_output_replacements(
-        article, selected_source_pages
+    record_output_replacements = _present_output_replacements(
+        raw_pdf,
+        _record_output_replacements(article, selected_source_pages),
     )
     protection_receipt = protect_pdf(
         source_pdf=source_pdf,
