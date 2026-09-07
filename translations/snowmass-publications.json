@@ -170,6 +170,18 @@
   {
     "human_reviewers": [],
     "machine_model": "deepseek-v4-flash",
+    "publication_translation_sha256": "4db81e28e57131d4a113d14c6128f0f4e610a6fe2f03bea6cfc6861064ec5968",
+    "publication_translation_size_bytes": 61719037,
+    "publication_translation_url": "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/translations-2026-09-08-b3-v23/snowmass-2203.07885.zh-CN.pdf",
+    "record_id": "arxiv:2203.07885",
+    "translation_license": "CC-BY-4.0",
+    "translation_published_at": "2026-09-08",
+    "translation_status": "machine-draft",
+    "translation_version": "v1-b3.2-recovered-20260908"
+  },
+  {
+    "human_reviewers": [],
+    "machine_model": "deepseek-v4-flash",
     "publication_translation_sha256": "ad0556dffbea2e97825c5d3bf8f91139d43b4284a5350bac28008312e36c53af",
     "publication_translation_size_bytes": 59566011,
     "publication_translation_url": "https://github.com/JunkaiWang-TheoPhy/Snowmass-Physics-CN/releases/download/translations-2026-09-07-b3-v16/snowmass-2203.08106.zh-CN.pdf",
